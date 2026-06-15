@@ -1,0 +1,7 @@
+# Don't let Vercel try to build/deploy anything itself.
+# The GitHub Actions workflow handles all builds and deployments.
+convex/
+node_modules/
+dev-dist/
+.env*
+*.ps1
