@@ -1,0 +1,222 @@
+import { v } from "convex/values";
+import { mutation, query } from "./_generated/server";
+import { getAuthUserId } from "@convex-dev/auth/server";
+
+const positionValidator = v.union(
+  v.literal("red1"), v.literal("red2"), v.literal("red3"),
+  v.literal("blue1"), v.literal("blue2"), v.literal("blue3")
+);
+
+// ── Match Assignments ─────────────────────────────────────────────────────────
+
+/** All assignments for an event (admin view) */
+export const listMatchAssignments = query({
+  args: { eventKey: v.string() },
+  handler: async (ctx, { eventKey }) => {
+    return await ctx.db
+      .query("matchAssignments")
+      .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
+      .collect();
+  },
+});
+
+/** Current user's match assignments for an event */
+export const getMyMatchAssignments = query({
+  args: { eventKey: v.string() },
+  handler: async (ctx, { eventKey }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    return await ctx.db
+      .query("matchAssignments")
+      .withIndex("by_scout_event", (q) => q.eq("scoutId", userId).eq("eventKey", eventKey))
+      .collect();
+  },
+});
+
+/** Upsert a single position slot */
+export const setMatchAssignment = mutation({
+  args: {
+    eventKey: v.string(),
+    matchNumber: v.number(),
+    matchLabel: v.string(),
+    position: positionValidator,
+    scoutId: v.id("users"),
+  },
+  handler: async (ctx, { eventKey, matchNumber, matchLabel, position, scoutId }) => {
+    const existing = await ctx.db
+      .query("matchAssignments")
+      .withIndex("by_event_match", (q) =>
+        q.eq("eventKey", eventKey).eq("matchNumber", matchNumber)
+      )
+      .filter((q) => q.eq(q.field("position"), position))
+      .first();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, { scoutId, matchLabel });
+    } else {
+      await ctx.db.insert("matchAssignments", {
+        eventKey, matchNumber, matchLabel, position, scoutId,
+      });
+    }
+  },
+});
+
+/** Clear a single position slot */
+export const clearMatchAssignment = mutation({
+  args: {
+    eventKey: v.string(),
+    matchNumber: v.number(),
+    position: positionValidator,
+  },
+  handler: async (ctx, { eventKey, matchNumber, position }) => {
+    const existing = await ctx.db
+      .query("matchAssignments")
+      .withIndex("by_event_match", (q) =>
+        q.eq("eventKey", eventKey).eq("matchNumber", matchNumber)
+      )
+      .filter((q) => q.eq(q.field("position"), position))
+      .first();
+
+    if (existing) await ctx.db.delete(existing._id);
+  },
+});
+
+/**
+ * Batch-upsert many assignments in one mutation.
+ * Used by the "Apply to range" bulk-assign feature on the admin scheduling page.
+ */
+export const batchSetMatchAssignments = mutation({
+  args: {
+    eventKey: v.string(),
+    assignments: v.array(v.object({
+      matchNumber: v.number(),
+      matchLabel: v.string(),
+      position: positionValidator,
+      scoutId: v.id("users"),
+    })),
+  },
+  handler: async (ctx, { eventKey, assignments }) => {
+    for (const { matchNumber, matchLabel, position, scoutId } of assignments) {
+      const existing = await ctx.db
+        .query("matchAssignments")
+        .withIndex("by_event_match", (q) =>
+          q.eq("eventKey", eventKey).eq("matchNumber", matchNumber)
+        )
+        .filter((q) => q.eq(q.field("position"), position))
+        .first();
+
+      if (existing) {
+        await ctx.db.patch(existing._id, { scoutId, matchLabel });
+      } else {
+        await ctx.db.insert("matchAssignments", {
+          eventKey, matchNumber, matchLabel, position, scoutId,
+        });
+      }
+    }
+  },
+});
+
+// ── Pit Rotations ─────────────────────────────────────────────────────────────
+
+/** All pit rotation ranges for an event */
+export const listPitRotations = query({
+  args: { eventKey: v.string() },
+  handler: async (ctx, { eventKey }) => {
+    return await ctx.db
+      .query("pitRotations")
+      .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
+      .collect();
+  },
+});
+
+/** Pit rotations that include the current user */
+export const getMyPitRotations = query({
+  args: { eventKey: v.string() },
+  handler: async (ctx, { eventKey }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    const all = await ctx.db
+      .query("pitRotations")
+      .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
+      .collect();
+    return all.filter((r) => r.scoutIds.includes(userId));
+  },
+});
+
+/** Create or update a pit rotation (qual range or elims) */
+export const upsertPitRotation = mutation({
+  args: {
+    id: v.optional(v.id("pitRotations")),
+    eventKey: v.string(),
+    label: v.optional(v.string()),
+    startMatch: v.optional(v.number()),
+    endMatch: v.optional(v.number()),
+    isElims: v.optional(v.boolean()),
+    scoutIds: v.array(v.id("users")),
+  },
+  handler: async (ctx, { id, eventKey, label, startMatch, endMatch, isElims, scoutIds }) => {
+    if (id) {
+      await ctx.db.patch(id, { label, startMatch, endMatch, isElims, scoutIds });
+    } else {
+      await ctx.db.insert("pitRotations", { eventKey, label, startMatch, endMatch, isElims, scoutIds });
+    }
+  },
+});
+
+/** Delete a pit rotation */
+export const deletePitRotation = mutation({
+  args: { id: v.id("pitRotations") },
+  handler: async (ctx, { id }) => {
+    await ctx.db.delete(id);
+  },
+});
+
+// ── Scout Preferences ─────────────────────────────────────────────────────────
+
+/** Current user's preferences for an event (null if never set) */
+export const getMyPreferences = query({
+  args: { eventKey: v.string() },
+  handler: async (ctx, { eventKey }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    return await ctx.db
+      .query("scoutPreferences")
+      .withIndex("by_scout_event", (q) => q.eq("scoutId", userId).eq("eventKey", eventKey))
+      .first();
+  },
+});
+
+/** Save (create or update) the current user's preferences for an event */
+export const upsertMyPreferences = mutation({
+  args: {
+    eventKey:          v.string(),
+    preferredPartners: v.array(v.id("users")),
+    wantsMoreMatches:  v.boolean(),
+    wantsPitRotation:  v.boolean(),
+  },
+  handler: async (ctx, { eventKey, preferredPartners, wantsMoreMatches, wantsPitRotation }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const existing = await ctx.db
+      .query("scoutPreferences")
+      .withIndex("by_scout_event", (q) => q.eq("scoutId", userId).eq("eventKey", eventKey))
+      .first();
+    const data = { preferredPartners, wantsMoreMatches, wantsPitRotation, updatedAt: Date.now() };
+    if (existing) {
+      await ctx.db.patch(existing._id, data);
+    } else {
+      await ctx.db.insert("scoutPreferences", { scoutId: userId, eventKey, ...data });
+    }
+  },
+});
+
+/** All scout preferences for an event — for admin use in ManageScouts */
+export const listAllPreferences = query({
+  args: { eventKey: v.string() },
+  handler: async (ctx, { eventKey }) => {
+    return await ctx.db
+      .query("scoutPreferences")
+      .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
+      .collect();
+  },
+});
