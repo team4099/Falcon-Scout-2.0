@@ -88,7 +88,7 @@ function AuthenticatedApp() {
   const navigate = useNavigate();
   const currentEventLive = useQuery(api.events.getCurrentEvent);
   const currentEvent = useCached(currentEventLive, "current_event");
-  const { queueLength, totalPending, lastSyncedAt, isOnline, markSynced } = useOfflineSync();
+  const { totalPending, lastSyncedAt, isOnline, markSynced } = useOfflineSync();
   const { isAdminMode } = useUIStore();
 
   // Build nav dynamically — admin-only items shown/hidden based on isAdminMode

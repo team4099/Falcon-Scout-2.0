@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useUIStore } from "@/store/uiStore";
 import { useQuery } from "convex/react";
 import { useCached } from "@/hooks/useCached";
@@ -6,7 +6,6 @@ import { api } from "../../convex/_generated/api";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -23,7 +22,7 @@ import {
   fetchTBATeamInfo,
 } from "@/lib/api";
 import type { TBAMatch } from "@/lib/api";
-import { ExternalLink, Search, FileText, TrendingUp, ClipboardList, Trash2, AlertTriangle, ChevronDown, ChevronUp, Clock, CalendarDays, Shield, ChevronRight, FilterIcon, SlidersHorizontal, ChevronLeft } from "lucide-react";
+import { ExternalLink, Search, FileText, TrendingUp, ClipboardList, Trash2, AlertTriangle, ChevronDown, ChevronUp, Clock, SlidersHorizontal } from "lucide-react";
 import TeamDetailPanel from "@/pages/TeamDetailPanel";
 import { useMutation } from "convex/react";
 import type { Id } from "../../convex/_generated/dataModel";
@@ -193,7 +192,7 @@ function SubmissionsReviewDialog({
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
   // Build userId → profile lookup from Google OAuth data
-  const userMap = React.useMemo(() => {
+  const userMap = useMemo(() => {
     const map: Record<string, { name?: string; email?: string; image?: string }> = {};
     for (const u of allUsers ?? []) {
       if (u._id) map[u._id] = { name: u.name as string | undefined, email: u.email as string | undefined, image: u.image as string | undefined };
@@ -392,7 +391,7 @@ function SubmissionsReviewDialog({
               <AlertTriangle className="h-4 w-4 text-destructive" />
               Delete scouting report?
             </AlertDialogTitle>
-            <AlertDialogDescription asChild>
+            <AlertDialogDescription>
               <div className="space-y-2 text-sm text-muted-foreground">
                 <p>
                   This will permanently remove Match{" "}

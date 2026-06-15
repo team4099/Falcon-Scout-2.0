@@ -30,7 +30,6 @@ import {
   ClipboardList,
   ChevronDown,
   ChevronUp,
-  Activity,
   Search,
   CheckCircle2,
   XCircle,
@@ -147,11 +146,6 @@ function ChartTip({ active, payload, label }: {
 }
 
 // ── CHART 1: Radar ─────────────────────────────────────────────────────────────
-
-const RADAR_COLORS = [
-  "hsl(var(--primary))",
-  "#60a5fa", "#34d399", "#f97316", "#c084fc", "#f43f5e",
-];
 
 const YELLOW = "#eab308";
 
@@ -718,7 +712,7 @@ function BoxPlotChart({ fields, submissions }: { fields: FormField[]; submission
 function TeamAvatar({ teamNumber, size = 40 }: { teamNumber: number; size?: number }) {
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => {
-    fetchTBATeamAvatar(teamNumber).then(setSrc).catch(() => setSrc(null));
+    fetchTBATeamAvatar(teamNumber, size).then(setSrc).catch(() => setSrc(null));
   }, [teamNumber]);
   if (src) return (
     <img src={src} alt={`Team ${teamNumber}`}
@@ -856,7 +850,7 @@ export interface TeamDetailProps {
 export default function TeamDetailPanel({
   teamNumber,
   eventKey,
-  eventYear,
+  eventYear: _eventYear,
   submissions,
   fields,
   epa,

@@ -25,9 +25,3 @@ export const listUsers = query({
   },
 });
 
-export const listSessions = query({
-  args: {},
-  handler: async (ctx) => {
-    return await ctx.db.query("sessions").collect();
-  },
-});

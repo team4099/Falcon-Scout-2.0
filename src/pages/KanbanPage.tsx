@@ -629,7 +629,7 @@ function KanbanCol({
   cards: KanbanCard[];
   eventKey: string;
   eventYear: number;
-  epaByTeam: Record<number, number>;
+  epaByTeam: Record<number, { event: number | null; auto: number | null; teleop: number | null; endgame: number | null }>;
   submissionsByTeam: Record<number, Submission[]>;
   fields: FormField[];
   cardPrefs: string[];

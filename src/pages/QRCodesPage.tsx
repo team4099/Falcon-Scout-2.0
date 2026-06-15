@@ -30,7 +30,6 @@ import {
   Trash2,
   ChevronLeft,
   ChevronRight,
-  X,
   ClipboardList,
   AlertTriangle,
 } from "lucide-react";

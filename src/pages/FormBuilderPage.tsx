@@ -16,7 +16,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Separator } from "@/components/ui/separator";
 import {
   Dialog,
   DialogContent,
@@ -256,7 +255,7 @@ function FieldEditor({
             <Label>Section</Label>
             <Select
               value={draft.section ?? sections[0] ?? "General"}
-              onValueChange={(v) => setDraft({ ...draft, section: v })}
+              onValueChange={(v) => setDraft({ ...draft, section: v ?? undefined })}
             >
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -277,7 +276,7 @@ function FieldEditor({
               <Label>Max Stars</Label>
               <Select
                 value={String(ratingMax)}
-                onValueChange={(v) => setDraft({ ...draft, options: [v] })}
+                onValueChange={(v) => setDraft({ ...draft, options: [v ?? "5"] })}
               >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>

@@ -36,7 +36,7 @@ function ApiKeyField({
   description,
   linkHref,
   linkLabel,
-  storageKey,
+  storageKey: _storageKey,
   currentValue,
   onChange,
 }: {

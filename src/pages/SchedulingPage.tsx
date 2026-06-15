@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
@@ -9,12 +9,11 @@ import { fetchTBAEventMatches } from "@/lib/api";
 import type { TBAMatch } from "@/lib/api";
 import {
   Users, ShieldAlert, Lock, CalendarDays, Wrench, Loader2,
-  AlertCircle, Plus, Trash2, Pencil, Check, X,
+  AlertCircle, Plus, Trash2, Pencil, Check,
   Zap, LayoutGrid, Sparkles, TriangleAlert, ChevronDown as ChevDown,
 } from "lucide-react";
 import {
   generateSchedule,
-  runTests,
   type SchedulerOutput,
   type Position as GenPosition,
 } from "@/lib/scheduleGenerator";

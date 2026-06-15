@@ -166,24 +166,6 @@ function buildTeamRows(
   });
 }
 
-// ─────────────────────────────── Tooltip ──────────────────────────────────────
-
-function Tip({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number; color: string }[]; label?: string }) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="rounded-lg border border-border bg-popover text-popover-foreground px-3 py-2 shadow-xl text-xs space-y-1">
-      {label && <p className="font-semibold">{label}</p>}
-      {payload.map((p, i) => (
-        <div key={i} className="flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full shrink-0" style={{ background: p.color }} />
-          <span className="text-muted-foreground">{p.name}:</span>
-          <span className="font-mono font-semibold">{typeof p.value === "number" ? p.value.toFixed(2) : p.value}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 // Radar-specific tooltip — shows the actual raw average, not the 0–100 normalised value
 function RadarTip({ active, payload, label }: {
   active?: boolean;
@@ -214,7 +196,6 @@ function RadarTip({ active, payload, label }: {
 
 // ─────────────────────────────── Chart renderers ──────────────────────────────
 
-const AXIS_STYLE = { fill: "hsl(var(--foreground))", fontSize: 11 };
 const GRID_PROPS = { strokeDasharray: "3 3", stroke: "hsl(var(--border))", opacity: 0.5 };
 const MARGIN = { top: 12, right: 16, left: 4, bottom: 56 };
 
@@ -223,7 +204,7 @@ function WhiteTickX({ x, y, payload, textAnchor }: {
   x?: number; y?: number; payload?: { value: unknown }; textAnchor?: string;
 }) {
   return (
-    <text x={x} y={y} textAnchor={textAnchor ?? "middle"}
+    <text x={x} y={y} textAnchor={(textAnchor ?? "middle") as "inherit" | "start" | "end" | "middle"}
       style={{ fill: "white", fontSize: 11 }} dy={10}>
       {String(payload?.value ?? "")}
     </text>
@@ -235,7 +216,7 @@ function WhiteTickY({ x, y, payload, textAnchor }: {
   x?: number; y?: number; payload?: { value: unknown }; textAnchor?: string;
 }) {
   return (
-    <text x={x} y={y} textAnchor={textAnchor ?? "end"}
+    <text x={x} y={y} textAnchor={(textAnchor ?? "end") as "inherit" | "start" | "end" | "middle"}
       dominantBaseline="middle"
       style={{ fill: "white", fontSize: 11 }} dy={0}>
       {String(payload?.value ?? "")}
@@ -402,11 +383,10 @@ function ChartInner({ cfg, rows, teamRows, matchEpaRows, fields, axes }: {
       // Falls back to flat teamRows lines if per-match data hasn't loaded yet.
       if (cfg.xAxis === "_match") {
         const source2 = matchEpaRows.length > 0 ? matchEpaRows : filtered;
-        const epaTeams = Array.from(new Set(source2.map((r) => r._teamStr as string))).sort();
 
         // Apply team filter
         const src2filtered = teams.length
-          ? source2.filter((r) => teams.includes(r._team as number))
+          ? source2.filter((r) => teams.includes(r._teamStr as string))
           : source2;
         const filteredTeams = Array.from(new Set(src2filtered.map((r) => r._teamStr as string))).sort();
 
@@ -541,8 +521,8 @@ function ChartInner({ cfg, rows, teamRows, matchEpaRows, fields, axes }: {
             />
             <Line type="monotone" dataKey="y" name={yLabel}
               stroke="#6366f1" strokeWidth={2.5}
-              dot={(props: { cx: number; cy: number; index: number }) => (
-                <circle key={props.index} cx={props.cx} cy={props.cy} r={4}
+              dot={(props: { cx?: number; cy?: number; index?: number }) => (
+                <circle key={props.index} cx={props.cx ?? 0} cy={props.cy ?? 0} r={4}
                   fill="#6366f1" stroke="white" strokeWidth={1} />
               )}
               activeDot={{ r: 6, stroke: "white", strokeWidth: 1.5, fill: "#6366f1" }}
@@ -1114,7 +1094,7 @@ function ChartCard({ cfg, rows, teamRows, matchEpaRows, fields, axes, onRemove, 
 
 // ─────────────────────────────── Builder panel ────────────────────────────────
 
-function Builder({ axes, fields, allTeams, initial, onSave, onCancel }: {
+function Builder({ axes, fields: _fields, allTeams, initial, onSave, onCancel }: {
   axes: AxisOpt[]; fields: FormField[]; allTeams: number[];
   initial?: Partial<ChartCfg>;
   onSave: (c: ChartCfg) => void;
