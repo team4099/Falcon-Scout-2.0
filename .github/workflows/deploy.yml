@@ -32,16 +32,10 @@ jobs:
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
 
-      # ── Step 2: Build Vite frontend ──────────────────────────────────────
-      # Use the production Convex URL (stored as a GitHub secret) so the
-      # built app points to the prod backend, not the dev deployment.
-      - name: Build frontend
-        run: npm run build
-        env:
-          VITE_CONVEX_URL: ${{ secrets.VITE_CONVEX_URL }}
-          VITE_CONVEX_SITE_URL: ${{ secrets.VITE_CONVEX_SITE_URL }}
-
-      # ── Step 3: Deploy frontend to Vercel ───────────────────────────────
+      # ── Step 2 & 3: Build + package for Vercel ───────────────────────────
+      # `vercel build` runs our Vite build (npm run build) AND packages the
+      # output into .vercel/output/ which is what --prebuilt expects.
+      # VITE_* env vars are injected here so the built bundle points to prod.
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
 
@@ -51,7 +45,15 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
-      - name: Deploy prebuilt dist/ to Vercel (production)
+      - name: Build with Vercel
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VITE_CONVEX_URL: ${{ secrets.VITE_CONVEX_URL }}
+          VITE_CONVEX_SITE_URL: ${{ secrets.VITE_CONVEX_SITE_URL }}
+
+      - name: Deploy to Vercel (production)
         run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
