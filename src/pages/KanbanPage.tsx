@@ -598,6 +598,8 @@ function KanbanCol({
   cardPrefs,
   draggingCardId,
   isDragTarget,
+  isColDragging,
+  isColDropTarget,
   onDragOver,
   onDragLeave,
   onDrop,
@@ -606,6 +608,10 @@ function KanbanCol({
   onRemoveColumn,
   onDragStart,
   onDragEnd,
+  onColDragStart,
+  onColDragOver,
+  onColDrop,
+  onColDragEnd,
 }: {
   column: KanbanColumn;
   cards: KanbanCard[];
@@ -618,6 +624,8 @@ function KanbanCol({
   cardPrefs: string[];
   draggingCardId: string | null;
   isDragTarget: boolean;
+  isColDragging: boolean;
+  isColDropTarget: boolean;
   onDragOver: (colId: string) => void;
   onDragLeave: () => void;
   onDrop: (colId: string) => void;
@@ -626,38 +634,78 @@ function KanbanCol({
   onRemoveColumn: (colId: string) => void;
   onDragStart: (e: React.DragEvent, cardId: string) => void;
   onDragEnd: () => void;
+  onColDragStart: (e: React.DragEvent, colId: string) => void;
+  onColDragOver: (e: React.DragEvent, colId: string) => void;
+  onColDrop: (e: React.DragEvent, colId: string) => void;
+  onColDragEnd: () => void;
 }) {
   const sorted = [...cards].sort((a, b) => a.teamNumber - b.teamNumber);
+  const isUnsorted = column.id === "unsorted";
 
   return (
     <div
       className={`flex flex-col shrink-0 rounded-xl overflow-hidden border transition-all ${
-        isDragTarget
+        isColDragging
+          ? "opacity-40 scale-95"
+          : isColDropTarget
+          ? "ring-2 ring-primary/60 border-primary"
+          : isDragTarget
           ? "border-primary bg-primary/5 ring-2 ring-primary/30"
           : "border-border bg-muted/30"
       }`}
       style={{
-        /* 85vw on portrait mobile so next column peeks; 18rem (w-72) on wider screens */
         width: "clamp(260px, 85vw, 288px)",
         scrollSnapAlign: "start",
         borderTopColor: column.color ?? undefined,
         borderTopWidth: column.color ? 3 : undefined,
       }}
-      onDragOver={(e) => { e.preventDefault(); onDragOver(column.id); }}
+      onDragOver={(e) => {
+        // If a column is being dragged, route to column drop handler; otherwise card drop
+        if (e.dataTransfer.types.includes("application/kanban-col")) {
+          onColDragOver(e, column.id);
+        } else {
+          e.preventDefault();
+          onDragOver(column.id);
+        }
+      }}
       onDragLeave={onDragLeave}
-      onDrop={(e) => { e.preventDefault(); onDrop(column.id); }}
+      onDrop={(e) => {
+        if (e.dataTransfer.types.includes("application/kanban-col")) {
+          onColDrop(e, column.id);
+        } else {
+          e.preventDefault();
+          onDrop(column.id);
+        }
+      }}
     >
-      {/* Column header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-card">
-        <span className="font-semibold text-sm">{column.title}</span>
-        <div className="flex items-center gap-1 text-muted-foreground">
+      {/* Column header — draggable to reorder */}
+      <div
+        draggable={!isUnsorted}
+        onDragStart={(e) => !isUnsorted && onColDragStart(e, column.id)}
+        onDragEnd={onColDragEnd}
+        className={`flex items-center justify-between px-3 py-2 border-b border-border bg-card ${
+          !isUnsorted ? "cursor-grab active:cursor-grabbing" : "cursor-default"
+        }`}
+      >
+        <div className="flex items-center gap-1.5 min-w-0">
+          {!isUnsorted && (
+            <GripVertical className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0" />
+          )}
+          <span className="font-semibold text-sm truncate">{column.title}</span>
+          {isUnsorted && (
+            <span className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground/50 ml-1 shrink-0">pinned</span>
+          )}
+        </div>
+        <div className="flex items-center gap-1 text-muted-foreground shrink-0">
           <span className="text-xs font-mono">{sorted.length}</span>
-          <button
-            onClick={() => onRemoveColumn(column.id)}
-            className="p-0.5 rounded hover:bg-destructive/10 hover:text-destructive"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
+          {!isUnsorted && (
+            <button
+              onClick={() => onRemoveColumn(column.id)}
+              className="p-0.5 rounded hover:bg-destructive/10 hover:text-destructive"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -888,20 +936,24 @@ function ListView({
     setHeaderDrop(null);
   }
 
-  /** Updates the visual indicator as the cursor moves over a row. */
+  /** Updates the visual indicator as the cursor moves over a row.
+   *  Uses drag *direction* (up vs down in the list) instead of a Y-midpoint
+   *  split so that dragging over an adjacent item always shows a swap. */
   function handleRowDragOver(e: React.DragEvent, cardId: string) {
     e.preventDefault();
     if (!listDragId || listDragId === cardId) return;
-    const rect   = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const before = e.clientY < rect.top + rect.height / 2;
+    const dragIdx   = orderedCards.findIndex((c) => c._id === listDragId);
+    const targetIdx = orderedCards.findIndex((c) => c._id === cardId);
+    // Dragging UP → indicator above target; dragging DOWN → indicator below target
+    const before = dragIdx > targetIdx;
     setDropInfo((prev) =>
       prev?.cardId === cardId && prev?.before === before ? prev : { cardId, before }
     );
     setHeaderDrop(null);
   }
 
-  /** Performs the drop. before/after is recalculated from live e.clientY so
-   *  stale dropInfo state can never cause the wrong insertion. */
+  /** Performs the actual reorder using drag direction, not cursor Y-position.
+   *  This prevents the dead-zone where dragging an adjacent card did nothing. */
   function handleRowDrop(e: React.DragEvent, targetCardId: string) {
     e.preventDefault();
     if (!listDragId || listDragId === targetCardId) { handleDragEnd(); return; }
@@ -910,13 +962,14 @@ function ListView({
     const targetCard = orderedCards.find((c) => c._id === targetCardId);
     if (!dragCard || !targetCard) { handleDragEnd(); return; }
 
-    // Fresh calculation — never read from stale dropInfo.before
-    const rect   = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const before = e.clientY < rect.top + rect.height / 2;
+    const dragIdx   = orderedCards.findIndex((c) => c._id === listDragId);
+    const targetIdx = orderedCards.findIndex((c) => c._id === targetCardId);
+    const draggingDown = dragIdx < targetIdx;
 
-    const withoutDrag = orderedCards.filter((c) => c._id !== listDragId);
-    const targetIdx   = withoutDrag.findIndex((c) => c._id === targetCardId);
-    const insertIdx   = before ? targetIdx : targetIdx + 1;
+    const withoutDrag   = orderedCards.filter((c) => c._id !== listDragId);
+    const newTargetIdx  = withoutDrag.findIndex((c) => c._id === targetCardId);
+    // Dragging DOWN → insert after target; dragging UP → insert before target
+    const insertIdx     = draggingDown ? newTargetIdx + 1 : newTargetIdx;
 
     const newOrder = [
       ...withoutDrag.slice(0, insertIdx),
@@ -1139,6 +1192,10 @@ function BoardView({
   const [activeDragCardId, setActiveDragCardId] = useState<string | null>(null);
   const [dragOverColId, setDragOverColId]       = useState<string | null>(null);
 
+  // Column drag-to-reorder state
+  const [draggingColId, setDraggingColId]       = useState<string | null>(null);
+  const [colDropTargetId, setColDropTargetId]   = useState<string | null>(null);
+
   const columns: KanbanColumn[] = board?.columns ?? [];
 
   // Merge raw Convex cards with optimistic local overrides
@@ -1261,12 +1318,77 @@ function BoardView({
       title: newColName.trim(),
       color: "#EAB308",
     };
-    await updateColumns({ boardId, columns: [...columns, newCol] });
+    // Insert before the unsorted column (always keep unsorted last)
+    const unsortedIdx = columns.findIndex((c) => c.id === "unsorted");
+    const insertBefore = unsortedIdx !== -1 ? unsortedIdx : columns.length;
+    const next = [
+      ...columns.slice(0, insertBefore),
+      newCol,
+      ...columns.slice(insertBefore),
+    ];
+    await updateColumns({ boardId, columns: next });
     setNewColName("");
   }
 
   async function handleRemoveColumn(colId: string) {
+    if (colId === "unsorted") return; // Unsorted is permanent
     await updateColumns({ boardId, columns: columns.filter((c) => c.id !== colId) });
+  }
+
+  // ── Column drag-to-reorder handlers ─────────────────────────────────────
+
+  function handleColDragStart(e: React.DragEvent, colId: string) {
+    setDraggingColId(colId);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("application/kanban-col", colId);
+    e.dataTransfer.setData("text/plain", colId);
+  }
+
+  function handleColDragOver(e: React.DragEvent, colId: string) {
+    e.preventDefault();
+    if (!draggingColId || draggingColId === colId) return;
+    setColDropTargetId(colId);
+  }
+
+  async function handleColDrop(e: React.DragEvent, targetColId: string) {
+    e.preventDefault();
+    const srcId = draggingColId;
+    setDraggingColId(null);
+    setColDropTargetId(null);
+    if (!srcId || srcId === targetColId) return;
+
+    const srcIdx    = columns.findIndex((c) => c.id === srcId);
+    const tgtIdx    = columns.findIndex((c) => c.id === targetColId);
+    if (srcIdx === -1 || tgtIdx === -1) return;
+
+    const srcCol = columns[srcIdx];
+
+    // Direction-aware: dragging right → land at target's position (insert after);
+    // dragging left → land at target's position (insert before).
+    // Both cases produce "you land exactly where the target was" — mirroring
+    // the list-card behaviour so hovering over any column swaps with it.
+    const movingForward = srcIdx < tgtIdx;
+    const withoutSrc    = columns.filter((c) => c.id !== srcId);
+    const newTargetIdx  = withoutSrc.findIndex((c) => c.id === targetColId);
+    const insertIdx     = movingForward ? newTargetIdx + 1 : newTargetIdx;
+
+    const reordered = [
+      ...withoutSrc.slice(0, insertIdx),
+      srcCol,
+      ...withoutSrc.slice(insertIdx),
+    ];
+
+    // Always keep unsorted last
+    const unsorted = reordered.find((c) => c.id === "unsorted");
+    const rest      = reordered.filter((c) => c.id !== "unsorted");
+    const final     = unsorted ? [...rest, unsorted] : rest;
+
+    await updateColumns({ boardId, columns: final });
+  }
+
+  function handleColDragEnd() {
+    setDraggingColId(null);
+    setColDropTargetId(null);
   }
 
   // ── Drag handlers ─────────────────────────────────────────────────────────
@@ -1519,6 +1641,8 @@ function BoardView({
               cardPrefs={cardPrefs}
               draggingCardId={activeDragCardId}
               isDragTarget={dragOverColId === col.id}
+              isColDragging={draggingColId === col.id}
+              isColDropTarget={colDropTargetId === col.id}
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
@@ -1530,6 +1654,10 @@ function BoardView({
               onRemoveColumn={handleRemoveColumn}
               onDragStart={handleDragStart}
               onDragEnd={handleDragEnd}
+              onColDragStart={handleColDragStart}
+              onColDragOver={handleColDragOver}
+              onColDrop={handleColDrop}
+              onColDragEnd={handleColDragEnd}
             />
           ))}
 

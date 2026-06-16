@@ -22,6 +22,7 @@ import {
   Lock,
   KeySquare,
   RefreshCw,
+  ShieldX,
 } from "lucide-react";
 import { getTBAKey, setTBAKey, clearApiCache } from "@/lib/api";
 import { useUIStore } from "@/store/uiStore";
@@ -409,6 +410,8 @@ function AdminModeCard() {
 // ── Settings Page ─────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
+  const { isAdminMode } = useUIStore();
+
   const currentEventLive = useQuery(api.events.getCurrentEvent);
   const currentEvent = useCached(currentEventLive, "current_event");
   const setCurrentEvent = useMutation(api.events.setCurrentEvent);
@@ -485,62 +488,84 @@ export default function SettingsPage() {
 
       {/* Event */}
       <div className="bg-card border border-border rounded-xl p-5 space-y-4">
-        <div className="flex items-center gap-2">
-          <CalendarSearch className="h-4 w-4 text-primary" />
-          <h3 className="font-semibold">Current Event</h3>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <CalendarSearch className="h-4 w-4 text-primary" />
+            <h3 className="font-semibold">Current Event</h3>
+          </div>
+          {!isAdminMode && (
+            <span className="flex items-center gap-1 text-[10px] font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+              <Lock className="h-3 w-3" />
+              Admin only
+            </span>
+          )}
         </div>
 
-        {currentEvent && (
+        {currentEvent ? (
           <div className="flex items-center gap-3 px-3 py-2 bg-primary/10 rounded-lg text-sm">
             <span className="font-mono text-primary font-bold">{currentEvent.eventKey}</span>
             <span className="text-muted-foreground">·</span>
             <span>{currentEvent.eventName}</span>
           </div>
+        ) : (
+          <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 rounded-lg text-sm text-muted-foreground">
+            <CalendarSearch className="h-3.5 w-3.5 shrink-0" />
+            No event set yet.
+          </div>
         )}
 
-        <Separator />
+        {isAdminMode ? (
+          <>
+            <Separator />
 
-        <div className="space-y-1.5">
-          <Label>
-            TBA Event Key{" "}
-            <span className="text-muted-foreground font-normal text-xs">(e.g. 2025chcmp)</span>
-          </Label>
-          <Input
-            placeholder="2025chcmp"
-            value={eventKey}
-            onChange={(e) => setEventKey(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSaveEvent()}
-          />
-          <p className="text-xs text-muted-foreground">
-            Find it in the event URL on{" "}
-            <a
-              href="https://www.thebluealliance.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary hover:underline"
-            >
-              thebluealliance.com
-            </a>
-            .
-          </p>
-        </div>
+            <div className="space-y-1.5">
+              <Label>
+                TBA Event Key{" "}
+                <span className="text-muted-foreground font-normal text-xs">(e.g. 2025chcmp)</span>
+              </Label>
+              <Input
+                placeholder="2025chcmp"
+                value={eventKey}
+                onChange={(e) => setEventKey(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSaveEvent()}
+              />
+              <p className="text-xs text-muted-foreground">
+                Find it in the event URL on{" "}
+                <a
+                  href="https://www.thebluealliance.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline"
+                >
+                  thebluealliance.com
+                </a>
+                .
+              </p>
+            </div>
 
-        <div className="space-y-1.5">
-          <Label>
-            Event Display Name{" "}
-            <span className="text-muted-foreground font-normal text-xs">(optional)</span>
-          </Label>
-          <Input
-            placeholder="2025 NE District Boston"
-            value={eventName}
-            onChange={(e) => setEventName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSaveEvent()}
-          />
-        </div>
+            <div className="space-y-1.5">
+              <Label>
+                Event Display Name{" "}
+                <span className="text-muted-foreground font-normal text-xs">(optional)</span>
+              </Label>
+              <Input
+                placeholder="2025 NE District Boston"
+                value={eventName}
+                onChange={(e) => setEventName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSaveEvent()}
+              />
+            </div>
 
-        <Button onClick={handleSaveEvent} disabled={saving} className="w-full">
-          {saving ? "Saving…" : "Set Event"}
-        </Button>
+            <Button onClick={handleSaveEvent} disabled={saving} className="w-full">
+              {saving ? "Saving…" : "Set Event"}
+            </Button>
+          </>
+        ) : (
+          <div className="flex items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2.5 text-xs text-muted-foreground">
+            <ShieldX className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            Only admins can change the active event. Enable Admin Mode above to update it.
+          </div>
+        )}
       </div>
 
       {/* API Keys */}

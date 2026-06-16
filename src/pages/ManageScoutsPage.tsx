@@ -1017,16 +1017,16 @@ export default function ManageScoutsPage() {
             />
           </div>
 
-          {/* Two-panel layout */}
-          <div style={{ flex: 1, display: "flex", gap: 14, minHeight: 0 }}>
+          {/* Two-panel layout — on mobile the detail panel covers the full screen */}
+          <div style={{ flex: 1, display: "flex", gap: 14, minHeight: 0, position: "relative" }}>
 
-            {/* Left: Scout list */}
+            {/* Left: Scout list — hidden on mobile when a scout is selected */}
             <div
+              className={selectedUser ? "hidden md:flex" : "flex"}
               style={{
                 width: selectedUser ? 290 : "100%",
                 maxWidth: selectedUser ? 290 : "none",
                 flexShrink: 0,
-                display: "flex",
                 flexDirection: "column",
                 minHeight: 0,
                 background: "oklch(1 0 0 / 3%)",
@@ -1219,19 +1219,16 @@ export default function ManageScoutsPage() {
               </ScrollArea>
             </div>
 
-            {/* Right: Detail panel or empty hint */}
+            {/* Right: Detail panel — full-screen overlay on mobile, side panel on desktop */}
             {selectedUser ? (
               <div
+                className="fixed inset-0 z-40 md:static md:z-auto md:flex md:flex-col md:flex-1 md:min-w-0 md:min-h-0 md:rounded-2xl md:overflow-hidden"
                 style={{
-                  flex: 1,
                   display: "flex",
                   flexDirection: "column",
-                  minWidth: 0,
-                  minHeight: 0,
-                  background: "oklch(1 0 0 / 3%)",
-                  border: "1px solid oklch(0.85 0.18 95 / 25%)",
-                  borderRadius: 16,
+                  background: "var(--background)",
                   overflow: "hidden",
+                  border: "1px solid oklch(0.85 0.18 95 / 25%)",
                 }}
               >
                 {/* Panel header */}
@@ -1246,12 +1243,28 @@ export default function ManageScoutsPage() {
                     background: "oklch(0.85 0.18 95 / 6%)",
                   }}
                 >
-                  <Avatar user={selectedUser} size={44} />
+                  {/* Mobile-only back button */}
+                  <button
+                    className="md:hidden"
+                    onClick={() => setSelectedUserId(null)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 5,
+                      background: "transparent", border: "none", cursor: "pointer",
+                      color: "var(--muted-foreground)", fontSize: 13, fontWeight: 600,
+                      padding: "4px 6px 4px 0", flexShrink: 0,
+                    }}
+                    aria-label="Back to scout list"
+                  >
+                    <ChevronRight size={16} style={{ transform: "rotate(180deg)" }} />
+                    <span>Back</span>
+                  </button>
+
+                  <Avatar user={selectedUser} size={40} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div
                       style={{
                         fontWeight: 700,
-                        fontSize: 16,
+                        fontSize: 15,
                         color: "var(--foreground)",
                         whiteSpace: "nowrap",
                         overflow: "hidden",
@@ -1263,7 +1276,7 @@ export default function ManageScoutsPage() {
                     {selectedUser.email && (
                       <div
                         style={{
-                          fontSize: 12,
+                          fontSize: 11,
                           color: "var(--muted-foreground)",
                           whiteSpace: "nowrap",
                           overflow: "hidden",
@@ -1280,8 +1293,8 @@ export default function ManageScoutsPage() {
                     style={{
                       background: "oklch(0.85 0.18 95)",
                       borderRadius: 20,
-                      padding: "4px 14px",
-                      fontSize: 13,
+                      padding: "4px 12px",
+                      fontSize: 12,
                       fontWeight: 800,
                       color: "oklch(0.1 0 0)",
                       boxShadow: "0 2px 10px oklch(0.85 0.18 95 / 40%)",
@@ -1291,10 +1304,12 @@ export default function ManageScoutsPage() {
                     {selectedSubmissions.length} report{selectedSubmissions.length !== 1 ? "s" : ""}
                   </div>
 
+                  {/* Desktop-only X close */}
                   <Button
                     variant="ghost"
                     size="icon"
                     onClick={() => setSelectedUserId(null)}
+                    className="hidden md:inline-flex"
                     style={{ flexShrink: 0 }}
                   >
                     <X size={17} />

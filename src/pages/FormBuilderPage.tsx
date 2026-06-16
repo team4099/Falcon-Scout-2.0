@@ -53,6 +53,8 @@ import {
   FolderPlus,
   Pencil,
   ChevronRight,
+  Menu,
+  X as XIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -209,10 +211,10 @@ function FieldEditor({
         {field.required && (
           <span className="text-xs px-1.5 py-0.5 rounded-sm bg-primary/20 text-primary font-mono">req</span>
         )}
-        <button onClick={() => setOpen(true)} className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-muted text-muted-foreground hover:text-foreground">
+        <button onClick={() => setOpen(true)} className="p-1 rounded opacity-100 sm:opacity-0 group-hover:opacity-100 hover:bg-muted text-muted-foreground hover:text-foreground">
           <Settings className="h-4 w-4" />
         </button>
-        <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100 text-destructive hover:text-destructive" onClick={onDelete}>
+        <Button variant="ghost" size="icon" className="h-7 w-7 opacity-100 sm:opacity-0 group-hover:opacity-100 text-destructive hover:text-destructive" onClick={onDelete}>
           <Trash2 className="h-4 w-4" />
         </Button>
       </div>
@@ -553,6 +555,7 @@ function FormBuilderContent() {
   const [sectionNames, setSectionNames] = useState<string[]>(["General"]);
   const [saving, setSaving] = useState(false);
 
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   // Identify currently active forms by type
@@ -710,14 +713,94 @@ function FormBuilderContent() {
           <h2 className="text-2xl font-bold tracking-tight">Form Builder</h2>
           <p className="text-muted-foreground text-sm">Design and manage your scouting forms</p>
         </div>
-        <Button onClick={newForm} variant="outline" size="sm">
-          <Plus className="h-4 w-4 mr-1" /> New Form
-        </Button>
+        <div className="flex items-center gap-2">
+          {/* Mobile sidebar toggle */}
+          <Button
+            variant="outline"
+            size="icon"
+            className="sm:hidden"
+            onClick={() => setSidebarOpen(true)}
+            aria-label="Show forms list"
+          >
+            <Menu className="h-4 w-4" />
+          </Button>
+          <Button onClick={newForm} variant="outline" size="sm">
+            <Plus className="h-4 w-4 mr-1" /> New Form
+          </Button>
+        </div>
       </div>
 
+      {/* Mobile sidebar overlay */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-50 sm:hidden"
+          onClick={() => setSidebarOpen(false)}
+        >
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+          <div
+            className="absolute left-0 top-0 bottom-0 w-72 bg-background border-r border-border flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+              <p className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Forms</p>
+              <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(false)}>
+                <XIcon className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
+              {/* Active form indicators */}
+              {(activeDefault || activeSuper || activePit) && (
+                <div className="mb-2 space-y-1">
+                  {activeDefault && (
+                    <div className="flex items-center gap-1.5 text-xs text-primary px-2 py-1 rounded-md bg-primary/10">
+                      <ClipboardList className="h-3 w-3" />
+                      <span className="truncate font-medium">{activeDefault.name}</span>
+                    </div>
+                  )}
+                  {activeSuper && (
+                    <div className="flex items-center gap-1.5 text-xs text-amber-400 px-2 py-1 rounded-md bg-amber-500/10">
+                      <Binoculars className="h-3 w-3" />
+                      <span className="truncate font-medium">{activeSuper.name}</span>
+                    </div>
+                  )}
+                  {activePit && (
+                    <div className="flex items-center gap-1.5 text-xs text-cyan-400 px-2 py-1 rounded-md bg-cyan-500/10">
+                      <Search className="h-3 w-3" />
+                      <span className="truncate font-medium">{activePit.name}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+              {templates === undefined && <p className="text-sm text-muted-foreground">Loading…</p>}
+              {templates?.map((t) => {
+                const tType: FormType = (t.formType as FormType) ?? "default";
+                return (
+                  <button
+                    key={t._id}
+                    onClick={() => { loadTemplate(t); setSidebarOpen(false); }}
+                    className={`text-left px-3 py-2 rounded-lg text-sm transition-colors border ${
+                      selectedId === t._id
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-card border-border hover:border-primary/50"
+                    }`}
+                  >
+                    <p className="font-medium truncate">{t.name}</p>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <FormTypeBadge type={tType} />
+                      {t.isActive && <span className="text-[10px] text-green-400 font-semibold">● active</span>}
+                    </div>
+                  </button>
+                );
+              })}
+              {templates?.length === 0 && <p className="text-xs text-muted-foreground italic">No forms yet.</p>}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex gap-6 items-start">
-        {/* Sidebar: form list */}
-        <div className="w-56 shrink-0 flex flex-col gap-2 overflow-y-auto sticky top-0 max-h-[calc(100vh-10rem)]">
+        {/* Sidebar: form list — hidden on mobile (use menu button instead) */}
+        <div className="hidden sm:flex w-56 shrink-0 flex-col gap-2 overflow-y-auto sticky top-0 max-h-[calc(100vh-10rem)]">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Forms</p>
 
           {/* Active form indicators */}
@@ -771,12 +854,12 @@ function FormBuilderContent() {
         {/* Main editor */}
         <div className="flex-1 min-w-0">
           <Tabs defaultValue="edit">
-            <div className="flex items-center justify-between mb-4">
-              <TabsList>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2 mb-4">
+              <TabsList className="shrink-0 self-start">
                 <TabsTrigger value="edit">Edit</TabsTrigger>
                 <TabsTrigger value="preview">Preview</TabsTrigger>
               </TabsList>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap sm:ml-auto">
                 {/* Activate / Deactivate */}
                 {selectedId && (
                   currentlyActive ? (

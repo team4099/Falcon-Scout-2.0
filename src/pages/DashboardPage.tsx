@@ -1536,6 +1536,8 @@ export default function DashboardPage() {
   );
   // Track which eventKey the state was seeded for; re-seed when it changes
   const seededEventKeyRef = useRef<string>("");
+  // True while loadExternal() is in-flight (no cached TBA data yet)
+  const [loadingExternal, setLoadingExternal] = useState(true);
   const [nowMs, setNowMs] = useState(Date.now());
   const [search, setSearch] = useState("");
   const [selectedTeam, setSelectedTeam] = useState<number | null>(null);
@@ -1640,6 +1642,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!eventKey) return;
     let cancelled = false;
+    setLoadingExternal(true);
 
     async function loadExternal() {
       const [sbData, tbaTeamData, tbaRankData, matchData] = await Promise.all([
@@ -1727,9 +1730,10 @@ export default function DashboardPage() {
         setMatchData(matchData as TBAMatch[]);
         lsSet(`dash_matches_${eventKey}`, matchData, TTL.SHORT);
       }
+      if (!cancelled) setLoadingExternal(false);
     }
 
-    loadExternal();
+    loadExternal().catch(() => { if (!cancelled) setLoadingExternal(false); });
     return () => { cancelled = true; };
   }, [eventKey]);
 
@@ -1945,7 +1949,28 @@ export default function DashboardPage() {
             </div>
             <ScrollArea className="flex-1">
               <div className="min-w-[480px]">
-                {filtered.length === 0 ? (
+                {loadingExternal && tbaTeams.length === 0 ? (
+                  // Show skeleton rows while TBA team list is still loading (first login / no cache)
+                  <div className="divide-y divide-border">
+                    {Array.from({ length: 8 }).map((_, i) => (
+                      <div key={i} className="flex items-center gap-3 px-4 py-3">
+                        <div className="h-[30px] w-[30px] rounded bg-muted animate-pulse shrink-0" />
+                        <div className="flex flex-col gap-1.5 w-24">
+                          <div className="h-3 w-10 bg-muted rounded animate-pulse" />
+                          <div className="h-2.5 w-16 bg-muted/60 rounded animate-pulse" />
+                        </div>
+                        <div className="flex gap-3 flex-1">
+                          {Array.from({ length: 4 }).map((_, j) => (
+                            <div key={j} className="flex flex-col gap-1">
+                              <div className="h-2 w-10 bg-muted/50 rounded animate-pulse" />
+                              <div className="h-5 w-12 bg-muted/40 rounded animate-pulse" />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : filtered.length === 0 ? (
                   <p className="text-center py-12 text-muted-foreground text-sm">
                     {search ? "No teams match your search." : "No teams found for this event."}
                   </p>
