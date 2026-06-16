@@ -162,11 +162,9 @@ function AuthenticatedApp() {
         {/* Logo */}
         <div className="px-4 py-4 border-b border-border">
           <div className="flex items-center gap-2">
-            <img
-              src="/pwa-192.svg"
-              alt="FalconScout"
-              className="h-7 w-7 rounded-md"
-            />
+            <div className="h-7 w-7 rounded-md bg-primary flex items-center justify-center">
+              <span className="text-primary-foreground font-black text-xs">FS</span>
+            </div>
             <div>
               <p className="font-bold text-sm leading-none">FalconScout</p>
               <p className="text-[10px] text-muted-foreground">2.0</p>
