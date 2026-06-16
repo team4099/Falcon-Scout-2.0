@@ -1447,7 +1447,7 @@ export default function SchedulingPage() {
   const pitHiddenCount = (allUsers?.length ?? 0) - pitUsers.length;
 
   const assignMap = useMemo(() => {
-    const map: Record<number, Partial<Record<Position, { scoutId: string; name: string }>>> = {};
+    const map: Record<number, Partial<Record<Position, { scoutId: string; name: string; fullName: string }>>> = {};
     for (const a of allAssignments ?? []) {
       if (!map[a.matchNumber]) map[a.matchNumber] = {};
       const u = userMap[a.scoutId];
