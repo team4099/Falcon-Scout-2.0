@@ -213,6 +213,17 @@ export async function fetchStatboticsTeamYear(teamNumber: number, year: number) 
   );
 }
 
+/** Batch-fetch season EPA for all teams in a given year in a single request.
+ *  Returns an array of { team, epa, ... } objects — one per team. */
+export async function fetchStatboticsTeamYearsBatch(year: number) {
+  return fetchWithCache<Array<{ team: number; epa: unknown }>>(
+    `${STATBOTICS_BASE}/team_years?year=${year}&limit=5000`,
+    `sb_team_years_batch_${year}`,
+    {},
+    TTL.LONG
+  );
+}
+
 // ── Nexus (no key required) ───────────────────────────────────────────────────
 
 export interface NexusTeamStatus {

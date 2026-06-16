@@ -570,7 +570,7 @@ export default function MatchesPage() {
                   key={m.key}
                   onClick={() => setSelectedMatch(m)}
                   className={`w-full text-left rounded-xl border bg-card overflow-hidden transition-all
-                    hover:shadow-md hover:border-primary/40 hover:scale-[1.002] active:scale-[0.998]
+                    hover:shadow-md hover:border-primary/40
                     ${involves4099 ? "border-primary/50 shadow-sm shadow-primary/10" : "border-border"}`}
                 >
                   {/* Match header bar */}

@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   fetchStatboticsEventTeams,
-  fetchStatboticsTeamYear,
+  fetchStatboticsTeamYearsBatch,
   fetchTBAEventTeams,
   fetchTBAEventRankings,
   fetchTBAEventMatches,
@@ -1657,20 +1657,18 @@ export default function DashboardPage() {
         // Persist transformed map so it can be seeded next render
         lsSet(`dash_sbTeams_${eventKey}`, map, TTL.SHORT);
 
-        // Also fetch overall (season) EPA for each team in the background
-        const teams = (sbData as Array<{ team: number }>).map((t) => t.team);
-        Promise.all(
-          teams.map((tn) =>
-            fetchStatboticsTeamYear(tn, eventYear).then((d) => ({ tn, d }))
-          )
-        ).then((results) => {
+        // Also fetch overall (season) EPA for all teams — one batch request instead of N individual calls
+        const eventTeamSet = new Set((sbData as Array<{ team: number }>).map((t) => t.team));
+        fetchStatboticsTeamYearsBatch(eventYear).then((allYears) => {
           if (cancelled) return;
+          if (!Array.isArray(allYears)) return;
           const overall: Record<number, number> = {};
-          for (const { tn, d } of results) {
-            if (d && typeof d === "object" && "epa" in d) {
-              const epaO = (d as Record<string, unknown>).epa as Record<string, unknown>;
+          for (const d of allYears as Array<{ team: number; epa: unknown }>) {
+            if (!eventTeamSet.has(d.team)) continue; // only care about teams at this event
+            if (d.epa && typeof d.epa === "object") {
+              const epaO = d.epa as Record<string, unknown>;
               const v = totalEpa(epaO) ?? findInEpa(epaO, "total_points", "total");
-              if (v !== null) overall[tn] = v;
+              if (v !== null) overall[d.team] = v;
             }
           }
           setSbOverall(overall);
