@@ -4,6 +4,7 @@ import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { fetchTBAEventMatches } from "@/lib/api";
+import { lsGet, lsGetStale } from "@/lib/persistentCache";
 import type { TBAMatch } from "@/lib/api";
 import {
   CalendarDays, CalendarCheck, ClipboardList, Wrench, Coffee,
@@ -532,32 +533,51 @@ function PreferencesPanel({
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function MySchedulePage() {
-  const [tbaMatches, setTbaMatches] = useState<TBAMatch[]>([]);
   const [tbaLoading, setTbaLoading] = useState(false);
 
   const currentEvent   = useCached(useQuery(api.events.getCurrentEvent), "current_event");
-  const viewer         = useQuery(api.users.viewer);
-  const allUsers       = useQuery(api.users.listUsers) as UserRecord[] | undefined;
-  const myAssignments  = useQuery(
+  const eventKey       = currentEvent?.eventKey ?? "";
+
+  const viewerLive     = useQuery(api.users.viewer);
+  const viewer         = useCached(viewerLive, "viewer");
+
+  const allUsersLive   = useQuery(api.users.listUsers) as UserRecord[] | undefined;
+  const allUsers       = useCached(allUsersLive, "all_users") as UserRecord[] | undefined;
+
+  const myAssignmentsLive = useQuery(
     api.schedules.getMyMatchAssignments,
-    currentEvent ? { eventKey: currentEvent.eventKey } : "skip"
+    eventKey ? { eventKey } : "skip"
   ) as MatchAssignment[] | undefined;
-  const myPitRotations = useQuery(
+  const myAssignments = useCached(myAssignmentsLive, `my_assignments_${eventKey || "none"}`) as MatchAssignment[] | undefined;
+
+  const myPitRotationsLive = useQuery(
     api.schedules.getMyPitRotations,
-    currentEvent ? { eventKey: currentEvent.eventKey } : "skip"
+    eventKey ? { eventKey } : "skip"
   ) as PitRotation[] | undefined;
+  const myPitRotations = useCached(myPitRotationsLive, `my_pit_rotations_${eventKey || "none"}`) as PitRotation[] | undefined;
+
   const myPreferences  = useQuery(
     api.schedules.getMyPreferences,
-    currentEvent ? { eventKey: currentEvent.eventKey } : "skip"
+    eventKey ? { eventKey } : "skip"
+  );
+
+  // Seed TBA matches from cache immediately, then refresh in background
+  const [tbaMatches, setTbaMatches] = useState<TBAMatch[]>(
+    () => lsGet<TBAMatch[]>(`tba_matches_${eventKey}`) ?? lsGetStale<TBAMatch[]>(`tba_matches_${eventKey}`) ?? []
   );
 
   useEffect(() => {
-    if (!currentEvent?.eventKey) { setTbaMatches([]); return; }
+    if (!eventKey) { setTbaMatches([]); return; }
     setTbaLoading(true);
-    fetchTBAEventMatches(currentEvent.eventKey)
-      .then(data => { if (Array.isArray(data)) setTbaMatches([...data].sort((a, b) => matchSortKey(a) - matchSortKey(b))); })
+    fetchTBAEventMatches(eventKey)
+      .then(data => {
+        if (Array.isArray(data)) {
+          const sorted = [...data].sort((a, b) => matchSortKey(a) - matchSortKey(b));
+          setTbaMatches(sorted);
+        }
+      })
       .finally(() => setTbaLoading(false));
-  }, [currentEvent?.eventKey]);
+  }, [eventKey]);
 
   const matchMap = useMemo(() => {
     const m: Record<number, TBAMatch> = {};

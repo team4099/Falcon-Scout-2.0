@@ -896,11 +896,13 @@ function AutoGenerateModal({
   onConfirm,
   onCancel,
   applying,
+  applyError,
 }: {
   result: SchedulerOutput;
   onConfirm: () => Promise<void>;
   onCancel: () => void;
   applying: boolean;
+  applyError: string | null;
 }) {
   const [showWarnings, setShowWarnings] = useState(false);
   const hasWarnings = result.warnings.length > 0;
@@ -1012,6 +1014,30 @@ function AutoGenerateModal({
             </div>
           )}
 
+          {/* Error banner */}
+          {applyError && (
+            <div style={{
+              margin: "0 0 8px", padding: "10px 14px", borderRadius: 9,
+              background: "oklch(0.4 0.2 30 / 20%)",
+              border: "1px solid oklch(0.55 0.22 30 / 50%)",
+              fontSize: 12, color: "oklch(0.78 0.18 30)",
+            }}>
+              ⚠ {applyError}
+            </div>
+          )}
+
+          {/* Empty-result note */}
+          {result.matchAssignments.length === 0 && result.newPitRotations.length === 0 && (
+            <div style={{
+              margin: "0 0 8px", padding: "10px 14px", borderRadius: 9,
+              background: "oklch(0.5 0.15 270 / 12%)",
+              border: "1px solid oklch(0.6 0.15 270 / 30%)",
+              fontSize: 12, color: "oklch(0.75 0.12 270)",
+            }}>
+              All slots are already assigned — nothing new to apply. Clear existing assignments first if you want to regenerate.
+            </div>
+          )}
+
           {/* Buttons */}
           <div style={{ display: "flex", gap: 8 }}>
             <button
@@ -1028,10 +1054,10 @@ function AutoGenerateModal({
               style={{
                 flex: 2, padding: "10px 0", borderRadius: 10, fontSize: 13, fontWeight: 700,
                 background: G, color: G_TXT, border: "none",
-                cursor: applying ? "wait" : "pointer",
+                cursor: (applying || (result.matchAssignments.length === 0 && result.newPitRotations.length === 0)) ? "not-allowed" : "pointer",
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
                 boxShadow: `0 4px 14px ${G} / 35%`,
-                opacity: applying ? 0.7 : 1,
+                opacity: (applying || (result.matchAssignments.length === 0 && result.newPitRotations.length === 0)) ? 0.45 : 1,
                 transition: "opacity 0.15s",
               }}
             >
@@ -1060,6 +1086,7 @@ export default function SchedulingPage() {
   const [autoGenResult, setAutoGenResult] = useState<SchedulerOutput | null>(null);
   const [autoGenApplying, setAutoGenApplying] = useState(false);
   const [autoGenRunning, setAutoGenRunning] = useState(false);
+  const [autoGenError, setAutoGenError] = useState<string | null>(null);
 
   const currentEvent = useCached(useQuery(api.events.getCurrentEvent), "current_event");
   const allUsers     = useQuery(api.users.listUsers) as User[] | undefined;
@@ -1218,6 +1245,7 @@ export default function SchedulingPage() {
   const handleAutoApply = useCallback(async () => {
     if (!autoGenResult || !currentEvent) return;
     setAutoGenApplying(true);
+    setAutoGenError(null);
     try {
       // 1. Create new pit rotations
       for (const rot of autoGenResult.newPitRotations) {
@@ -1246,6 +1274,10 @@ export default function SchedulingPage() {
         });
       }
       setAutoGenResult(null);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setAutoGenError(`Failed to apply: ${msg}`);
+      console.error("[AutoApply] error:", err);
     } finally {
       setAutoGenApplying(false);
     }
@@ -1489,13 +1521,13 @@ export default function SchedulingPage() {
       )}
       </div>
 
-      {/* Auto-generate modal overlay */}
       {autoGenResult && (
         <AutoGenerateModal
           result={autoGenResult}
           onConfirm={handleAutoApply}
-          onCancel={() => setAutoGenResult(null)}
+          onCancel={() => { setAutoGenResult(null); setAutoGenError(null); }}
           applying={autoGenApplying}
+          applyError={autoGenError}
         />
       )}
     </>

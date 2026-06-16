@@ -1091,7 +1091,8 @@ function MyScouting({
     api.schedules.getMyMatchAssignments,
     eventKey ? { eventKey } : "skip"
   );
-  const assignments = (assignmentsLive ?? []) as MyAssignment[];
+  // useCached so assignments are visible offline from stale localStorage
+  const assignments = (useCached(assignmentsLive, `my_assignments_${eventKey || "none"}`) ?? []) as MyAssignment[];
 
   const upcoming = useMemo(() => {
     if (!assignments.length) return [];
@@ -1529,7 +1530,9 @@ export default function DashboardPage() {
     (lsGetStale<Record<number, number>>(`dash_avgScore_${eventKey ?? ""}`) ?? {})
   );
   const [matchData, setMatchData] = useState<TBAMatch[]>(() =>
-    (lsGetStale<TBAMatch[]>(`dash_matches_${eventKey ?? ""}`) ?? [])
+    // Try dashboard-specific key first, fall back to the key written by fetchTBAEventMatches
+    (lsGetStale<TBAMatch[]>(`dash_matches_${eventKey ?? ""}`) ??
+     lsGetStale<TBAMatch[]>(`tba_matches_${eventKey ?? ""}`) ?? [])
   );
   // Track which eventKey the state was seeded for; re-seed when it changes
   const seededEventKeyRef = useRef<string>("");

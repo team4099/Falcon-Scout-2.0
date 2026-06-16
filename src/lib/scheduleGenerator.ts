@@ -292,9 +292,13 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
     if (blockFullyAssigned(bi)) continue;
 
     const avail = scouts.filter(s => !isPitBusy(s._id, bi));
-    if (avail.length < 6) {
-      warnings.push(`Block ${bi + 1} (Q${blockStart(bi)}–Q${blockEnd(bi)}): only ${avail.length} scouts available, need 6.`);
+    if (avail.length === 0) {
+      warnings.push(`Block ${bi + 1} (Q${blockStart(bi)}–Q${blockEnd(bi)}): no scouts available, skipping.`);
       continue;
+    }
+    if (avail.length < 6) {
+      warnings.push(`Block ${bi + 1} (Q${blockStart(bi)}–Q${blockEnd(bi)}): only ${avail.length} of 6 scouts available — filling partial slots.`);
+      // Fall through — assignPositions sequential fallback handles partial fills
     }
 
     // Which positions in this block already have assignments?

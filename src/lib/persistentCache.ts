@@ -96,13 +96,15 @@ export async function idbEvictExpired(): Promise<void> {
 
 const LS_PREFIX = "falconscout_cache_";
 
-export function lsSet<T>(key: string, data: T, ttl: number): void {
+export function lsSet<T>(key: string, data: T, ttl: number, updateTimestamp = true): void {
   try {
     localStorage.setItem(
       `${LS_PREFIX}${key}`,
       JSON.stringify({ data, ts: Date.now(), ttl })
     );
-    localStorage.setItem("falconscout_last_api_sync", String(Date.now()));
+    if (updateTimestamp) {
+      localStorage.setItem("falconscout_last_api_sync", String(Date.now()));
+    }
   } catch {
     // Quota exceeded — silently ignore
   }

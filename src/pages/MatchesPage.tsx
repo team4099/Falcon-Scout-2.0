@@ -11,6 +11,7 @@ import {
   fetchTBAEventMatches,
 } from "@/lib/api";
 import type { TBAMatch } from "@/lib/api";
+import { lsGet, lsGetStale } from "@/lib/persistentCache";
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -396,7 +397,11 @@ export default function MatchesPage() {
   const template = useCached(templateLive, "active_template");
   const fields = (template?.fields as Array<{ id: string; label: string; type: string }>) ?? [];
 
-  const [matches,         setMatches]         = useState<TBAMatch[]>([]);
+  // Seed from cache immediately so the list renders on first mount even offline
+  const [matches,         setMatches]         = useState<TBAMatch[]>(
+    () => lsGet<TBAMatch[]>(`tba_matches_${currentEvent?.eventKey ?? ""}`) ??
+          lsGetStale<TBAMatch[]>(`tba_matches_${currentEvent?.eventKey ?? ""}`) ?? []
+  );
   const [epaDetailByTeam, setEpaDetailByTeam] = useState<Record<number, EpaBreakdown>>({});
   const [avgScoreByTeam,  setAvgScoreByTeam]  = useState<Record<number, number>>({});
   const [rankByTeam,      setRankByTeam]      = useState<Record<number, number>>({});

@@ -58,10 +58,19 @@ async function fetchWithCache<T>(
   const fresh = lsGet<T>(cacheKey);
   if (fresh !== null) return fresh;
 
+  // If this endpoint recently errored, don't hammer it — wait 5 minutes before retrying
+  const errKey = `${cacheKey}__err`;
+  if (lsGet<unknown>(errKey) !== null) {
+    return lsGetStale<T>(cacheKey);
+  }
+
   try {
     const res = await fetch(url, { headers });
     if (!res.ok) {
-      console.warn(`[API] ${res.status} ${res.statusText} — ${url}`);
+      console.warn(`[API] ${res.status}  — ${url}`);
+      // Cache the failure so we don't retry for 5 minutes.
+      // updateTimestamp=false so an error doesn't reset "last synced" to "now"
+      lsSet(errKey, { status: res.status }, 5 * 60 * 1000, false);
       return lsGetStale<T>(cacheKey);
     }
     const data = (await res.json()) as T;
