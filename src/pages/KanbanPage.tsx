@@ -25,6 +25,7 @@ import {
   fetchTBAEventTeams,
   fetchTBATeamInfo,
   fetchTBATeamAvatar,
+  clearCacheErrKey,
 } from "@/lib/api";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCached } from "@/hooks/useCached";
@@ -426,6 +427,7 @@ function TeamCard({
   eventKey,
   eventYear,
   epa,
+  epaStatus,
   submissions,
   fields,
   cardPrefs,
@@ -439,6 +441,7 @@ function TeamCard({
   eventKey: string;
   eventYear: number;
   epa: { event: number | null; auto: number | null; teleop: number | null; endgame: number | null } | null;
+  epaStatus: "loading" | "ok" | "error";
   submissions: Submission[];
   fields: FormField[];
   cardPrefs: string[];
@@ -455,43 +458,29 @@ function TeamCard({
 
   const visibleStats: Array<{ key: string; label: string; value: string }> = [];
 
-  // EPA chips — always show when configured (show "—" if no data yet)
+  // Determine EPA chip value based on fetch status
+  function epaVal(v: number | null | undefined): string {
+    if (epaStatus === "loading") return "…";
+    if (epaStatus === "error")   return "N/A";
+    return v !== null && v !== undefined ? Number(v.toFixed(1)).toString() : "—";
+  }
+
+  // EPA chips — always show when configured
   if (cardPrefs.includes("epa")) {
-    visibleStats.push({
-      key: "epa",
-      label: "Event EPA",
-      value: epa?.event !== null && epa?.event !== undefined ? Number(epa.event.toFixed(1)).toString() : "—",
-    });
+    visibleStats.push({ key: "epa",      label: "Event EPA",   value: epaVal(epa?.event)   });
   }
   if (cardPrefs.includes("epa_auto")) {
-    visibleStats.push({
-      key: "epa_auto",
-      label: "Auto EPA",
-      value: epa?.auto !== null && epa?.auto !== undefined ? Number(epa.auto.toFixed(1)).toString() : "—",
-    });
+    visibleStats.push({ key: "epa_auto", label: "Auto EPA",    value: epaVal(epa?.auto)    });
   }
   if (cardPrefs.includes("epa_teleop")) {
-    visibleStats.push({
-      key: "epa_teleop",
-      label: "Teleop EPA",
-      value: epa?.teleop !== null && epa?.teleop !== undefined ? Number(epa.teleop.toFixed(1)).toString() : "—",
-    });
+    visibleStats.push({ key: "epa_teleop", label: "Teleop EPA", value: epaVal(epa?.teleop) });
   }
   if (cardPrefs.includes("epa_endgame")) {
-    visibleStats.push({
-      key: "epa_endgame",
-      label: "Endgame EPA",
-      value: epa?.endgame !== null && epa?.endgame !== undefined ? Number(epa.endgame.toFixed(1)).toString() : "—",
-    });
+    visibleStats.push({ key: "epa_endgame", label: "Endgame EPA", value: epaVal(epa?.endgame) });
   }
   if (cardPrefs.includes("epa_overall")) {
     // Season EPA: fall back to event EPA since team_year data may not be available yet.
-    const seasonVal = epa?.event ?? null;
-    visibleStats.push({
-      key: "epa_overall",
-      label: "Season EPA",
-      value: seasonVal !== null ? Number(seasonVal.toFixed(1)).toString() : "—",
-    });
+    visibleStats.push({ key: "epa_overall", label: "Season EPA", value: epaVal(epa?.event) });
   }
 
   for (const f of fields) {
@@ -603,6 +592,7 @@ function KanbanCol({
   eventKey,
   eventYear,
   epaByTeam,
+  epaStatus,
   submissionsByTeam,
   fields,
   cardPrefs,
@@ -622,6 +612,7 @@ function KanbanCol({
   eventKey: string;
   eventYear: number;
   epaByTeam: Record<number, { event: number | null; auto: number | null; teleop: number | null; endgame: number | null }>;
+  epaStatus: "loading" | "ok" | "error";
   submissionsByTeam: Record<number, Submission[]>;
   fields: FormField[];
   cardPrefs: string[];
@@ -680,6 +671,7 @@ function KanbanCol({
               eventKey={eventKey}
               eventYear={eventYear}
               epa={epaByTeam[card.teamNumber] ?? null}
+              epaStatus={epaStatus}
               submissions={submissionsByTeam[card.teamNumber] ?? []}
               fields={fields}
               cardPrefs={cardPrefs}
@@ -1134,6 +1126,7 @@ function BoardView({
   const [cardPrefsOpen, setCardPrefsOpen] = useState(false);
   const [cardPrefs, setCardPrefs]       = useState<string[]>(getCardPrefs);
   const [epaByTeam, setEpaByTeam] = useState<Record<number, { event: number | null; auto: number | null; teleop: number | null; endgame: number | null }>>({});
+  const [epaStatus, setEpaStatus] = useState<"loading" | "ok" | "error">("loading");
   const [viewMode, setViewMode]         = useState<"board" | "list">("board");
   const [pickedTeams, setPickedTeams]   = useState<Set<number>>(() => getPickedTeams(String(boardId)));
   const seededRef = useRef(false);
@@ -1190,9 +1183,13 @@ function BoardView({
   // ── Fetch Statbotics EPA breakdown for all event teams ─────────────────
   useEffect(() => {
     if (!eventKey) return;
+    setEpaStatus("loading");
     async function loadEpa() {
       const data = await fetchStatboticsEventTeams(eventKey);
-      if (!Array.isArray(data) || data.length === 0) return;
+      if (!Array.isArray(data) || data.length === 0) {
+        setEpaStatus("error");
+        return;
+      }
       const map: Record<number, { event: number | null; auto: number | null; teleop: number | null; endgame: number | null }> = {};
       for (const t of data as Array<{ team: number; epa: unknown }>) {
         const epaRaw = t.epa;
@@ -1204,6 +1201,7 @@ function BoardView({
         };
       }
       setEpaByTeam(map);
+      setEpaStatus("ok");
     }
     loadEpa();
   }, [eventKey]);
@@ -1464,6 +1462,45 @@ function BoardView({
         </div>
       </div>
 
+      {/* EPA status banner */}
+      {epaStatus === "error" && (
+        <div className="flex items-center gap-2 px-3 py-1.5 mb-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs">
+          <span className="shrink-0">⚠</span>
+          <span>Statbotics EPA data is currently unavailable — the API may be down. Cards will show "N/A" until data loads.</span>
+          <button
+            className="ml-auto shrink-0 underline hover:text-amber-500 transition-colors"
+            onClick={() => {
+              // Clear the 5-min error backoff so fetchWithCache hits the network again
+              clearCacheErrKey(`sb_event_teams_${eventKey}`);
+              setEpaStatus("loading");
+              fetchStatboticsEventTeams(eventKey).then((data) => {
+                if (!Array.isArray(data) || data.length === 0) { setEpaStatus("error"); return; }
+                const map: Record<number, { event: number | null; auto: number | null; teleop: number | null; endgame: number | null }> = {};
+                for (const t of data as Array<{ team: number; epa: unknown }>) {
+                  const epaRaw = t.epa;
+                  map[(t as { team: number }).team] = {
+                    event:   extractEpa(epaRaw),
+                    auto:    findInEpa(epaRaw, "auto_points", "auto"),
+                    teleop:  findInEpa(epaRaw, "teleop_points", "teleop"),
+                    endgame: findInEpa(epaRaw, "endgame_points", "endgame"),
+                  };
+                }
+                setEpaByTeam(map);
+                setEpaStatus("ok");
+              });
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+      {epaStatus === "loading" && (
+        <div className="flex items-center gap-2 px-3 py-1 mb-2 rounded-lg bg-muted/50 text-muted-foreground text-xs">
+          <span className="animate-spin inline-block">⟳</span>
+          <span>Loading EPA data from Statbotics…</span>
+        </div>
+      )}
+
       {/* Board or List view */}
       {viewMode === "board" ? (
         /* Board — always scrolls horizontally; columns have min-width for portrait mobile */
@@ -1476,6 +1513,7 @@ function BoardView({
               eventKey={eventKey}
               eventYear={eventYear}
               epaByTeam={epaByTeam}
+              epaStatus={epaStatus}
               submissionsByTeam={submissionsByTeam}
               fields={fields}
               cardPrefs={cardPrefs}

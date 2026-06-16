@@ -41,6 +41,13 @@ export function clearApiCache(): void {
   import("./persistentCache").then(({ clearAllCache }) => clearAllCache());
 }
 
+/** Clear the 5-minute error-backoff entry for a specific cache key so the
+ *  next call to fetchWithCache will actually hit the network again. */
+export function clearCacheErrKey(cacheKey: string): void {
+  const LS_PREFIX = "falconscout_cache_";
+  localStorage.removeItem(`${LS_PREFIX}${cacheKey}__err`);
+}
+
 // ── Core fetch with localStorage cache ───────────────────────────────────────
 
 async function fetchWithCache<T>(
