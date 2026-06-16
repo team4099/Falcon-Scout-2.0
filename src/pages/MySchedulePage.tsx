@@ -63,10 +63,25 @@ function formatTime(m: TBAMatch): string | null {
   return new Date(ts * 1000).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
+/** Given a TBAMatch and a Position, returns the team number (e.g. 4099) or null. */
+function teamNumberForPosition(match: TBAMatch, position: Position): number | null {
+  const alliance = position.startsWith("red") ? "red" : "blue";
+  const idx = parseInt(position.slice(-1), 10) - 1; // red1→0, blue3→2
+  const key = match.alliances[alliance]?.team_keys?.[idx];
+  if (!key) return null;
+  const num = parseInt(key.replace("frc", ""), 10);
+  return isNaN(num) ? null : num;
+}
+
 // ── Scouting match card ───────────────────────────────────────────────────────
 
 function ScoutingCard({ assignment, match }: { assignment: MatchAssignment; match: TBAMatch | null }) {
   const time = match ? formatTime(match) : null;
+  const isRed = assignment.position.startsWith("red");
+  const allianceColor = isRed ? "oklch(0.62 0.22 25)" : "oklch(0.55 0.22 255)";
+  const allianceBg    = isRed ? "oklch(0.62 0.22 25 / 14%)" : "oklch(0.55 0.22 255 / 14%)";
+  const allianceBord  = isRed ? "oklch(0.62 0.22 25 / 35%)" : "oklch(0.55 0.22 255 / 35%)";
+  const teamNumber = match ? teamNumberForPosition(match, assignment.position) : null;
 
   return (
     <div
@@ -78,16 +93,14 @@ function ScoutingCard({ assignment, match }: { assignment: MatchAssignment; matc
       onMouseEnter={e => (e.currentTarget.style.transform = "translateX(3px)")}
       onMouseLeave={e => (e.currentTarget.style.transform = "none")}
     >
-      {/* Icon */}
+      {/* Alliance color stripe */}
       <div style={{
-        width: 36, height: 36, borderRadius: 9, flexShrink: 0,
-        background: G, display: "flex", alignItems: "center", justifyContent: "center",
-        boxShadow: `0 2px 10px ${G} / 40%`,
-      }}>
-        <ClipboardList size={16} color={G_TXT} />
-      </div>
+        width: 4, height: 44, borderRadius: 3, flexShrink: 0,
+        background: allianceColor,
+        boxShadow: `0 0 8px ${allianceColor} / 60%`,
+      }} />
 
-      {/* Match + position */}
+      {/* Match label + position */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 800, fontSize: 15, color: FG, fontFamily: "monospace", letterSpacing: "-0.01em" }}>
           {assignment.matchLabel}
@@ -97,16 +110,36 @@ function ScoutingCard({ assignment, match }: { assignment: MatchAssignment; matc
         </div>
       </div>
 
-      {/* Position badge */}
-      <span style={{
-        display: "inline-flex", alignItems: "center", gap: 5,
-        padding: "4px 11px", borderRadius: 8,
-        background: G, color: G_TXT, fontSize: 12, fontWeight: 700,
-        border: `1px solid ${G_STR}`, flexShrink: 0,
-        boxShadow: `0 2px 8px ${G} / 30%`,
-      }}>
-        {POS_LABEL[assignment.position]}
-      </span>
+      {/* Team number — pulled from TBA */}
+      <div style={{ flexShrink: 0, width: 72 }}>
+        {teamNumber !== null ? (
+          <div style={{
+            background: allianceBg,
+            border: `1.5px solid ${allianceBord}`,
+            borderRadius: 10,
+            padding: "5px 0",
+            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+            width: "100%",
+          }}>
+            <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: allianceColor, lineHeight: 1 }}>
+              Team
+            </span>
+            <span style={{ fontSize: 20, fontWeight: 900, color: allianceColor, lineHeight: 1.1, letterSpacing: "-0.02em" }}>
+              {teamNumber}
+            </span>
+          </div>
+        ) : (
+          <span style={{
+            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: "4px 0", borderRadius: 8, width: "100%",
+            background: G, color: G_TXT, fontSize: 12, fontWeight: 700,
+            border: `1px solid ${G_STR}`,
+            boxShadow: `0 2px 8px ${G} / 30%`,
+          }}>
+            {POS_LABEL[assignment.position]}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -581,7 +614,10 @@ export default function MySchedulePage() {
 
   const matchMap = useMemo(() => {
     const m: Record<number, TBAMatch> = {};
-    for (const t of tbaMatches) m[t.match_number] = t;
+    // Only index qual matches — elim match numbers overlap with qual numbers
+    for (const t of tbaMatches) {
+      if (t.comp_level === "qm") m[t.match_number] = t;
+    }
     return m;
   }, [tbaMatches]);
 

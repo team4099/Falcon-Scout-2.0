@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
@@ -148,9 +148,14 @@ interface ScoutSelectorProps {
   matchCounts: Record<string, number>;
   matches: TBAMatch[];
   onBatchAssign: (start: number, end: number, positions: Set<Position>) => Promise<void>;
+  isMobile?: boolean;
+  isLandscapePhone?: boolean;
 }
 
-function ScoutSelector({ users, pinnedId, onPin, matchCounts, matches, onBatchAssign }: ScoutSelectorProps) {
+function ScoutSelector({ users, pinnedId, onPin, matchCounts, matches, onBatchAssign, isMobile, isLandscapePhone }: ScoutSelectorProps) {
+  const [mobileOpen, setMobileOpen] = useState(false);
+  // In landscape phone mode the panel is always open (side-by-side, never collapsed)
+  const bodyVisible = isLandscapePhone ? true : (!isMobile || mobileOpen);
   const [batchStart, setBatchStart] = useState("");
   const [batchEnd, setBatchEnd]     = useState("");
   const [batchPos, setBatchPos]     = useState<Set<Position>>(new Set());
@@ -176,71 +181,162 @@ function ScoutSelector({ users, pinnedId, onPin, matchCounts, matches, onBatchAs
   const totalSlots = previewCount * batchPos.size;
   const canApply = !!batchStart && !!batchEnd && parseInt(batchStart) <= parseInt(batchEnd) && batchPos.size > 0;
 
+
   return (
     <div style={{
-      width: 248, flexShrink: 0, display: "flex", flexDirection: "column",
+      width: isLandscapePhone ? 130 : isMobile ? "100%" : 248,
+      flexShrink: 0, display: "flex", flexDirection: "column",
       minHeight: 0, borderRadius: 14, border: `1px solid ${SURF_BORD}`,
       background: SURFACE, overflow: "hidden",
+      maxHeight: isMobile && !isLandscapePhone && !mobileOpen ? 52 : undefined,
+      transition: "max-height 0.25s ease",
     }}>
-      {/* Header */}
-      <div style={{ padding: "11px 14px", borderBottom: `1px solid ${SURF_BORD}`, background: G_DIM, flexShrink: 0 }}>
+      {/* Header — tappable toggle on portrait-mobile only */}
+      <div
+        style={{
+          padding: isLandscapePhone ? "8px 10px" : "11px 14px",
+          borderBottom: bodyVisible ? `1px solid ${SURF_BORD}` : "none",
+          background: G_DIM, flexShrink: 0,
+          cursor: isMobile && !isLandscapePhone ? "pointer" : "default",
+        }}
+        onClick={isMobile && !isLandscapePhone ? () => setMobileOpen(o => !o) : undefined}
+      >
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <Users size={13} style={{ color: G }} />
-          <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: G }}>
-            Pin a Scout
-          </span>
-          <span style={{ marginLeft: "auto", background: G_MED, color: G, borderRadius: 20, padding: "1px 8px", fontSize: 11, fontWeight: 700 }}>
-            {users.length}
+          {!isLandscapePhone && (
+            <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: G }}>
+              {isMobile && pinnedId
+                ? `Scout: ${pinned?.name?.split(" ")[0] ?? "?"}`
+                : "Pin a Scout"}
+            </span>
+          )}
+          <span style={{ marginLeft: isLandscapePhone ? 0 : "auto", background: G_MED, color: G, borderRadius: 20, padding: "1px 8px", fontSize: 11, fontWeight: 700 }}>
+            {isLandscapePhone
+              ? users.length
+              : isMobile ? (mobileOpen ? "Close ▲" : `${users.length} scouts ▼`) : users.length}
           </span>
         </div>
-        <p style={{ fontSize: 11, color: MUTED, margin: "4px 0 0", lineHeight: 1.3 }}>
-          Select a scout, then click grid cells to assign.
-        </p>
+        {!isMobile && !isLandscapePhone && (
+          <p style={{ fontSize: 11, color: MUTED, margin: "4px 0 0", lineHeight: 1.3 }}>
+            Select a scout, then click grid cells to assign.
+          </p>
+        )}
       </div>
 
       {/* Scout list */}
-      <ScrollArea style={{ flex: 1 }}>
-        <div style={{ padding: "8px 8px 4px" }}>
-          {users.length === 0 && (
-            <div style={{ padding: "32px 12px", textAlign: "center", color: MUTED, fontSize: 13 }}>
-              No scouts yet
+      {bodyVisible && (
+        isLandscapePhone ? (
+          /* Landscape phone: compact scrollable vertical list, avatar + first name only */
+          <ScrollArea style={{ flex: 1 }}>
+            <div style={{ padding: "4px 6px 6px", display: "flex", flexDirection: "column", gap: 2 }}>
+              {users.map(u => {
+                const active = pinnedId === u._id;
+                const cnt = matchCounts[u._id] ?? 0;
+                return (
+                  <button key={u._id} onClick={() => onPin(active ? null : u._id)}
+                    style={{
+                      width: "100%", display: "flex", alignItems: "center", gap: 6,
+                      padding: "5px 6px", borderRadius: 8, cursor: "pointer",
+                      background: active ? G_DIM : "transparent",
+                      border: `1.5px solid ${active ? G_STR : "transparent"}`,
+                      outline: "none", transition: "all 0.1s",
+                    }}
+                    onMouseEnter={e => { if (!active) e.currentTarget.style.background = SURF_HVR; }}
+                    onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
+                  >
+                    <Avatar user={u} size={22} />
+                    <span style={{ fontSize: 11, fontWeight: 700, color: active ? G : FG, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left" }}>
+                      {firstName(u)}
+                    </span>
+                    {cnt > 0 && (
+                      <span style={{ background: active ? G : G_MED, color: active ? G_TXT : G, borderRadius: 20, padding: "0 5px", fontSize: 9, fontWeight: 800, flexShrink: 0 }}>
+                        {cnt}
+                      </span>
+                    )}
+                    {active && <Check size={10} style={{ color: G, flexShrink: 0 }} />}
+                  </button>
+                );
+              })}
             </div>
-          )}
-          {users.map(u => {
-            const active = pinnedId === u._id;
-            const cnt = matchCounts[u._id] ?? 0;
-            return (
-              <button key={u._id} onClick={() => onPin(active ? null : u._id)}
-                style={{
-                  width: "100%", display: "flex", alignItems: "center", gap: 9,
-                  padding: "8px 9px", borderRadius: 10, cursor: "pointer", textAlign: "left",
-                  background: active ? G_DIM : "transparent",
-                  border: `1.5px solid ${active ? G_STR : "transparent"}`,
-                  outline: "none", transition: "all 0.12s",
-                }}
-                onMouseEnter={e => { if (!active) e.currentTarget.style.background = SURF_HVR; }}
-                onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
-              >
-                <Avatar user={u} size={30} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: FG, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {displayName(u)}
-                  </div>
-                </div>
-                {cnt > 0 && (
-                  <span style={{ background: G, color: G_TXT, borderRadius: 20, padding: "1px 7px", fontSize: 11, fontWeight: 800, flexShrink: 0 }}>
-                    {cnt}
+          </ScrollArea>
+        ) : isMobile ? (
+          /* Portrait phone: horizontal scrolling carousel */
+          <div style={{ overflowX: "auto", overflowY: "hidden", display: "flex", gap: 6, padding: "8px 10px", flexShrink: 0 }}>
+            {users.length === 0 && (
+              <div style={{ padding: "12px", color: MUTED, fontSize: 13, whiteSpace: "nowrap" }}>No scouts yet</div>
+            )}
+            {users.map(u => {
+              const active = pinnedId === u._id;
+              const cnt = matchCounts[u._id] ?? 0;
+              return (
+                <button key={u._id} onClick={() => { onPin(active ? null : u._id); setMobileOpen(false); }}
+                  style={{
+                    display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+                    padding: "8px 10px", borderRadius: 12, cursor: "pointer", flexShrink: 0,
+                    background: active ? G_DIM : SURF_HVR,
+                    border: `1.5px solid ${active ? G_STR : SURF_BORD}`,
+                    outline: "none", transition: "all 0.12s", minWidth: 58,
+                  }}
+                >
+                  <Avatar user={u} size={32} />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: active ? G : FG, whiteSpace: "nowrap", maxWidth: 58, overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {firstName(u)}
                   </span>
-                )}
-                {active && <Check size={13} style={{ color: G, flexShrink: 0 }} />}
-              </button>
-            );
-          })}
-        </div>
-      </ScrollArea>
+                  {cnt > 0 && (
+                    <span style={{ background: active ? G : SURF_BORD, color: active ? G_TXT : MUTED, borderRadius: 20, padding: "0px 5px", fontSize: 10, fontWeight: 800 }}>
+                      {cnt}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          /* Desktop: full vertical list */
+          <ScrollArea style={{ flex: 1 }}>
+            <div style={{ padding: "8px 8px 4px" }}>
+              {users.length === 0 && (
+                <div style={{ padding: "32px 12px", textAlign: "center", color: MUTED, fontSize: 13 }}>
+                  No scouts yet
+                </div>
+              )}
+              {users.map(u => {
+                const active = pinnedId === u._id;
+                const cnt = matchCounts[u._id] ?? 0;
+                return (
+                  <button key={u._id} onClick={() => onPin(active ? null : u._id)}
+                    style={{
+                      width: "100%", display: "flex", alignItems: "center", gap: 9,
+                      padding: "8px 9px", borderRadius: 10, cursor: "pointer", textAlign: "left",
+                      background: active ? G_DIM : "transparent",
+                      border: `1.5px solid ${active ? G_STR : "transparent"}`,
+                      outline: "none", transition: "all 0.12s",
+                    }}
+                    onMouseEnter={e => { if (!active) e.currentTarget.style.background = SURF_HVR; }}
+                    onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
+                  >
+                    <Avatar user={u} size={30} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: FG, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {displayName(u)}
+                      </div>
+                    </div>
+                    {cnt > 0 && (
+                      <span style={{ background: G, color: G_TXT, borderRadius: 20, padding: "1px 7px", fontSize: 11, fontWeight: 800, flexShrink: 0 }}>
+                        {cnt}
+                      </span>
+                    )}
+                    {active && <Check size={13} style={{ color: G, flexShrink: 0 }} />}
+                  </button>
+                );
+              })}
+            </div>
+          </ScrollArea>
+        )
+      )}
 
-      {/* Batch assign — only when a scout is pinned */}
-      {pinned && (
+      {/* Batch assign — desktop only */}
+      {pinned && bodyVisible && !isMobile && !isLandscapePhone && (
         <div style={{ borderTop: `1px solid ${G_MED}`, padding: "12px 12px 14px", background: G_DIM, flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 10 }}>
             <Zap size={13} style={{ color: G }} />
@@ -341,13 +437,17 @@ function ScoutSelector({ users, pinnedId, onPin, matchCounts, matches, onBatchAs
 
 interface MatchGridProps {
   matches: TBAMatch[];
-  assignMap: Record<number, Partial<Record<Position, { scoutId: string; name: string }>>>;
+  assignMap: Record<number, Partial<Record<Position, { scoutId: string; name: string; fullName: string }>>>;
   pinnedId: string | null;
   onCellClick: (matchNum: number, matchLbl: string, pos: Position) => void;
   saving: Set<string>;
+  isMobile?: boolean;
+  isLandscapePhone?: boolean;
 }
 
-function MatchGrid({ matches, assignMap, pinnedId, onCellClick, saving }: MatchGridProps) {
+function MatchGrid({ matches, assignMap, pinnedId, onCellClick, saving, isMobile, isLandscapePhone }: MatchGridProps) {
+  const [expandedMatchKey, setExpandedMatchKey] = useState<string | null>(null);
+  const canExpand = isMobile && !isLandscapePhone;
   if (matches.length === 0) {
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, color: MUTED }}>
@@ -358,18 +458,29 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, saving }: MatchG
   }
 
   // Column widths — label + 3 red + divider + 3 blue
-  const COL = "50px 1fr 1fr 1fr 3px 1fr 1fr 1fr";
+  // landscape phone gets a slightly wider label so match numbers don't wrap
+  const COL = isLandscapePhone
+    ? "44px 1fr 1fr 1fr 2px 1fr 1fr 1fr"
+    : isMobile
+    ? "36px 1fr 1fr 1fr 2px 1fr 1fr 1fr"
+    : "50px 1fr 1fr 1fr 3px 1fr 1fr 1fr";
+
+  const cellPad = isLandscapePhone ? "3px 2px" : "4px 3px";
+  const cellMinH = isLandscapePhone ? 24 : 28;
+  const cellFontSize = isLandscapePhone ? 10 : 11;
+  const rowPad = isLandscapePhone ? "2px 6px 8px" : "4px 10px 12px";
+  const headerPad = isLandscapePhone ? "0 6px" : "0 10px";
 
   return (
-    <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", borderRadius: 14, border: `1px solid ${SURF_BORD}`, background: SURFACE, overflow: "hidden" }}>
+    <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", borderRadius: 14, border: `1px solid ${SURF_BORD}`, background: SURFACE, overflow: isMobile ? "auto" : "hidden" }}>
       {/* Sticky header */}
       <div style={{
         display: "grid", gridTemplateColumns: COL,
-        alignItems: "stretch", padding: "0 10px", flexShrink: 0,
+        alignItems: "stretch", padding: headerPad, flexShrink: 0,
         borderBottom: `1px solid ${SURF_BORD}`, background: "var(--card)",
       }}>
-        <div style={{ padding: "9px 4px", fontSize: 10, fontWeight: 700, color: MUTED, textTransform: "uppercase", letterSpacing: "0.07em" }}>
-          Match
+        <div style={{ padding: isMobile ? "7px 2px" : "9px 4px", fontSize: 10, fontWeight: 700, color: MUTED, textTransform: "uppercase", letterSpacing: "0.07em" }}>
+          {isMobile || isLandscapePhone ? "#" : "Match"}
         </div>
         {POSITIONS.map((p, i) => (
           <>
@@ -389,109 +500,209 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, saving }: MatchG
 
       {/* Rows */}
       <ScrollArea style={{ flex: 1 }}>
-        <div style={{ padding: "4px 10px 12px", display: "flex", flexDirection: "column", gap: 2 }}>
+        <div style={{ padding: rowPad, display: "flex", flexDirection: "column", gap: isLandscapePhone ? 1 : 2 }}>
           {matches.map(m => {
             const lbl = tbaMatchLabel(m);
             const row = assignMap[m.match_number] ?? {};
             const isQual = m.comp_level === "qm";
+            const isExpanded = canExpand && expandedMatchKey === m.key;
+            const redPositions: Position[]  = ["red1",  "red2",  "red3"];
+            const bluePositions: Position[] = ["blue1", "blue2", "blue3"];
 
             return (
-              <div key={m.key} style={{
-                display: "grid", gridTemplateColumns: COL,
-                gap: 0, alignItems: "center",
-                borderRadius: 8,
-                background: !isQual ? G_DIM : "transparent",
-                borderLeft: !isQual ? `2px solid ${G_MED}` : "2px solid transparent",
-              }}>
-                {/* Match label */}
+              <Fragment key={m.key}>
+                {/* Grid row */}
                 <div style={{
-                  padding: "3px 4px", fontSize: 12, fontWeight: 700,
-                  fontFamily: "monospace", letterSpacing: "-0.01em",
-                  color: isQual ? FG : G,
+                  display: "grid", gridTemplateColumns: COL,
+                  gap: 0, alignItems: "center",
+                  borderRadius: 8,
+                  background: !isQual ? G_DIM : "transparent",
+                  borderLeft: !isQual ? `2px solid ${G_MED}` : "2px solid transparent",
                 }}>
-                  {lbl}
+                  {/* Match label — tap to expand on portrait mobile */}
+                  {canExpand ? (
+                    <button
+                      onClick={() => setExpandedMatchKey(k => k === m.key ? null : m.key)}
+                      style={{
+                        padding: "3px 4px", fontSize: 12, fontWeight: 700,
+                        fontFamily: "monospace", letterSpacing: "-0.01em",
+                        color: isQual ? FG : G,
+                        background: isExpanded ? G_MED : "transparent",
+                        border: "none", borderRadius: 5, cursor: "pointer",
+                        textAlign: "left", transition: "background 0.1s",
+                      }}
+                    >
+                      {lbl}
+                    </button>
+                  ) : (
+                    <div style={{
+                      padding: isLandscapePhone ? "2px 3px" : "3px 4px",
+                      fontSize: isLandscapePhone ? 10 : 12, fontWeight: 700,
+                      fontFamily: "monospace", letterSpacing: "-0.01em",
+                      color: isQual ? FG : G,
+                    }}>
+                      {lbl}
+                    </div>
+                  )}
+
+                  {/* Position cells */}
+                  {POSITIONS.map((p, i) => {
+                    const savingKey = `${m.match_number}-${p}`;
+                    const isSaving = saving.has(savingKey);
+                    const assigned = row[p];
+                    const isPinned = assigned?.scoutId === pinnedId;
+
+                    let cellBg     = "transparent";
+                    let cellBorder = `1.5px solid transparent`;
+                    let textColor  = MUTED;
+
+                    if (assigned) {
+                      if (isPinned) {
+                        cellBg = G_DIM;
+                        cellBorder = `1.5px solid ${G_STR}`;
+                        textColor = G;
+                      } else {
+                        cellBg = SURF_HVR;
+                        cellBorder = `1.5px solid ${SURF_BORD}`;
+                        textColor = FG;
+                      }
+                    } else if (pinnedId) {
+                      cellBorder = `1.5px dashed ${SURF_BORD}`;
+                    }
+
+                    return (
+                      <>
+                        {i === 3 && (
+                          <div key={`div-${m.key}`} style={{ width: "3px", alignSelf: "stretch", background: "oklch(1 0 0/5%)", margin: "2px 0" }} />
+                        )}
+                        <button key={p}
+                          onClick={() => onCellClick(m.match_number, lbl, p)}
+                          disabled={isSaving}
+                          title={
+                            assigned
+                              ? `${assigned.name} (${POS_META[p].short}) — click to ${isPinned ? "unassign" : "replace"}`
+                              : pinnedId ? `Assign to ${POS_META[p].label}` : "Pin a scout first"
+                          }
+                          style={{
+                            margin: isLandscapePhone ? "1px" : "2px",
+                            padding: cellPad, borderRadius: 6,
+                            cursor: pinnedId ? "pointer" : "default",
+                            background: cellBg, border: cellBorder,
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            fontSize: cellFontSize, fontWeight: 700, color: textColor,
+                            transition: "all 0.1s", minHeight: cellMinH, minWidth: 0, overflow: "hidden",
+                            opacity: isSaving ? 0.5 : 1,
+                          }}
+                          onMouseEnter={e => {
+                            if (pinnedId && !isSaving) {
+                              e.currentTarget.style.background = G_DIM;
+                              e.currentTarget.style.border = `1.5px solid ${G_MED}`;
+                            }
+                          }}
+                          onMouseLeave={e => {
+                            e.currentTarget.style.background = cellBg;
+                            e.currentTarget.style.border = cellBorder;
+                          }}
+                        >
+                          {isSaving
+                            ? <Loader2 size={10} style={{ animation: "spin 1s linear infinite" }} />
+                            : !assigned
+                              ? (pinnedId ? <span style={{ opacity: 0.25, fontSize: 14, fontWeight: 300 }}>+</span> : null)
+                              : <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%", padding: "0 2px" }}>
+                                  {assigned.name}
+                                </span>
+                          }
+                        </button>
+                      </>
+                    );
+                  })}
                 </div>
 
-                {/* Position cells */}
-                {POSITIONS.map((p, i) => {
-                  const savingKey = `${m.match_number}-${p}`;
-                  const isSaving = saving.has(savingKey);
-                  const assigned = row[p];
-                  const isPinned = assigned?.scoutId === pinnedId;
-
-                  // Cell styling based on state
-                  let cellBg     = "transparent";
-                  let cellBorder = `1.5px solid transparent`;
-                  let textColor  = MUTED;
-
-                  if (assigned) {
-                    if (isPinned) {
-                      cellBg = G_DIM;
-                      cellBorder = `1.5px solid ${G_STR}`;
-                      textColor = G;
-                    } else {
-                      cellBg = SURF_HVR;
-                      cellBorder = `1.5px solid ${SURF_BORD}`;
-                      textColor = FG;
-                    }
-                  } else if (pinnedId) {
-                    cellBorder = `1.5px dashed ${SURF_BORD}`;
-                  }
-
-                  return (
-                    <>
-                      {i === 3 && (
-                        <div key={`div-${m.key}`} style={{ width: "3px", alignSelf: "stretch", background: "oklch(1 0 0/5%)", margin: "2px 0" }} />
-                      )}
-                      <button key={p}
-                        onClick={() => onCellClick(m.match_number, lbl, p)}
-                        disabled={isSaving}
-                        title={
-                          assigned
-                            ? `${assigned.name} (${POS_META[p].short}) — click to ${isPinned ? "unassign" : "replace"}`
-                            : pinnedId ? `Assign to ${POS_META[p].label}` : "Pin a scout first"
-                        }
-                        style={{
-                          margin: "2px",
-                          padding: "4px 3px", borderRadius: 6,
-                          cursor: pinnedId ? "pointer" : "default",
-                          background: cellBg, border: cellBorder,
-                          display: "flex", alignItems: "center", justifyContent: "center",
-                          fontSize: 11, fontWeight: 700, color: textColor,
-                          transition: "all 0.1s", minHeight: 28, minWidth: 0, overflow: "hidden",
-                          opacity: isSaving ? 0.5 : 1,
-                        }}
-                        onMouseEnter={e => {
-                          if (pinnedId && !isSaving) {
-                            e.currentTarget.style.background = assigned ? G_DIM : G_DIM;
-                            e.currentTarget.style.borderColor = G_MED;
-                          }
-                        }}
-                        onMouseLeave={e => {
-                          e.currentTarget.style.background = cellBg;
-                          e.currentTarget.style.borderColor = cellBorder.split(" ")[2];
-                        }}
+                {/* Expanded detail — renders immediately below this row */}
+                {isExpanded && (
+                  <div style={{
+                    borderRadius: 12,
+                    border: `1.5px solid ${G_MED}`,
+                    background: "var(--card)",
+                    overflow: "hidden",
+                    boxShadow: `0 4px 20px oklch(0 0 0 / 30%)`,
+                    margin: "2px 0 4px",
+                  }}>
+                    {/* Header */}
+                    <div style={{
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      padding: "9px 14px", background: G_DIM,
+                      borderBottom: `1px solid ${G_MED}`,
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 16, fontWeight: 800, fontFamily: "monospace", color: isQual ? FG : G }}>{lbl}</span>
+                        {!isQual && <span style={{ fontSize: 10, fontWeight: 700, background: G_MED, color: G, borderRadius: 20, padding: "2px 8px" }}>Playoff</span>}
+                      </div>
+                      <button
+                        onClick={() => setExpandedMatchKey(null)}
+                        style={{ background: SURF_HVR, border: `1px solid ${SURF_BORD}`, borderRadius: 6, padding: "3px 10px", fontSize: 12, fontWeight: 700, color: MUTED, cursor: "pointer" }}
                       >
-                        {isSaving
-                          ? <Loader2 size={10} style={{ animation: "spin 1s linear infinite" }} />
-                          : !assigned
-                            ? (pinnedId ? <span style={{ opacity: 0.25, fontSize: 14, fontWeight: 300 }}>+</span> : null)
-                            : <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%", padding: "0 2px" }}>
-                                {assigned.name}
-                              </span>
-                        }
+                        ✕
                       </button>
-                    </>
-                  );
-                })}
-              </div>
+                    </div>
+
+                    {/* Alliance columns */}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr" }}>
+                      {/* Red */}
+                      <div style={{ padding: "10px 12px", borderRight: `1px solid ${SURF_BORD}` }}>
+                        <div style={{ fontSize: 10, fontWeight: 800, color: "oklch(0.65 0.22 25)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Red Alliance</div>
+                        {redPositions.map(p => {
+                          const a = row[p];
+                          const isPinned = a?.scoutId === pinnedId;
+                          return (
+                            <div key={p} style={{ display: "flex", alignItems: "flex-start", gap: 7, marginBottom: 7 }}>
+                              <span style={{ fontSize: 10, fontWeight: 800, color: "oklch(0.65 0.22 25)", background: "oklch(0.65 0.22 25 / 12%)", borderRadius: 5, padding: "2px 6px", flexShrink: 0, marginTop: 1 }}>
+                                {POS_META[p].short}
+                              </span>
+                              <span style={{ fontSize: 13, fontWeight: isPinned ? 800 : 500, color: isPinned ? G : a ? FG : MUTED, lineHeight: 1.3 }}>
+                                {a ? a.fullName : <span style={{ opacity: 0.35, fontSize: 11 }}>Unassigned</span>}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Blue */}
+                      <div style={{ padding: "10px 12px" }}>
+                        <div style={{ fontSize: 10, fontWeight: 800, color: "oklch(0.6 0.22 260)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Blue Alliance</div>
+                        {bluePositions.map(p => {
+                          const a = row[p];
+                          const isPinned = a?.scoutId === pinnedId;
+                          return (
+                            <div key={p} style={{ display: "flex", alignItems: "flex-start", gap: 7, marginBottom: 7 }}>
+                              <span style={{ fontSize: 10, fontWeight: 800, color: "oklch(0.6 0.22 260)", background: "oklch(0.6 0.22 260 / 12%)", borderRadius: 5, padding: "2px 6px", flexShrink: 0, marginTop: 1 }}>
+                                {POS_META[p].short}
+                              </span>
+                              <span style={{ fontSize: 13, fontWeight: isPinned ? 800 : 500, color: isPinned ? G : a ? FG : MUTED, lineHeight: 1.3 }}>
+                                {a ? a.fullName : <span style={{ opacity: 0.35, fontSize: 11 }}>Unassigned</span>}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {pinnedId && (
+                      <div style={{ padding: "7px 14px", borderTop: `1px solid ${SURF_BORD}`, background: G_DIM, fontSize: 11, color: MUTED, textAlign: "center" }}>
+                        Tap a cell above to assign / unassign
+                      </div>
+                    )}
+                  </div>
+                )}
+              </Fragment>
             );
           })}
         </div>
       </ScrollArea>
 
-      {/* Footer legend */}
-      <div style={{ padding: "7px 14px", borderTop: `1px solid ${SURF_BORD}`, display: "flex", gap: 16, flexShrink: 0, background: "var(--card)", alignItems: "center" }}>
+      {/* Footer legend — hidden in landscape phone to save vertical space */}
+      {!isLandscapePhone && (
+        <div style={{ padding: "7px 14px", borderTop: `1px solid ${SURF_BORD}`, display: "flex", gap: 16, flexShrink: 0, background: "var(--card)", alignItems: "center" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
           <div style={{ width: 10, height: 10, borderRadius: 3, background: G, opacity: 0.9 }} />
           <span style={{ fontSize: 10, color: MUTED }}>Pinned scout</span>
@@ -504,6 +715,7 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, saving }: MatchG
           {pinnedId ? "Click a cell to assign · click same scout again to unassign" : "← Pin a scout to start assigning"}
         </span>
       </div>
+      )}
     </div>
   );
 }
@@ -594,9 +806,10 @@ function RotationCard({ rotation, users, onEdit, onDelete }: {
 // ── Elims pit rotation panel ──────────────────────────────────────────────────
 // Exactly one elims rotation per event, covering all playoff matches.
 
-function ElimsRotationPanel({ rotation, users, onSave, onDelete }: {
+function ElimsRotationPanel({ rotation, users, allUsers: allUsersRaw, onSave, onDelete }: {
   rotation: PitRotation | null;
-  users: User[];
+  users: User[];        // opted-in scouts
+  allUsers?: User[];    // all scouts for manual override
   onSave: (scoutIds: Set<string>) => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
@@ -604,11 +817,14 @@ function ElimsRotationPanel({ rotation, users, onSave, onDelete }: {
   const [selected, setSelected] = useState<Set<string>>(new Set(rotation?.scoutIds ?? []));
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [showAllElims, setShowAllElims] = useState(false);
 
   // Sync when rotation changes externally
   useEffect(() => { setSelected(new Set(rotation?.scoutIds ?? [])); }, [rotation]);
 
   const userMap = useMemo(() => Object.fromEntries(users.map(u => [u._id, u])), [users]);
+  const optedInElimsIds = useMemo(() => new Set(users.map(u => u._id)), [users]);
+  const othersElims = useMemo(() => (allUsersRaw ?? []).filter(u => !optedInElimsIds.has(u._id)), [allUsersRaw, optedInElimsIds]);
 
   function toggleScout(id: string) {
     setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -668,26 +884,68 @@ function ElimsRotationPanel({ rotation, users, onSave, onDelete }: {
             <div style={{ fontSize: 11, fontWeight: 700, color: MUTED, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>
               Scouts on elims pit duty
             </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
-              {users.map(u => {
-                const on = selected.has(u._id);
-                return (
-                  <button key={u._id} onClick={() => toggleScout(u._id)}
-                    style={{
-                      display: "inline-flex", alignItems: "center", gap: 5,
-                      padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer",
-                      background: on ? G : SURF_HVR,
-                      color: on ? G_TXT : MUTED,
-                      border: `1.5px solid ${on ? G_STR : SURF_BORD}`,
-                      transition: "all 0.1s",
-                    }}
-                  >
-                    {on && <Check size={11} />}
-                    {firstName(u)}
-                  </button>
-                );
-              })}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: othersElims.length > 0 ? 6 : 12 }}>
+              {users.length > 0
+                ? users.map(u => {
+                    const on = selected.has(u._id);
+                    return (
+                      <button key={u._id} onClick={() => toggleScout(u._id)}
+                        style={{
+                          display: "inline-flex", alignItems: "center", gap: 5,
+                          padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                          background: on ? G : SURF_HVR,
+                          color: on ? G_TXT : MUTED,
+                          border: `1.5px solid ${on ? G_STR : SURF_BORD}`,
+                          transition: "all 0.1s",
+                        }}
+                      >
+                        {on && <Check size={11} />}
+                        {firstName(u)}
+                      </button>
+                    );
+                  })
+                : <span style={{ fontSize: 12, color: MUTED }}>No scouts have opted into pit rotations.</span>
+              }
             </div>
+            {/* Non-opted-in scouts — manual override */}
+            {othersElims.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <button
+                  onClick={() => setShowAllElims(v => !v)}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 5,
+                    fontSize: 11, fontWeight: 700, color: MUTED,
+                    background: "transparent", border: "none", cursor: "pointer", padding: "2px 0",
+                    textTransform: "uppercase", letterSpacing: "0.06em",
+                  }}
+                >
+                  <ChevDown size={12} style={{ transform: showAllElims ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+                  {showAllElims ? "Hide" : "Add others"} ({othersElims.length} not opted in)
+                </button>
+                {showAllElims && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                    {othersElims.map(u => {
+                      const on = selected.has(u._id);
+                      return (
+                        <button key={u._id} onClick={() => toggleScout(u._id)}
+                          style={{
+                            display: "inline-flex", alignItems: "center", gap: 5,
+                            padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                            background: on ? G : SURF_HVR,
+                            color: on ? G_TXT : MUTED,
+                            border: `1.5px solid ${on ? G_STR : SURF_BORD}`,
+                            transition: "all 0.1s",
+                          }}
+                        >
+                          {on && <Check size={11} />}
+                          {firstName(u)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
             <div style={{ display: "flex", gap: 8 }}>
               <button onClick={handleSave} disabled={saving || selected.size === 0}
                 style={{
@@ -761,8 +1019,9 @@ interface RotationFormState {
   scoutIds: Set<string>;
 }
 
-function RotationForm({ users, initial, onSave, onCancel, isEdit }: {
-  users: User[];
+function RotationForm({ users, allUsers: allUsersRaw, initial, onSave, onCancel, isEdit }: {
+  users: User[];          // opted-in scouts
+  allUsers?: User[];      // every scout (for manual override)
   initial?: RotationFormState;
   onSave: (form: RotationFormState) => Promise<void>;
   onCancel?: () => void;
@@ -772,6 +1031,11 @@ function RotationForm({ users, initial, onSave, onCancel, isEdit }: {
     initial ?? { label: "", startMatch: "", endMatch: "", scoutIds: new Set() }
   );
   const [saving, setSaving] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+
+  // Scouts who haven't opted in but can be added manually
+  const optedInIds = new Set(users.map(u => u._id));
+  const othersAvail = (allUsersRaw ?? []).filter(u => !optedInIds.has(u._id));
 
   function toggleScout(id: string) {
     setForm(f => {
@@ -798,6 +1062,25 @@ function RotationForm({ users, initial, onSave, onCancel, isEdit }: {
     background: "var(--background)", border: `1.5px solid ${SURF_BORD}`,
     color: FG, outline: "none",
   };
+
+  function ScoutChip({ u }: { u: User }) {
+    const on = form.scoutIds.has(u._id);
+    return (
+      <button key={u._id} onClick={() => toggleScout(u._id)}
+        style={{
+          display: "inline-flex", alignItems: "center", gap: 5,
+          padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer",
+          background: on ? G : SURF_HVR,
+          color: on ? G_TXT : MUTED,
+          border: `1.5px solid ${on ? G_STR : SURF_BORD}`,
+          transition: "all 0.1s",
+        }}
+      >
+        {on && <Check size={11} />}
+        {firstName(u)}
+      </button>
+    );
+  }
 
   return (
     <div style={{
@@ -832,30 +1115,39 @@ function RotationForm({ users, initial, onSave, onCancel, isEdit }: {
         />
       </div>
 
-      {/* Scout multi-select */}
+      {/* Opted-in scouts */}
       <div style={{ fontSize: 11, fontWeight: 700, color: MUTED, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>
         Scouts on pit duty during this range
       </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
-        {users.map(u => {
-          const on = form.scoutIds.has(u._id);
-          return (
-            <button key={u._id} onClick={() => toggleScout(u._id)}
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 5,
-                padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer",
-                background: on ? G : SURF_HVR,
-                color: on ? G_TXT : MUTED,
-                border: `1.5px solid ${on ? G_STR : SURF_BORD}`,
-                transition: "all 0.1s",
-              }}
-            >
-              {on && <Check size={11} />}
-              {firstName(u)}
-            </button>
-          );
-        })}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: othersAvail.length > 0 ? 8 : 14 }}>
+        {users.length > 0
+          ? users.map(u => <ScoutChip key={u._id} u={u} />)
+          : <span style={{ fontSize: 12, color: MUTED }}>No scouts have opted into pit rotations.</span>
+        }
       </div>
+
+      {/* Non-opted-in scouts — manual override section */}
+      {othersAvail.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <button
+            onClick={() => setShowAll(v => !v)}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 5,
+              fontSize: 11, fontWeight: 700, color: MUTED,
+              background: "transparent", border: "none", cursor: "pointer", padding: "2px 0",
+              textTransform: "uppercase", letterSpacing: "0.06em",
+            }}
+          >
+            <ChevDown size={12} style={{ transform: showAll ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+            {showAll ? "Hide" : "Add others"} ({othersAvail.length} not opted in)
+          </button>
+          {showAll && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+              {othersAvail.map(u => <ScoutChip key={u._id} u={u} />)}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Buttons */}
       <div style={{ display: "flex", gap: 8 }}>
@@ -1087,6 +1379,24 @@ export default function SchedulingPage() {
   const [autoGenApplying, setAutoGenApplying] = useState(false);
   const [autoGenRunning, setAutoGenRunning] = useState(false);
   const [autoGenError, setAutoGenError] = useState<string | null>(null);
+  const [clearingAll, setClearingAll] = useState(false);
+
+  // Responsive: track viewport size + orientation
+  const getVp = () =>
+    typeof window === "undefined"
+      ? { mobile: false, landscape: false, shortScreen: false }
+      : { mobile: window.innerWidth < 1024, landscape: window.innerWidth > window.innerHeight, shortScreen: window.innerHeight < 500 };
+  const [vp, setVp] = useState(getVp);
+  useEffect(() => {
+    const fn = () => setVp(getVp());
+    window.addEventListener("resize", fn);
+    window.addEventListener("orientationchange", fn);
+    return () => { window.removeEventListener("resize", fn); window.removeEventListener("orientationchange", fn); };
+  }, []);
+
+  const isMobile         = vp.mobile;                                    // < 1024px wide
+  const isLandscapePhone = vp.landscape && vp.shortScreen;               // rotated phone (< 500px tall)
+  const stackLayout      = vp.mobile && !vp.landscape;                   // portrait phone → stack vertically
 
   const currentEvent = useCached(useQuery(api.events.getCurrentEvent), "current_event");
   const allUsers     = useQuery(api.users.listUsers) as User[] | undefined;
@@ -1103,11 +1413,12 @@ export default function SchedulingPage() {
     currentEvent ? { eventKey: currentEvent.eventKey } : "skip"
   );
 
-  const setMatchAssignment   = useMutation(api.schedules.setMatchAssignment);
-  const clearMatchAssignment = useMutation(api.schedules.clearMatchAssignment);
-  const batchSet             = useMutation(api.schedules.batchSetMatchAssignments);
-  const upsertRotation       = useMutation(api.schedules.upsertPitRotation);
-  const deleteRotation       = useMutation(api.schedules.deletePitRotation);
+  const setMatchAssignment      = useMutation(api.schedules.setMatchAssignment);
+  const clearMatchAssignment    = useMutation(api.schedules.clearMatchAssignment);
+  const clearAllMatchAssignments = useMutation(api.schedules.clearAllMatchAssignments);
+  const batchSet                = useMutation(api.schedules.batchSetMatchAssignments);
+  const upsertRotation          = useMutation(api.schedules.upsertPitRotation);
+  const deleteRotation          = useMutation(api.schedules.deletePitRotation);
 
   // Load TBA matches
   useEffect(() => {
@@ -1140,7 +1451,7 @@ export default function SchedulingPage() {
     for (const a of allAssignments ?? []) {
       if (!map[a.matchNumber]) map[a.matchNumber] = {};
       const u = userMap[a.scoutId];
-      map[a.matchNumber][a.position] = { scoutId: a.scoutId, name: u ? firstName(u) : "?" };
+      map[a.matchNumber][a.position] = { scoutId: a.scoutId, name: u ? firstName(u) : "?", fullName: u ? displayName(u) : "?" };
     }
     return map;
   }, [allAssignments, userMap]);
@@ -1196,6 +1507,22 @@ export default function SchedulingPage() {
       scoutIds: Array.from(form.scoutIds) as Id<"users">[],
     });
     setEditingRotation(null);
+  }
+
+  async function handleClearAll() {
+    if (!currentEvent) return;
+    const count = (allAssignments ?? []).length;
+    if (count === 0) return;
+    const confirmed = window.confirm(
+      `Clear all ${count} match assignment${count !== 1 ? "s" : ""} for this event? This cannot be undone.`
+    );
+    if (!confirmed) return;
+    setClearingAll(true);
+    try {
+      await clearAllMatchAssignments({ eventKey: currentEvent.eventKey });
+    } finally {
+      setClearingAll(false);
+    }
   }
 
   // ── Auto-generate handler ─────────────────────────────────────────────────
@@ -1295,54 +1622,89 @@ export default function SchedulingPage() {
 
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <div style={{ flexShrink: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
-          <div style={{
-            width: 38, height: 38, borderRadius: 10, background: G, flexShrink: 0,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            boxShadow: `0 4px 16px ${G} / 45%`,
-          }}>
-            <LayoutGrid size={19} color={G_TXT} />
-          </div>
+        {/* Top row: icon + title + progress bar */}
+        <div style={{ display: "flex", alignItems: "center", gap: isLandscapePhone ? 8 : 12, marginBottom: isLandscapePhone ? 4 : (currentEvent && (allUsers || filledSlots > 0) ? 8 : 4) }}>
+          {!isLandscapePhone && (
+            <div style={{
+              width: 38, height: 38, borderRadius: 10, background: G, flexShrink: 0,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              boxShadow: `0 4px 16px ${G} / 45%`,
+            }}>
+              <LayoutGrid size={19} color={G_TXT} />
+            </div>
+          )}
           <div style={{ flex: 1, minWidth: 0 }}>
-            <h1 style={{ fontSize: 22, fontWeight: 800, color: FG, margin: 0, lineHeight: 1.2, letterSpacing: "-0.02em" }}>
+            <h1 style={{ fontSize: isLandscapePhone ? 15 : isMobile ? 18 : 22, fontWeight: 800, color: FG, margin: 0, lineHeight: 1.2, letterSpacing: "-0.02em" }}>
               Scheduling
             </h1>
-            <p style={{ fontSize: 13, color: MUTED, margin: 0 }}>
-              {currentEvent
-                ? `${currentEvent.eventName ?? currentEvent.eventKey} · ${filledSlots}/${totalSlots} slots filled`
-                : "Set an event in Settings to build a schedule"}
-            </p>
+            {!isLandscapePhone && (
+              <p style={{ fontSize: 13, color: MUTED, margin: 0 }}>
+                {currentEvent
+                  ? `${currentEvent.eventName ?? currentEvent.eventKey} · ${filledSlots}/${totalSlots} slots filled`
+                  : "Set an event in Settings to build a schedule"}
+              </p>
+            )}
           </div>
-          {currentEvent && allUsers && matches.length > 0 && (
-            <button
-              onClick={handleAutoGenerate}
-              disabled={autoGenRunning}
-              style={{
-                display: "flex", alignItems: "center", gap: 7,
-                padding: "8px 16px", borderRadius: 10, fontSize: 13, fontWeight: 700,
-                background: G, color: G_TXT, border: "none",
-                cursor: autoGenRunning ? "wait" : "pointer",
-                boxShadow: `0 4px 14px ${G} / 35%`,
-                flexShrink: 0, opacity: autoGenRunning ? 0.7 : 1,
-                transition: "opacity 0.15s, box-shadow 0.15s",
-              }}
-              onMouseEnter={e => { if (!autoGenRunning) (e.currentTarget as HTMLButtonElement).style.boxShadow = `0 6px 20px ${G} / 50%`; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.boxShadow = `0 4px 14px ${G} / 35%`; }}
-            >
-              {autoGenRunning
-                ? <><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />Generating…</>
-                : <><Sparkles size={14} />Auto-Generate</>}
-            </button>
-          )}
           {currentEvent && totalSlots > 0 && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-              <div style={{ width: 120, height: 6, borderRadius: 999, background: SURF_BORD, overflow: "hidden" }}>
+              <div style={{ width: isLandscapePhone ? 60 : isMobile ? 70 : 120, height: 5, borderRadius: 999, background: SURF_BORD, overflow: "hidden" }}>
                 <div style={{ height: "100%", borderRadius: 999, background: G, width: `${pct}%`, transition: "width 0.4s ease" }} />
               </div>
-              <span style={{ fontSize: 12, fontWeight: 700, color: G, minWidth: 32 }}>{pct}%</span>
+              <span style={{ fontSize: isLandscapePhone ? 11 : 12, fontWeight: 700, color: G, minWidth: 28 }}>{pct}%</span>
             </div>
           )}
         </div>
+        {/* Action buttons row — hidden in landscape phone to save space (use auto-gen sparingly) */}
+        {!isLandscapePhone && currentEvent && (allUsers && matches.length > 0 || filledSlots > 0) && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {allUsers && matches.length > 0 && (
+              <button
+                onClick={handleAutoGenerate}
+                disabled={autoGenRunning}
+                style={{
+                  display: "flex", alignItems: "center", gap: 7,
+                  padding: "8px 16px", borderRadius: 10, fontSize: 13, fontWeight: 700,
+                  background: G, color: G_TXT, border: "none",
+                  cursor: autoGenRunning ? "wait" : "pointer",
+                  boxShadow: `0 4px 14px ${G} / 35%`,
+                  flexShrink: 0, opacity: autoGenRunning ? 0.7 : 1,
+                  transition: "opacity 0.15s, box-shadow 0.15s",
+                  flex: isMobile ? "1 1 auto" : "none",
+                }}
+                onMouseEnter={e => { if (!autoGenRunning) (e.currentTarget as HTMLButtonElement).style.boxShadow = `0 6px 20px ${G} / 50%`; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.boxShadow = `0 4px 14px ${G} / 35%`; }}
+              >
+                {autoGenRunning
+                  ? <><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />Generating…</>
+                  : <><Sparkles size={14} />Auto-Generate</>}
+              </button>
+            )}
+            {filledSlots > 0 && (
+              <button
+                onClick={handleClearAll}
+                disabled={clearingAll}
+                title="Remove all match assignments for this event"
+                style={{
+                  display: "flex", alignItems: "center", gap: 6,
+                  padding: "8px 14px", borderRadius: 10, fontSize: 13, fontWeight: 700,
+                  background: "oklch(0.577 0.245 27 / 12%)",
+                  color: "var(--destructive)",
+                  border: "1.5px solid oklch(0.577 0.245 27 / 35%)",
+                  cursor: clearingAll ? "wait" : "pointer",
+                  flexShrink: 0, opacity: clearingAll ? 0.6 : 1,
+                  transition: "opacity 0.15s, background 0.15s",
+                  flex: isMobile ? "1 1 auto" : "none",
+                }}
+                onMouseEnter={e => { if (!clearingAll) (e.currentTarget as HTMLButtonElement).style.background = "oklch(0.577 0.245 27 / 20%)"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "oklch(0.577 0.245 27 / 12%)"; }}
+              >
+                {clearingAll
+                  ? <><Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />Clearing…</>
+                  : <><Trash2 size={13} />Clear All</>}
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {!currentEvent && (
@@ -1358,18 +1720,19 @@ export default function SchedulingPage() {
       {currentEvent && (
         <>
           {/* ── Tab bar ─────────────────────────────────────────────────── */}
-          <div style={{ display: "flex", gap: 4, flexShrink: 0, background: SURFACE, borderRadius: 10, padding: 4, width: "fit-content", border: `1px solid ${SURF_BORD}` }}>
+          <div style={{ display: "flex", gap: 4, flexShrink: 0, background: SURFACE, borderRadius: 10, padding: 4, width: isMobile ? "100%" : "fit-content", border: `1px solid ${SURF_BORD}` }}>
             {([
               { id: "matches" as TabType, label: "Match Assignments", icon: LayoutGrid },
               { id: "pit"     as TabType, label: "Pit Rotations",     icon: Wrench    },
             ]).map(({ id, label, icon: Icon }) => (
               <button key={id} onClick={() => setActiveTab(id)}
                 style={{
-                  display: "flex", alignItems: "center", gap: 6,
-                  padding: "6px 14px", borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                  padding: "7px 14px", borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: "pointer",
                   background: activeTab === id ? G : "transparent",
                   color: activeTab === id ? G_TXT : MUTED,
                   border: "none", transition: "all 0.15s",
+                  flex: isMobile ? 1 : "none",
                 }}
               >
                 <Icon size={14} />
@@ -1385,7 +1748,7 @@ export default function SchedulingPage() {
 
           {/* ── Match assignments tab ───────────────────────────────────── */}
           {activeTab === "matches" && (
-            <div style={{ flex: 1, display: "flex", gap: 12, minHeight: 0 }}>
+            <div style={{ flex: 1, display: "flex", flexDirection: stackLayout ? "column" : "row", gap: isLandscapePhone ? 6 : 12, minHeight: 0 }}>
               {matchesLoading ? (
                 <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, color: MUTED }}>
                   <Loader2 size={20} style={{ animation: "spin 1s linear infinite" }} />
@@ -1408,6 +1771,8 @@ export default function SchedulingPage() {
                     matchCounts={matchCounts}
                     matches={matches}
                     onBatchAssign={handleBatchAssign}
+                    isMobile={isMobile}
+                    isLandscapePhone={isLandscapePhone}
                   />
                   <MatchGrid
                     matches={matches}
@@ -1415,6 +1780,8 @@ export default function SchedulingPage() {
                     pinnedId={pinnedScoutId}
                     onCellClick={handleCellClick}
                     saving={savingCells}
+                    isMobile={isMobile}
+                    isLandscapePhone={isLandscapePhone}
                   />
                 </>
               )}
@@ -1434,6 +1801,7 @@ export default function SchedulingPage() {
                 <ElimsRotationPanel
                   rotation={elimsRot}
                   users={pitUsers}
+                  allUsers={allUsers}
                   onSave={async (scoutIds) => {
                     if (!currentEvent) return;
                     await upsertRotation({
@@ -1478,7 +1846,7 @@ export default function SchedulingPage() {
 
                 {/* Qual rotation form (only when not editing) */}
                 {!editingRotation && (
-                  <RotationForm users={pitUsers} onSave={form => handleSaveRotation(form)} />
+                  <RotationForm users={pitUsers} allUsers={allUsers} onSave={form => handleSaveRotation(form)} />
                 )}
 
                 {/* Qual rotation list */}
@@ -1492,7 +1860,7 @@ export default function SchedulingPage() {
                     )}
                     {editingRotation && (
                       <RotationForm
-                        users={pitUsers} isEdit
+                        users={pitUsers} allUsers={allUsers} isEdit
                         initial={{
                           label: editingRotation.label ?? "",
                           startMatch: String(editingRotation.startMatch ?? ""),

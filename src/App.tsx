@@ -1,7 +1,7 @@
-import { Routes, Route, NavLink, useNavigate } from "react-router";
+import { Routes, Route, NavLink, useNavigate, useLocation } from "react-router";
 import { useTheme } from "next-themes";
 import { useQuery } from "convex/react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useCached } from "@/hooks/useCached";
 import { useAuthActions, useConvexAuth } from "@convex-dev/auth/react";
 import { api } from "../convex/_generated/api";
@@ -34,6 +34,8 @@ import {
   BarChart2,
   QrCode,
   ScanLine,
+  MoreHorizontal,
+  X,
 } from "lucide-react";
 import { useOfflineSync } from "@/hooks/useOfflineSync";
 import { useUIStore } from "@/store/uiStore";
@@ -83,6 +85,113 @@ function NavItem({ to, label, icon: Icon }: { to: string; label: string; icon: R
   );
 }
 
+type NavEntry = { to: string; label: string; icon: React.ElementType };
+
+function MobileBottomNav({ primary, more }: { primary: NavEntry[]; more: NavEntry[] }) {
+  const [moreOpen, setMoreOpen] = useState(false);
+  const location = useLocation();
+
+  // Close the "More" sheet whenever the route changes
+  useEffect(() => {
+    setMoreOpen(false);
+  }, [location.pathname]);
+
+  return (
+    <>
+      {/* Backdrop */}
+      {moreOpen && (
+        <div
+          className="md:hidden fixed inset-0 z-40 bg-black/40 backdrop-blur-sm"
+          onClick={() => setMoreOpen(false)}
+        />
+      )}
+
+      {/* More sheet — anchored at bottom-0, slides up over the tab bar */}
+      <div
+        className={`md:hidden fixed inset-x-0 bottom-0 z-50 bg-card border-t border-border rounded-t-2xl shadow-2xl transition-transform duration-300 ease-out ${
+          moreOpen ? "-translate-y-16" : "translate-y-full pointer-events-none"
+        }`}
+      >
+        <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-border">
+          <span className="text-sm font-semibold text-foreground">More</span>
+          <button
+            onClick={() => setMoreOpen(false)}
+            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="grid grid-cols-4 gap-1 p-3">
+          {more.map(({ to, label, icon: Icon }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={to === "/"}
+              onClick={() => setMoreOpen(false)}
+              className={({ isActive }) =>
+                `flex flex-col items-center gap-1 py-2.5 px-1 rounded-xl text-[10px] font-medium transition-colors ${
+                  isActive
+                    ? "text-primary bg-primary/10"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                }`
+              }
+            >
+              {({ isActive }) => (
+                <>
+                  <div className={`p-2 rounded-xl transition-colors ${isActive ? "bg-primary/10" : "bg-muted/60"}`}>
+                    <Icon className="h-5 w-5" />
+                  </div>
+                  <span className="truncate w-full text-center">{label}</span>
+                </>
+              )}
+            </NavLink>
+          ))}
+        </div>
+      </div>
+
+      {/* Tab bar */}
+      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-card border-t border-border flex items-stretch h-16 safe-area-inset-bottom">
+        {primary.map(({ to, label, icon: Icon }) => (
+          <NavLink
+            key={to}
+            to={to}
+            end={to === "/"}
+            className={({ isActive }) =>
+              `flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors ${
+                isActive
+                  ? "text-primary"
+                  : "text-muted-foreground"
+              }`
+            }
+          >
+            {({ isActive }) => (
+              <>
+                <div className={`p-1.5 rounded-xl transition-colors ${isActive ? "bg-primary/10" : ""}`}>
+                  <Icon className="h-5 w-5" />
+                </div>
+                <span>{label}</span>
+              </>
+            )}
+          </NavLink>
+        ))}
+
+        {/* More button */}
+        <button
+          onClick={() => setMoreOpen((o) => !o)}
+          className={`flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors ${
+            moreOpen ? "text-primary" : "text-muted-foreground"
+          }`}
+        >
+          <div className={`p-1.5 rounded-xl transition-colors ${moreOpen ? "bg-primary/10" : ""}`}>
+            <MoreHorizontal className="h-5 w-5" />
+          </div>
+          <span>More</span>
+        </button>
+      </nav>
+    </>
+  );
+}
+
 function AuthenticatedApp() {
   const { theme, setTheme } = useTheme();
   const { signOut } = useAuthActions();
@@ -105,22 +214,27 @@ function AuthenticatedApp() {
     { to: "/settings", label: "Settings", icon: Settings },
   ];
 
-  // Bottom nav (most-used on mobile)
-  const BOTTOM_NAV = [
-    { to: "/",          label: "Dashboard", icon: LayoutDashboard },
-    { to: "/matches",   label: "Matches",   icon: CalendarDays   },
-    { to: "/scout",     label: "Scout",     icon: ClipboardList  },
-    { to: "/schedule",  label: "Schedule",  icon: CalendarDays   },
-    { to: "/qrcodes",   label: "QR Codes",  icon: QrCode         },
-    { to: "/scanner",   label: "Scanner",   icon: ScanLine       },
-    { to: "/kanban",    label: "Picklist",  icon: Columns        },
+  // Bottom nav (most-used on mobile) — max 4 primary + More overflow
+  const BOTTOM_NAV_PRIMARY = [
+    { to: "/",        label: "Dashboard", icon: LayoutDashboard },
+    { to: "/scout",   label: "Scout",     icon: ClipboardList   },
+    { to: "/schedule",label: "Schedule",  icon: CalendarDays    },
+    { to: "/kanban",  label: "Picklist",  icon: Columns         },
+  ];
+
+  const BOTTOM_NAV_MORE = [
+    { to: "/matches",  label: "Matches",   icon: CalendarDays },
+    { to: "/data",     label: "Data",      icon: BarChart2    },
+    { to: "/qrcodes",  label: "QR Codes",  icon: QrCode       },
+    { to: "/scanner",  label: "Scanner",   icon: ScanLine     },
     ...(isAdminMode
       ? [
-          { to: "/scouts",     label: "Scouts",     icon: Users        },
-          { to: "/scheduling", label: "Scheduling", icon: CalendarDays },
+          { to: "/scouts",      label: "Scouts",       icon: Users       },
+          { to: "/scheduling",  label: "Scheduling",   icon: CalendarDays },
+          { to: "/builder",     label: "Form Builder", icon: WrenchIcon  },
         ]
       : []),
-    { to: "/settings",  label: "Settings",  icon: Settings       },
+    { to: "/settings", label: "Settings",  icon: Settings    },
   ];
 
   // Stamp the sync time immediately when we know we're online
@@ -307,31 +421,10 @@ function AuthenticatedApp() {
       </main>
 
       {/* ── Mobile Bottom Tab Bar ────────────────────────────────────────── */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-card border-t border-border flex items-stretch h-16 safe-area-inset-bottom">
-        {BOTTOM_NAV.map(({ to, label, icon: Icon }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={to === "/"}
-            className={({ isActive }) =>
-              `flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors ${
-                isActive
-                  ? "text-primary"
-                  : "text-muted-foreground"
-              }`
-            }
-          >
-            {({ isActive }) => (
-              <>
-                <div className={`p-1.5 rounded-xl transition-colors ${isActive ? "bg-primary/10" : ""}`}>
-                  <Icon className="h-5 w-5" />
-                </div>
-                <span>{label}</span>
-              </>
-            )}
-          </NavLink>
-        ))}
-      </nav>
+      <MobileBottomNav
+        primary={BOTTOM_NAV_PRIMARY}
+        more={BOTTOM_NAV_MORE}
+      />
     </div>
   );
 }

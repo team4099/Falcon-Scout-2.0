@@ -116,6 +116,18 @@ export const batchSetMatchAssignments = mutation({
   },
 });
 
+/** Delete every match assignment for an event — used by the "Clear All" button */
+export const clearAllMatchAssignments = mutation({
+  args: { eventKey: v.string() },
+  handler: async (ctx, { eventKey }) => {
+    const all = await ctx.db
+      .query("matchAssignments")
+      .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
+      .collect();
+    await Promise.all(all.map((a) => ctx.db.delete(a._id)));
+  },
+});
+
 // ── Pit Rotations ─────────────────────────────────────────────────────────────
 
 /** All pit rotation ranges for an event */
@@ -143,7 +155,12 @@ export const getMyPitRotations = query({
   },
 });
 
-/** Create or update a pit rotation (qual range or elims) */
+/** Create or update a pit rotation (qual range or elims).
+ *
+ * For qual rotations (startMatch + endMatch present), any match assignments
+ * the newly-assigned scouts have within that match range are automatically
+ * deleted to keep the schedule self-consistent.
+ */
 export const upsertPitRotation = mutation({
   args: {
     id: v.optional(v.id("pitRotations")),
@@ -155,10 +172,41 @@ export const upsertPitRotation = mutation({
     scoutIds: v.array(v.id("users")),
   },
   handler: async (ctx, { id, eventKey, label, startMatch, endMatch, isElims, scoutIds }) => {
+    // ── Determine which scouts are being newly added ───────────────────────────
+    let prevScoutIds: string[] = [];
+    if (id) {
+      const existing = await ctx.db.get(id);
+      prevScoutIds = existing?.scoutIds ?? [];
+    }
+    const prevSet = new Set(prevScoutIds);
+    const newlyAdded = scoutIds.filter((sid) => !prevSet.has(sid));
+
+    // ── Save the rotation ──────────────────────────────────────────────────────
     if (id) {
       await ctx.db.patch(id, { label, startMatch, endMatch, isElims, scoutIds });
     } else {
       await ctx.db.insert("pitRotations", { eventKey, label, startMatch, endMatch, isElims, scoutIds });
+    }
+
+    // ── Clear conflicting match assignments (qual rotations only) ─────────────
+    // Elims rotations don't have a fixed match-number range, so skip them.
+    if (!isElims && startMatch != null && endMatch != null && newlyAdded.length > 0) {
+      // Fetch all assignments in the event for efficiency (by_event index covers all matches)
+      const allAssignments = await ctx.db
+        .query("matchAssignments")
+        .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
+        .collect();
+
+      const newlyAddedSet = new Set(newlyAdded);
+
+      const toDelete = allAssignments.filter(
+        (a) =>
+          newlyAddedSet.has(a.scoutId) &&
+          a.matchNumber >= startMatch &&
+          a.matchNumber <= endMatch
+      );
+
+      await Promise.all(toDelete.map((a) => ctx.db.delete(a._id)));
     }
   },
 });
