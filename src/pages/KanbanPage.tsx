@@ -21,7 +21,6 @@ import { toast } from "sonner";
 import { Plus, X, Pencil, Users, RefreshCw, SlidersHorizontal, LayoutGrid, LayoutList, Check, GripVertical } from "lucide-react";
 import {
   fetchStatboticsEventTeams,
-  fetchStatboticsTeamYear,
   fetchTBAEventRankings,
   fetchTBAEventTeams,
   fetchTBATeamInfo,
@@ -193,18 +192,14 @@ function useTeamInfo(teamNumber: number, year: number) {
   return { nickname, avatar };
 }
 
-function useTeamRanking(teamNumber: number, eventKey: string, year: number) {
+function useTeamRanking(teamNumber: number, eventKey: string) {
   const [rank, setRank] = useState<number | null>(null);
   const [record, setRecord] = useState<{ w: number; l: number; t: number } | null>(null);
-  const [overallEpa, setOverallEpa] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const [tbaRankData, sbYearData] = await Promise.all([
-        fetchTBAEventRankings(eventKey),
-        fetchStatboticsTeamYear(teamNumber, year),
-      ]);
+      const tbaRankData = await fetchTBAEventRankings(eventKey);
       if (cancelled) return;
 
       if (tbaRankData && typeof tbaRankData === "object" && "rankings" in tbaRankData) {
@@ -223,17 +218,12 @@ function useTeamRanking(teamNumber: number, eventKey: string, year: number) {
           setRecord({ w: r.record.wins, l: r.record.losses, t: r.record.ties });
         }
       }
-
-      if (sbYearData && typeof sbYearData === "object" && "epa" in sbYearData) {
-        const val = extractEpa((sbYearData as Record<string, unknown>).epa);
-        if (val !== null) setOverallEpa(Number(val.toFixed(1)));
-      }
     }
     load();
     return () => { cancelled = true; };
-  }, [teamNumber, eventKey, year]);
+  }, [teamNumber, eventKey]);
 
-  return { rank, record, overallEpa };
+  return { rank, record };
 }
 
 // ── Configure Cards Dialog ────────────────────────────────────────────────────
@@ -459,7 +449,7 @@ function TeamCard({
   onDragEnd: () => void;
 }) {
   const { nickname, avatar } = useTeamInfo(card.teamNumber, eventYear);
-  const { rank, record, overallEpa } = useTeamRanking(card.teamNumber, eventKey, eventYear);
+  const { rank, record } = useTeamRanking(card.teamNumber, eventKey);
 
   const parsed = parseData(submissions);
 
@@ -495,10 +485,12 @@ function TeamCard({
     });
   }
   if (cardPrefs.includes("epa_overall")) {
+    // Season EPA: fall back to event EPA since team_year data may not be available yet.
+    const seasonVal = epa?.event ?? null;
     visibleStats.push({
       key: "epa_overall",
       label: "Season EPA",
-      value: overallEpa !== null ? Number(overallEpa.toFixed(1)).toString() : "—",
+      value: seasonVal !== null ? Number(seasonVal.toFixed(1)).toString() : "—",
     });
   }
 

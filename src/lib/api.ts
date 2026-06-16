@@ -77,6 +77,9 @@ async function fetchWithCache<T>(
     lsSet(cacheKey, data, ttl);
     return data;
   } catch {
+    // Network error (CORS block, DNS failure, etc.) — also back off for 5 minutes
+    // to avoid hammering endpoints that return CORS-less 500s.
+    lsSet(errKey, { status: 0 }, 5 * 60 * 1000, false);
     return lsGetStale<T>(cacheKey);
   }
 }
