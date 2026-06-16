@@ -21,6 +21,7 @@ import {
   ShieldAlert,
   Lock,
   KeySquare,
+  RefreshCw,
 } from "lucide-react";
 import { getTBAKey, setTBAKey, clearApiCache } from "@/lib/api";
 import { useUIStore } from "@/store/uiStore";
@@ -416,8 +417,22 @@ export default function SettingsPage() {
   const [eventName, setEventName] = useState("");
   const [saving, setSaving] = useState(false);
 
-  // API key state — read from localStorage on mount
+  // ── TBA key: sourced from Convex (cross-device) with localStorage as fallback ──
+  const userSettings = useQuery(api.users.getUserSettings);
+  const setTbaApiKeyMutation = useMutation(api.users.setTbaApiKey);
+  // Local display state — seeded from localStorage immediately, then synced from Convex
   const [tbaKey, setTbaKeyState] = useState(() => getTBAKey());
+
+  // When Convex delivers the saved key, mirror it into localStorage so all
+  // fetch functions that call getTBAKey() pick it up without changes.
+  useEffect(() => {
+    if (userSettings === undefined) return; // still loading
+    const cloudKey = userSettings?.tbaApiKey ?? "";
+    // Prefer cloud key; fall back to whatever is already in localStorage
+    const effective = cloudKey || getTBAKey();
+    setTBAKey(effective);
+    setTbaKeyState(effective);
+  }, [userSettings]);
 
   // Keep state in sync if localStorage changes in another tab
   useEffect(() => {
@@ -534,10 +549,10 @@ export default function SettingsPage() {
           <KeyRound className="h-4 w-4 text-primary" />
           <h3 className="font-semibold">API Keys</h3>
         </div>
-        <p className="text-xs text-muted-foreground -mt-2">
-          Keys are stored locally in your browser and never sent to our servers.
-          Each team member must add their own key.
-        </p>
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground -mt-2">
+          <RefreshCw className="h-3 w-3 shrink-0" />
+          Keys are synced across all your devices automatically.
+        </div>
 
         <Separator />
 
@@ -548,9 +563,15 @@ export default function SettingsPage() {
           linkLabel="thebluealliance.com/account"
           storageKey="tba"
           currentValue={tbaKey}
-          onChange={(val) => {
+          onChange={async (val) => {
             setTBAKey(val);
             setTbaKeyState(val);
+            // Persist to Convex so all devices pick it up
+            try {
+              await setTbaApiKeyMutation({ key: val });
+            } catch {
+              // Non-fatal: localStorage still has it for this device
+            }
             // Clear TBA cache so next fetch uses the new key
             const cacheKeys = Object.keys(localStorage).filter((k) =>
               k.startsWith("falconscout_cache_tba_")

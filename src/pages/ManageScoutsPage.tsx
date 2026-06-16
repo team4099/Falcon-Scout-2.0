@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery } from "convex/react";
+import { useQuery, useMutation } from "convex/react";
 import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
 import { useUIStore } from "@/store/uiStore";
@@ -24,6 +24,10 @@ import {
   ClipboardCheck,
   Wrench as WrenchIcon,
   CheckCircle2,
+  CalendarCheck,
+  Trash2,
+  UserMinus,
+  UserPlus as UserPlusIcon,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -54,6 +58,25 @@ interface Submission {
   scoutId?: string;
   data: string;
   syncedAt: number;
+}
+
+interface MatchAssignment {
+  _id: string;
+  eventKey: string;
+  matchNumber: number;
+  matchLabel: string;
+  position: "red1" | "red2" | "red3" | "blue1" | "blue2" | "blue3";
+  scoutId: string;
+}
+
+interface PitRotation {
+  _id: string;
+  eventKey: string;
+  label?: string;
+  startMatch?: number;
+  endMatch?: number;
+  isElims?: boolean;
+  scoutIds: string[];
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -430,15 +453,32 @@ export default function ManageScoutsPage() {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
   const currentEvent = useCached(useQuery(api.events.getCurrentEvent), "current_event");
+  const eventKey = currentEvent?.eventKey ?? "";
   const allUsers = useQuery(api.users.listUsers) as User[] | undefined;
   const submissions = useQuery(
     api.forms.listSubmissions,
-    currentEvent ? { eventKey: currentEvent.eventKey } : "skip"
+    currentEvent ? { eventKey } : "skip"
   ) as Submission[] | undefined;
   const allPreferences = useQuery(
     api.schedules.listAllPreferences,
-    currentEvent ? { eventKey: currentEvent.eventKey } : "skip"
+    currentEvent ? { eventKey } : "skip"
   ) as ScoutPreference[] | undefined;
+  const allAssignments = useQuery(
+    api.schedules.listMatchAssignments,
+    currentEvent ? { eventKey } : "skip"
+  ) as MatchAssignment[] | undefined;
+  const allPitRotations = useQuery(
+    api.schedules.listPitRotations,
+    currentEvent ? { eventKey } : "skip"
+  ) as PitRotation[] | undefined;
+
+  // Mutations
+  const clearMatchAssignment = useMutation(api.schedules.clearMatchAssignment);
+  const upsertPitRotation    = useMutation(api.schedules.upsertPitRotation);
+
+  // Saving state
+  const [clearingSlot, setClearingSlot]   = useState<string | null>(null);
+  const [togglingRot,  setTogglingRot]    = useState<string | null>(null);
 
   // ── Derived data ─────────────────────────────────────────────────────────────
 
@@ -479,6 +519,42 @@ export default function ManageScoutsPage() {
   const prefsById: Record<string, ScoutPreference> = {};
   for (const p of (allPreferences ?? [])) prefsById[p.scoutId] = p;
   const selectedPrefs = selectedUserId ? prefsById[selectedUserId] ?? null : null;
+
+  // Assignments & pit rotations for selected scout
+  const scoutAssignments: MatchAssignment[] = selectedUserId
+    ? (allAssignments ?? []).filter(a => a.scoutId === selectedUserId).sort((a, b) => a.matchNumber - b.matchNumber)
+    : [];
+  const scoutPitRotations: PitRotation[] = selectedUserId
+    ? (allPitRotations ?? []).filter(r => r.scoutIds.includes(selectedUserId))
+    : [];
+  const otherPitRotations: PitRotation[] = selectedUserId
+    ? (allPitRotations ?? []).filter(r => !r.scoutIds.includes(selectedUserId))
+    : [];
+
+  // Handlers
+  async function handleClearAssignment(a: MatchAssignment) {
+    const key = `${a.matchNumber}-${a.position}`;
+    setClearingSlot(key);
+    try {
+      await clearMatchAssignment({ eventKey, matchNumber: a.matchNumber, position: a.position });
+    } finally {
+      setClearingSlot(null);
+    }
+  }
+
+  async function handleTogglePitRotation(rot: PitRotation, add: boolean) {
+    if (!selectedUserId) return;
+    setTogglingRot(rot._id);
+    try {
+      const nextIds = add
+        ? [...rot.scoutIds, selectedUserId]
+        : rot.scoutIds.filter(id => id !== selectedUserId);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await upsertPitRotation({ id: rot._id as any, eventKey, label: rot.label, startMatch: rot.startMatch, endMatch: rot.endMatch, isElims: rot.isElims, scoutIds: nextIds as any[] });
+    } finally {
+      setTogglingRot(null);
+    }
+  }
 
   // ── Guard ─────────────────────────────────────────────────────────────────────
 
@@ -956,8 +1032,6 @@ export default function ManageScoutsPage() {
                           </span>
                         </div>
                         <div style={{ padding: "10px 13px", display: "flex", flexDirection: "column", gap: 8 }}>
-
-                          {/* Partner preferences */}
                           {selectedPrefs.preferredPartners.length > 0 && (
                             <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
                               <UserPlus size={13} style={{ color: "oklch(0.7 0.18 270)", marginTop: 2, flexShrink: 0 }} />
@@ -979,8 +1053,6 @@ export default function ManageScoutsPage() {
                               </div>
                             </div>
                           )}
-
-                          {/* Toggle flags */}
                           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                             <span style={{
                               display: "flex", alignItems: "center", gap: 5,
@@ -989,9 +1061,7 @@ export default function ManageScoutsPage() {
                               border: `1px solid ${selectedPrefs.wantsMoreMatches ? "oklch(0.65 0.18 270 / 35%)" : "oklch(1 0 0 / 10%)"}`,
                               color: selectedPrefs.wantsMoreMatches ? "oklch(0.75 0.18 270)" : "var(--muted-foreground)",
                             }}>
-                              {selectedPrefs.wantsMoreMatches
-                                ? <CheckCircle2 size={11} />
-                                : <ClipboardCheck size={11} />}
+                              {selectedPrefs.wantsMoreMatches ? <CheckCircle2 size={11} /> : <ClipboardCheck size={11} />}
                               More matches
                             </span>
                             <span style={{
@@ -1001,15 +1071,182 @@ export default function ManageScoutsPage() {
                               border: `1px solid ${selectedPrefs.wantsPitRotation ? "oklch(0.65 0.18 270 / 35%)" : "oklch(1 0 0 / 10%)"}`,
                               color: selectedPrefs.wantsPitRotation ? "oklch(0.75 0.18 270)" : "var(--muted-foreground)",
                             }}>
-                              {selectedPrefs.wantsPitRotation
-                                ? <CheckCircle2 size={11} />
-                                : <WrenchIcon size={11} />}
+                              {selectedPrefs.wantsPitRotation ? <CheckCircle2 size={11} /> : <WrenchIcon size={11} />}
                               Pit rotation
                             </span>
                           </div>
                         </div>
                       </div>
                     )}
+
+                    {/* ── Match Assignments section ── */}
+                    <div style={{
+                      borderRadius: 13,
+                      background: "oklch(0.85 0.18 95 / 6%)",
+                      border: "1px solid oklch(0.85 0.18 95 / 25%)",
+                      overflow: "hidden",
+                      marginBottom: 4,
+                    }}>
+                      <div style={{
+                        display: "flex", alignItems: "center", gap: 8,
+                        padding: "10px 13px",
+                        borderBottom: "1px solid oklch(0.85 0.18 95 / 15%)",
+                        background: "oklch(0.85 0.18 95 / 8%)",
+                      }}>
+                        <CalendarCheck size={13} style={{ color: "oklch(0.75 0.18 95)" }} />
+                        <span style={{ fontWeight: 700, fontSize: 12, color: "oklch(0.75 0.18 95)", textTransform: "uppercase", letterSpacing: "0.07em" }}>Match Assignments</span>
+                        <span style={{
+                          marginLeft: "auto", fontSize: 11, fontWeight: 700,
+                          padding: "2px 8px", borderRadius: 20,
+                          background: "oklch(0.85 0.18 95 / 15%)",
+                          color: "oklch(0.75 0.18 95)",
+                        }}>{scoutAssignments.length}</span>
+                      </div>
+                      <div style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: 5 }}>
+                        {scoutAssignments.length === 0 ? (
+                          <div style={{ padding: "14px 8px", textAlign: "center", fontSize: 12, color: "var(--muted-foreground)" }}>
+                            No match assignments scheduled.
+                          </div>
+                        ) : (
+                          scoutAssignments.map(a => {
+                            const isRed = a.position.startsWith("red");
+                            const slotKey = `${a.matchNumber}-${a.position}`;
+                            const posLabel = { red1:"Red 1",red2:"Red 2",red3:"Red 3",blue1:"Blue 1",blue2:"Blue 2",blue3:"Blue 3" }[a.position] ?? a.position;
+                            return (
+                              <div key={a._id} style={{
+                                display: "flex", alignItems: "center", gap: 8,
+                                padding: "6px 8px", borderRadius: 9,
+                                background: isRed ? "oklch(0.6 0.22 25 / 8%)" : "oklch(0.55 0.22 255 / 8%)",
+                                border: `1px solid ${isRed ? "oklch(0.6 0.22 25 / 25%)" : "oklch(0.55 0.22 255 / 25%)"}`,
+                              }}>
+                                <div style={{
+                                  width: 26, height: 26, borderRadius: 7, flexShrink: 0,
+                                  background: isRed ? "oklch(0.6 0.22 25 / 20%)" : "oklch(0.55 0.22 255 / 20%)",
+                                  display: "flex", alignItems: "center", justifyContent: "center",
+                                  fontWeight: 800, fontSize: 11,
+                                  color: isRed ? "oklch(0.65 0.22 25)" : "oklch(0.65 0.22 255)",
+                                }}>{a.position.slice(-1)}</div>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontWeight: 700, fontSize: 12, fontFamily: "monospace" }}>{a.matchLabel}</div>
+                                  <div style={{ fontSize: 11, color: isRed ? "oklch(0.65 0.22 25)" : "oklch(0.65 0.22 255)", fontWeight: 600 }}>{posLabel}</div>
+                                </div>
+                                <button
+                                  onClick={() => handleClearAssignment(a)}
+                                  disabled={clearingSlot === slotKey}
+                                  style={{
+                                    border: "none", background: "transparent", cursor: "pointer",
+                                    padding: "4px", borderRadius: 6, color: "var(--muted-foreground)",
+                                    display: "flex", alignItems: "center",
+                                    opacity: clearingSlot === slotKey ? 0.4 : 1,
+                                    transition: "opacity 0.15s",
+                                  }}
+                                  title="Remove assignment"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+
+                    {/* ── Pit Rotations section ── */}
+                    <div style={{
+                      borderRadius: 13,
+                      background: "oklch(0.55 0.18 180 / 6%)",
+                      border: "1px solid oklch(0.55 0.18 180 / 25%)",
+                      overflow: "hidden",
+                      marginBottom: 4,
+                    }}>
+                      <div style={{
+                        display: "flex", alignItems: "center", gap: 8,
+                        padding: "10px 13px",
+                        borderBottom: "1px solid oklch(0.55 0.18 180 / 15%)",
+                        background: "oklch(0.55 0.18 180 / 8%)",
+                      }}>
+                        <WrenchIcon size={13} style={{ color: "oklch(0.6 0.18 180)" }} />
+                        <span style={{ fontWeight: 700, fontSize: 12, color: "oklch(0.6 0.18 180)", textTransform: "uppercase", letterSpacing: "0.07em" }}>Pit Rotations</span>
+                        <span style={{
+                          marginLeft: "auto", fontSize: 11, fontWeight: 700,
+                          padding: "2px 8px", borderRadius: 20,
+                          background: "oklch(0.55 0.18 180 / 15%)",
+                          color: "oklch(0.6 0.18 180)",
+                        }}>{scoutPitRotations.length} assigned</span>
+                      </div>
+                      <div style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: 5 }}>
+                        {/* Rotations this scout is already in */}
+                        {scoutPitRotations.map(rot => (
+                          <div key={rot._id} style={{
+                            display: "flex", alignItems: "center", gap: 8,
+                            padding: "6px 8px", borderRadius: 9,
+                            background: "oklch(0.55 0.18 180 / 10%)",
+                            border: "1px solid oklch(0.55 0.18 180 / 30%)",
+                          }}>
+                            <WrenchIcon size={13} style={{ color: "oklch(0.6 0.18 180)", flexShrink: 0 }} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 700, fontSize: 12 }}>{rot.label ?? (rot.isElims ? "Elims Pit" : `Q${rot.startMatch}–Q${rot.endMatch}`)}</div>
+                              {!rot.isElims && rot.startMatch != null && (
+                                <div style={{ fontSize: 11, color: "var(--muted-foreground)" }}>Matches {rot.startMatch}–{rot.endMatch}</div>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => handleTogglePitRotation(rot, false)}
+                              disabled={togglingRot === rot._id}
+                              style={{
+                                border: "none", background: "transparent", cursor: "pointer",
+                                padding: "4px", borderRadius: 6, color: "var(--muted-foreground)",
+                                display: "flex", alignItems: "center",
+                                opacity: togglingRot === rot._id ? 0.4 : 1,
+                              }}
+                              title="Remove from rotation"
+                            >
+                              <UserMinus size={13} />
+                            </button>
+                          </div>
+                        ))}
+                        {/* Rotations this scout is NOT in — add option */}
+                        {otherPitRotations.length > 0 && (
+                          <>
+                            {scoutPitRotations.length > 0 && (
+                              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: "0.07em", padding: "4px 2px 0" }}>Add to rotation</div>
+                            )}
+                            {otherPitRotations.map(rot => (
+                              <div key={rot._id} style={{
+                                display: "flex", alignItems: "center", gap: 8,
+                                padding: "6px 8px", borderRadius: 9,
+                                background: "oklch(1 0 0 / 3%)",
+                                border: "1px solid oklch(1 0 0 / 8%)",
+                                opacity: 0.75,
+                              }}>
+                                <WrenchIcon size={13} style={{ color: "var(--muted-foreground)", flexShrink: 0 }} />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontWeight: 600, fontSize: 12, color: "var(--muted-foreground)" }}>{rot.label ?? (rot.isElims ? "Elims Pit" : `Q${rot.startMatch}–Q${rot.endMatch}`)}</div>
+                                </div>
+                                <button
+                                  onClick={() => handleTogglePitRotation(rot, true)}
+                                  disabled={togglingRot === rot._id}
+                                  style={{
+                                    border: "none", background: "transparent", cursor: "pointer",
+                                    padding: "4px", borderRadius: 6, color: "oklch(0.6 0.18 180)",
+                                    display: "flex", alignItems: "center",
+                                    opacity: togglingRot === rot._id ? 0.4 : 1,
+                                  }}
+                                  title="Add to rotation"
+                                >
+                                  <UserPlusIcon size={13} />
+                                </button>
+                              </div>
+                            ))}
+                          </>
+                        )}
+                        {scoutPitRotations.length === 0 && otherPitRotations.length === 0 && (
+                          <div style={{ padding: "14px 8px", textAlign: "center", fontSize: 12, color: "var(--muted-foreground)" }}>
+                            No pit rotations created yet.
+                          </div>
+                        )}
+                      </div>
+                    </div>
 
                     {selectedSubmissions.length === 0 ? (
                       <div

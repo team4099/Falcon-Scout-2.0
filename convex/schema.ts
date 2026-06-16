@@ -112,6 +112,12 @@ export default defineSchema({
   })
     .index("by_event", ["eventKey"]),
 
+  // Per-user settings (API keys, preferences) — synced across devices
+  userSettings: defineTable({
+    userId:    v.id("users"),
+    tbaApiKey: v.optional(v.string()),
+  }).index("by_user", ["userId"]),
+
   // Scout self-reported scheduling preferences (shown when no schedule assigned)
   scoutPreferences: defineTable({
     scoutId:           v.id("users"),

@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import { useCached } from "@/hooks/useCached";
 import { useAuthActions, useConvexAuth } from "@convex-dev/auth/react";
 import { api } from "../convex/_generated/api";
+import { setTBAKey } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -127,6 +128,14 @@ function AuthenticatedApp() {
     if (isOnline) markSynced();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOnline]);
+
+  // ── Sync TBA key from Convex → localStorage on every app load ──
+  const userSettings = useQuery(api.users.getUserSettings);
+  useEffect(() => {
+    if (userSettings === undefined) return; // still loading
+    const cloudKey = userSettings?.tbaApiKey ?? "";
+    if (cloudKey) setTBAKey(cloudKey);
+  }, [userSettings]);
 
   /** "just now" / "2 min ago" / "1 hr ago" */
   function formatAge(ts: number | null): string {

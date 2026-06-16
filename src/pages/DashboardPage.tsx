@@ -20,9 +20,11 @@ import {
   fetchTBAEventMatches,
   fetchTBATeamAvatar,
   fetchTBATeamInfo,
+  fetchNexusTeamStatus,
 } from "@/lib/api";
-import type { TBAMatch } from "@/lib/api";
-import { ExternalLink, Search, FileText, TrendingUp, ClipboardList, Trash2, AlertTriangle, ChevronDown, ChevronUp, Clock, SlidersHorizontal } from "lucide-react";
+import type { TBAMatch, NexusTeamStatus } from "@/lib/api";
+import { ExternalLink, Search, FileText, TrendingUp, ClipboardList, Trash2, AlertTriangle, ChevronDown, ChevronUp, Clock, SlidersHorizontal, KeyRound, CalendarCheck, Radio, Users2 } from "lucide-react";
+import { getTBAKey } from "@/lib/api";
 import TeamDetailPanel from "@/pages/TeamDetailPanel";
 import { useMutation } from "convex/react";
 import type { Id } from "../../convex/_generated/dataModel";
@@ -923,7 +925,7 @@ function NextMatchBanner({
   // ── No upcoming match states ──────────────────────────────────────────────
   if (!match || (!isToday && !isFuture)) {
     return (
-      <div className="rounded-xl border border-border bg-card p-3 sm:p-4 flex items-center gap-3">
+      <div className="rounded-xl border border-border bg-card p-3 sm:p-4 flex items-center gap-3 h-full">
         <div className="h-9 w-9 rounded-full bg-muted flex items-center justify-center shrink-0">
           <Clock className="h-4 w-4 text-muted-foreground" />
         </div>
@@ -948,7 +950,7 @@ function NextMatchBanner({
     const dayLabel = new Date(matchMs!).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
     const timeLabel = new Date(matchMs!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     return (
-      <div className="rounded-xl border border-border bg-card p-3 sm:p-4 flex items-center gap-3">
+      <div className="rounded-xl border border-border bg-card p-3 sm:p-4 flex items-center gap-3 h-full">
         <div className="h-9 w-9 rounded-full bg-muted flex items-center justify-center shrink-0">
           <Clock className="h-4 w-4 text-muted-foreground" />
         </div>
@@ -982,7 +984,7 @@ function NextMatchBanner({
   const urgency = msLeft !== null && msLeft < 5 * 60 * 1000;
 
   return (
-    <div className={`rounded-xl border bg-card p-3 sm:p-4 flex flex-col sm:flex-row gap-3 sm:gap-6 items-start sm:items-center transition-colors ${
+    <div className={`rounded-xl border bg-card p-3 sm:p-4 flex flex-col sm:flex-row gap-3 sm:gap-6 items-start sm:items-center transition-colors h-full ${
       urgency ? "border-red-500/50 shadow-sm shadow-red-500/10" : "border-border"
     }`}>
       {/* Left: match label + Nexus queue status */}
@@ -1052,6 +1054,429 @@ function NextMatchBanner({
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ── Position helpers (shared) ─────────────────────────────────────────────────
+
+const POS_LABEL: Record<string, string> = {
+  red1: "Red 1", red2: "Red 2", red3: "Red 3",
+  blue1: "Blue 1", blue2: "Blue 2", blue3: "Blue 3",
+};
+
+function posColor(pos: string): string {
+  return pos.startsWith("red") ? "text-red-400" : "text-blue-400";
+}
+
+// ── My Scouting Assignments panel ─────────────────────────────────────────────
+
+interface MyAssignment {
+  _id: string;
+  matchNumber: number;
+  matchLabel: string;
+  position: string;
+}
+
+function MyScouting({
+  eventKey,
+  matchData,
+  nowMs,
+}: {
+  eventKey: string;
+  matchData: TBAMatch[];
+  nowMs: number;
+}) {
+  const assignmentsLive = useQuery(
+    api.schedules.getMyMatchAssignments,
+    eventKey ? { eventKey } : "skip"
+  );
+  const assignments = (assignmentsLive ?? []) as MyAssignment[];
+
+  const upcoming = useMemo(() => {
+    if (!assignments.length) return [];
+    const matchMap = new Map<number, TBAMatch>();
+    for (const m of matchData) matchMap.set(m.match_number, m);
+    return assignments
+      .map((a) => ({ assignment: a, match: matchMap.get(a.matchNumber) ?? null }))
+      .filter(({ match }) => !match || !isPlayed(match))
+      .sort((a, b) => {
+        const ta = a.match ? (matchTime(a.match) ?? 9e12) : 9e12;
+        const tb = b.match ? (matchTime(b.match) ?? 9e12) : 9e12;
+        return ta - tb;
+      })
+      .slice(0, 5);
+  }, [assignments, matchData]);
+
+  const loading = assignmentsLive === undefined;
+
+  return (
+    <div className="rounded-xl border border-border bg-card flex flex-col h-full min-h-0">
+      {/* Card header */}
+      <div className="flex items-center gap-2 px-3 pt-3 pb-2 border-b border-border shrink-0">
+        <div className="h-6 w-6 rounded-md bg-primary/15 flex items-center justify-center">
+          <CalendarCheck className="h-3.5 w-3.5 text-primary" />
+        </div>
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">My Assignments</p>
+        {!loading && assignments.length > 0 && (
+          <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-primary/15 text-primary">
+            {upcoming.length} upcoming
+          </span>
+        )}
+      </div>
+
+      {/* Body */}
+      <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1.5">
+        {loading ? (
+          <div className="space-y-1.5 p-1">
+            {[0,1,2].map((i) => (
+              <div key={i} className="flex items-center gap-2 px-2 py-2 rounded-lg">
+                <div className="h-7 w-7 rounded-md bg-muted animate-pulse shrink-0" />
+                <div className="space-y-1 flex-1">
+                  <div className="h-2.5 w-14 bg-muted rounded animate-pulse" />
+                  <div className="h-2 w-20 bg-muted rounded animate-pulse" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : upcoming.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full py-6 gap-2 text-center">
+            <CalendarCheck className="h-8 w-8 text-muted-foreground/20" />
+            <p className="text-xs text-muted-foreground leading-relaxed px-3">
+              {assignments.length === 0
+                ? "No assignments yet"
+                : "All matches complete 🏁"}
+            </p>
+          </div>
+        ) : (
+          upcoming.map(({ assignment, match }) => {
+            const t = match ? matchTime(match) : null;
+            const ms = t ? t * 1000 - nowMs : null;
+            const soon = ms !== null && ms > 0 && ms < 10 * 60 * 1000;
+            const played = match ? isPlayed(match) : false;
+            const timeStr = t
+              ? new Date(t * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+              : null;
+            const isRed = assignment.position.startsWith("red");
+
+            return (
+              <div
+                key={assignment._id}
+                className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg border transition-all ${
+                  soon
+                    ? "border-amber-500/40 bg-amber-500/8"
+                    : isRed
+                      ? "border-red-500/20 bg-red-500/5 hover:bg-red-500/10"
+                      : "border-blue-500/20 bg-blue-500/5 hover:bg-blue-500/10"
+                } ${played ? "opacity-40" : ""}`}
+              >
+                <div className={`h-7 w-7 rounded-md flex items-center justify-center shrink-0 font-bold text-xs ${
+                  isRed ? "bg-red-500/20 text-red-400" : "bg-blue-500/20 text-blue-400"
+                }`}>
+                  {assignment.position.slice(-1)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold font-mono tracking-tight">{assignment.matchLabel}</p>
+                  <p className="text-xs text-muted-foreground">
+                    <span className={`font-semibold ${posColor(assignment.position)}`}>
+                      {POS_LABEL[assignment.position] ?? assignment.position}
+                    </span>
+                    {timeStr && <span className="ml-1 opacity-70">· {timeStr}</span>}
+                  </p>
+                </div>
+                {soon && ms !== null && ms > 0 && (
+                  <span className="shrink-0 text-[10px] font-bold text-amber-400 animate-pulse">{Math.ceil(ms / 60000)}m</span>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Next 3 Matches (event-wide, Nexus-powered) ─────────────────────────────────
+
+function NextThreeMatches({
+  eventKey,
+  matchData,
+  epaMap,
+  tbaRankings,
+  nowMs,
+}: {
+  eventKey: string;
+  matchData: TBAMatch[];
+  epaMap: Record<number, TeamEpa>;
+  tbaRankings: Record<number, Record<string, unknown>>;
+  nowMs: number;
+}) {
+  // Next 3 unplayed matches across the whole event
+  const next3 = useMemo(() => {
+    return matchData
+      .filter((m) => !isPlayed(m))
+      .sort((a, b) => (matchTime(a) ?? 9e12) - (matchTime(b) ?? 9e12))
+      .slice(0, 3);
+  }, [matchData]);
+
+  // Poll Nexus for each unique team in the next 3 matches
+  const allTeamNums = useMemo(() => {
+    const nums = new Set<number>();
+    for (const m of next3) {
+      for (const tk of [...m.alliances.red.team_keys, ...m.alliances.blue.team_keys]) {
+        nums.add(Number(tk.replace("frc", "")));
+      }
+    }
+    return [...nums];
+  }, [next3]);
+
+  const [nexusMap, setNexusMap] = useState<Record<number, NexusTeamStatus | null>>({});
+
+  useEffect(() => {
+    if (!eventKey || allTeamNums.length === 0) return;
+    let cancelled = false;
+
+    async function pollAll() {
+      const results = await Promise.all(
+        allTeamNums.map((tn) =>
+          fetchNexusTeamStatus(eventKey, tn).then((s) => ({ tn, s }))
+        )
+      );
+      if (cancelled) return;
+      const map: Record<number, NexusTeamStatus | null> = {};
+      for (const { tn, s } of results) map[tn] = s;
+      setNexusMap(map);
+    }
+
+    pollAll();
+    const id = setInterval(pollAll, 30_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [eventKey, allTeamNums.join(",")]);
+
+  function rank(tn: number) {
+    const r = tbaRankings[tn];
+    return r ? (r as { rank: number }).rank : null;
+  }
+
+  // Loading skeleton — matchData not yet fetched
+  const isLoading = matchData.length === 0;
+
+  return (
+    <div className="shrink-0 space-y-2">
+      <div className="flex items-center gap-1.5">
+        <Radio className="h-3.5 w-3.5 text-primary" />
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Next Matches On Field</p>
+      </div>
+
+      {isLoading ? (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="rounded-xl border border-border bg-card p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="h-3.5 w-10 bg-muted rounded animate-pulse" />
+                <div className="h-3 w-12 bg-muted rounded animate-pulse" />
+              </div>
+              <div className="space-y-1.5">
+                <div className="h-5 bg-muted/60 rounded animate-pulse" />
+                <div className="h-5 bg-muted/40 rounded animate-pulse" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : next3.length === 0 ? (
+        <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl border border-border bg-card text-muted-foreground">
+          <Radio className="h-4 w-4 shrink-0 opacity-40" />
+          <p className="text-xs">No upcoming matches — all done or schedule not yet loaded.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          {next3.map((match, idx) => {
+            const t = matchTime(match);
+            const ms = t ? t * 1000 - nowMs : null;
+            const isFirst = idx === 0;
+            const timeStr = t
+              ? new Date(t * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+              : null;
+
+            return (
+              <div
+                key={match.key}
+                className={`rounded-xl border p-3 flex flex-col gap-2 ${
+                  isFirst
+                    ? "border-primary/40 bg-primary/5"
+                    : "border-border bg-card"
+                }`}
+              >
+                {/* Header row */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    {isFirst && <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />}
+                    <p className="text-sm font-bold font-mono tracking-tight">{matchLabel(match)}</p>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {isFirst && (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-primary/20 text-primary border border-primary/30">NEXT</span>
+                    )}
+                    {timeStr && (
+                      <span className="text-[10px] text-muted-foreground font-mono">{timeStr}</span>
+                    )}
+                    {ms !== null && ms > 0 && (
+                      <span className={`text-[10px] font-mono tabular-nums ${
+                        ms < 5 * 60_000 ? "text-red-400 font-bold" : "text-muted-foreground"
+                      }`}>
+                        {formatCountdown(ms)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Alliances */}
+                {(["red", "blue"] as const).map((side) => (
+                  <div key={side} className="flex items-center gap-1.5">
+                    <span className={`text-[9px] font-bold uppercase tracking-widest w-5 shrink-0 ${
+                      side === "red" ? "text-red-400" : "text-blue-400"
+                    }`}>
+                      {side === "red" ? "R" : "B"}
+                    </span>
+                    <div className="flex gap-1 flex-wrap">
+                      {match.alliances[side].team_keys.map((tk) => {
+                        const tn = Number(tk.replace("frc", ""));
+                        const nx = nexusMap[tn];
+                        const r = rank(tn);
+                        const epa = epaMap[tn]?.event ?? null;
+                        const isUs = tn === MY_TEAM;
+                        const nxStatus = nx?.status?.toLowerCase() ?? "";
+                        const onField = nxStatus.includes("onfield") || nxStatus.includes("field");
+                        const onDeck = nxStatus.includes("ondeck") || nxStatus.includes("deck");
+                        const queuing = nxStatus.includes("queu");
+
+                        return (
+                          <div
+                            key={tk}
+                            className={`flex flex-col items-center px-1.5 py-0.5 rounded-lg border min-w-[52px] relative ${
+                              isUs
+                                ? side === "red"
+                                  ? "bg-red-500/15 border-red-400/50 ring-1 ring-red-400/50"
+                                  : "bg-blue-500/15 border-blue-400/50 ring-1 ring-blue-400/50"
+                                : side === "red"
+                                  ? "bg-red-500/5 border-red-500/20"
+                                  : "bg-blue-500/5 border-blue-500/20"
+                            }`}
+                          >
+                            {r && <span className="text-[8px] text-muted-foreground">#{r}</span>}
+                            <span className={`text-[11px] font-bold leading-tight ${
+                              isUs ? "text-foreground" : "text-foreground/80"
+                            }`}>
+                              {tn}{isUs && <span className="text-yellow-400"> ★</span>}
+                            </span>
+                            {epa !== null && (
+                              <span className="text-[8px] text-muted-foreground font-mono">{epa.toFixed(0)}</span>
+                            )}
+                            {(onField || onDeck || queuing) && (
+                              <span className={`absolute -top-1 -right-1 h-2 w-2 rounded-full border border-background ${
+                                onField ? "bg-green-400 animate-pulse" :
+                                onDeck  ? "bg-yellow-400" :
+                                          "bg-primary"
+                              }`} />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {match.alliances[side].score >= 0 && (
+                      <span className="ml-auto text-sm font-bold tabular-nums">
+                        {match.alliances[side].score}
+                      </span>
+                    )}
+                  </div>
+                ))}
+
+                {match.alliances.red.team_keys.concat(match.alliances.blue.team_keys).some((tk) => {
+                  const s = nexusMap[Number(tk.replace("frc", ""))]?.status?.toLowerCase() ?? "";
+                  return s.includes("onfield") || s.includes("field") || s.includes("deck") || s.includes("queu");
+                }) && (
+                  <div className="flex items-center gap-1 pt-1 border-t border-border">
+                    <Users2 className="h-3 w-3 text-muted-foreground" />
+                    <div className="flex gap-1 flex-wrap">
+                      {match.alliances.red.team_keys.concat(match.alliances.blue.team_keys).map((tk) => {
+                        const tn = Number(tk.replace("frc", ""));
+                        const nx = nexusMap[tn];
+                        if (!nx) return null;
+                        const s = nx.status.toLowerCase();
+                        if (s.includes("noshow") || s === "" || s.includes("post") || s.includes("scoring")) return null;
+                        return (
+                          <span key={tk} className="text-[9px] font-semibold">
+                            {tn}:{" "}
+                            <span className={`${
+                              s.includes("onfield") || s.includes("field") ? "text-green-400" :
+                              s.includes("deck")   ? "text-yellow-400" :
+                                                     "text-primary"
+                            }`}>
+                              {s.includes("onfield") || s.includes("field") ? "Field" :
+                               s.includes("deck")   ? "Deck" : "Q"}
+                            </span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── TBA Key Warning Banner ─────────────────────────────────────────────────────
+
+function TbaKeyWarningBanner() {
+  const [dismissed, setDismissed] = useState(false);
+  const [hasKey, setHasKey] = useState(() => Boolean(getTBAKey()));
+
+  // Re-check when localStorage changes (e.g. user saves key in another tab)
+  useEffect(() => {
+    function onStorage(e: StorageEvent) {
+      if (e.key === "falconscout_api_key_tba") {
+        setHasKey(Boolean(getTBAKey()));
+      }
+    }
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  // Also re-check periodically in case the key was set in this tab via Settings
+  useEffect(() => {
+    const id = setInterval(() => setHasKey(Boolean(getTBAKey())), 2000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (hasKey || dismissed) return null;
+
+  return (
+    <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-amber-500/40 bg-amber-500/8 text-amber-700 dark:text-amber-300 animate-in slide-in-from-top-2 duration-300">
+      <KeyRound className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium leading-snug">No TBA API key configured</p>
+        <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
+          Team lists, rankings, and match schedules won't load without a key.{" "}
+          <a
+            href="/settings"
+            className="underline underline-offset-2 hover:text-amber-500 font-medium"
+          >
+            Add it in Settings →
+          </a>
+        </p>
+      </div>
+      <button
+        onClick={() => setDismissed(true)}
+        className="shrink-0 text-amber-500/70 hover:text-amber-500 transition-colors text-lg leading-none mt-0.5"
+        aria-label="Dismiss"
+      >
+        ×
+      </button>
     </div>
   );
 }
@@ -1396,6 +1821,9 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* No-TBA-key warning */}
+      <TbaKeyWarningBanner />
+
       {!eventKey ? (
         <div className="flex flex-col items-center justify-center h-64 text-center">
           <TrendingUp className="h-10 w-10 text-muted-foreground/30 mb-3" />
@@ -1406,14 +1834,36 @@ export default function DashboardPage() {
         </div>
       ) : (
         <>
-          {/* Persistent next-match banner — always visible when event is set */}
-          <NextMatchBanner
-            match={nextMatch}
+          {/* ── Bento top row: Next Match (2/3) + My Assignments sidebar (1/3) ── */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 shrink-0 items-stretch">
+            {/* Next match banner — spans 2 cols on desktop, stretches full height */}
+            <div className="lg:col-span-2 flex flex-col">
+              <NextMatchBanner
+                match={nextMatch}
+                eventKey={eventKey}
+                matchData={matchData}
+                nowMs={nowMs}
+                epaMap={epaMap}
+                tbaRankings={tbaRankings}
+              />
+            </div>
+            {/* My scouting assignments sidebar */}
+            <div className="lg:col-span-1" style={{ minHeight: 160, maxHeight: 260 }}>
+              <MyScouting
+                eventKey={eventKey}
+                matchData={matchData}
+                nowMs={nowMs}
+              />
+            </div>
+          </div>
+
+          {/* ── Next 3 event matches (Nexus-powered) ── */}
+          <NextThreeMatches
             eventKey={eventKey}
             matchData={matchData}
-            nowMs={nowMs}
             epaMap={epaMap}
             tbaRankings={tbaRankings}
+            nowMs={nowMs}
           />
 
           {/* Search + column picker */}
