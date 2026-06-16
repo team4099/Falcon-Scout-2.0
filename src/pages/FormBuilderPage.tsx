@@ -602,7 +602,7 @@ function FormBuilderContent() {
           formType,
           fields: savedFields,
         });
-        toast.success("Template updated!");
+        toast.success("Form saved!");
       } else {
         const newId = await createTemplate({
           name, description: description || undefined,
@@ -610,11 +610,11 @@ function FormBuilderContent() {
           fields: savedFields,
           isActive: false,
         });
-        setSelectedId(newId);
-        toast.success("Template created!");
+        setSelectedId(newId as string);
+        toast.success("Form created!");
       }
     } catch {
-      toast.error("Failed to save template.");
+      toast.error("Failed to save form.");
     } finally {
       setSaving(false);
     }
@@ -704,21 +704,21 @@ function FormBuilderContent() {
   }, {});
 
   return (
-    <div className="h-full flex flex-col gap-0">
+    <div className="flex flex-col gap-0">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-2xl font-bold tracking-tight">Form Builder</h2>
-          <p className="text-muted-foreground text-sm">Design and manage scouting form templates</p>
+          <p className="text-muted-foreground text-sm">Design and manage your scouting forms</p>
         </div>
         <Button onClick={newForm} variant="outline" size="sm">
           <Plus className="h-4 w-4 mr-1" /> New Form
         </Button>
       </div>
 
-      <div className="flex gap-6 flex-1 min-h-0">
-        {/* Sidebar: template list */}
-        <div className="w-56 shrink-0 flex flex-col gap-2">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Templates</p>
+      <div className="flex gap-6 items-start">
+        {/* Sidebar: form list */}
+        <div className="w-56 shrink-0 flex flex-col gap-2 overflow-y-auto sticky top-0 max-h-[calc(100vh-10rem)]">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Forms</p>
 
           {/* Active form indicators */}
           {(activeDefault || activeSuper || activePit) && (
@@ -765,7 +765,7 @@ function FormBuilderContent() {
               </button>
             );
           })}
-          {templates?.length === 0 && <p className="text-xs text-muted-foreground italic">No templates yet.</p>}
+          {templates?.length === 0 && <p className="text-xs text-muted-foreground italic">No forms yet.</p>}
         </div>
 
         {/* Main editor */}
@@ -792,7 +792,7 @@ function FormBuilderContent() {
                 )}
                 <Button onClick={saveTemplate} disabled={saving} size="sm">
                   <Save className="h-4 w-4 mr-1" />
-                  {saving ? "Saving…" : "Save Template"}
+                  {saving ? "Saving…" : selectedId ? "Save Form" : "Create Form"}
                 </Button>
                 {selectedId && (
                   <Button
@@ -800,7 +800,7 @@ function FormBuilderContent() {
                     className="text-destructive hover:text-destructive"
                     onClick={async () => {
                       await deleteTemplate({ id: selectedId as Id<"formTemplates"> });
-                      toast.success("Template deleted.");
+                      toast.success("Form deleted.");
                       newForm();
                     }}
                   >
