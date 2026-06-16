@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useCached } from "@/hooks/useCached";
 import { useAuthActions, useConvexAuth } from "@convex-dev/auth/react";
 import { api } from "../convex/_generated/api";
-import { setTBAKey } from "@/lib/api";
+import { setTBAKey, clearTBAErrCache } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -248,8 +248,13 @@ function AuthenticatedApp() {
   useEffect(() => {
     if (userSettings === undefined) return; // still loading
     const cloudKey = userSettings?.tbaApiKey ?? "";
-    if (cloudKey) setTBAKey(cloudKey);
-  }, [userSettings]);
+    if (cloudKey) {
+      setTBAKey(cloudKey);
+      // Clear any 401 error-backoff entries so the next fetch actually
+      // hits the network now that we have a valid key.
+      if (currentEvent?.eventKey) clearTBAErrCache(currentEvent.eventKey);
+    }
+  }, [userSettings, currentEvent]);
 
   /** "just now" / "2 min ago" / "1 hr ago" */
   function formatAge(ts: number | null): string {

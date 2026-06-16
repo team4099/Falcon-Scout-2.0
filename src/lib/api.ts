@@ -48,6 +48,17 @@ export function clearCacheErrKey(cacheKey: string): void {
   localStorage.removeItem(`${LS_PREFIX}${cacheKey}__err`);
 }
 
+/**
+ * Clear TBA error-backoff entries for a given event so that the next fetch
+ * attempt will actually hit the network (e.g. after a key is first saved).
+ */
+export function clearTBAErrCache(eventKey: string): void {
+  clearCacheErrKey(`tba_teams_${eventKey}`);
+  clearCacheErrKey(`tba_rankings_${eventKey}`);
+  clearCacheErrKey(`tba_matches_full_${eventKey}`);
+  clearCacheErrKey(`tba_insights_${eventKey}`);
+}
+
 // ── Core fetch with localStorage cache ───────────────────────────────────────
 
 async function fetchWithCache<T>(
@@ -91,27 +102,46 @@ async function fetchWithCache<T>(
   }
 }
 
-function tbaHeaders(): Record<string, string> {
+function tbaHeaders(): Record<string, string> | null {
   const key = getTBAKey();
-  return key ? { "X-TBA-Auth-Key": key } : {};
+  // Return null (not an empty object) when no key is available so callers
+  // can bail out early and avoid making requests that would 401.
+  return key ? { "X-TBA-Auth-Key": key } : null;
+}
+
+/**
+ * Like fetchWithCache but returns null without making any network request
+ * when no TBA API key is configured.  This avoids 401 responses being
+ * cached in the error-backoff layer before the key arrives from Convex.
+ */
+async function fetchTBAWithCache<T>(
+  url: string,
+  cacheKey: string,
+  ttl: number
+): Promise<T | null> {
+  const headers = tbaHeaders();
+  if (!headers) {
+    // No key yet — return stale data if we have it, but don't make a
+    // request that would produce a cached 401 error-backoff entry.
+    return lsGetStale<T>(cacheKey);
+  }
+  return fetchWithCache<T>(url, cacheKey, headers, ttl);
 }
 
 // ── TBA ───────────────────────────────────────────────────────────────────────
 
 export async function fetchTBAEventTeams(eventKey: string) {
-  return fetchWithCache(
+  return fetchTBAWithCache(
     `${TBA_BASE}/event/${eventKey}/teams`,
     `tba_teams_${eventKey}`,
-    tbaHeaders(),
     TTL.MEDIUM  // team lists for an event don't change after registration
   );
 }
 
 export async function fetchTBAEventRankings(eventKey: string) {
-  return fetchWithCache(
+  return fetchTBAWithCache(
     `${TBA_BASE}/event/${eventKey}/rankings`,
     `tba_rankings_${eventKey}`,
-    tbaHeaders(),
     TTL.SHORT   // live rankings during the event
   );
 }
@@ -131,16 +161,15 @@ export interface TBAMatch {
 }
 
 export async function fetchTBAEventMatches(eventKey: string) {
-  return fetchWithCache<TBAMatch[]>(
+  return fetchTBAWithCache<TBAMatch[]>(
     `${TBA_BASE}/event/${eventKey}/matches`,
     `tba_matches_full_${eventKey}`,
-    tbaHeaders(),
     TTL.SHORT   // match scores update throughout the event
   );
 }
 
 export async function fetchTBATeamInfo(teamNumber: number) {
-  return fetchWithCache<{
+  return fetchTBAWithCache<{
     nickname: string;
     school_name: string;
     city: string;
@@ -149,7 +178,6 @@ export async function fetchTBATeamInfo(teamNumber: number) {
   }>(
     `${TBA_BASE}/team/frc${teamNumber}`,
     `tba_team_${teamNumber}`,
-    tbaHeaders(),
     TTL.LONG    // team name / nickname doesn't change within a season
   );
 }
@@ -170,10 +198,9 @@ export async function fetchTBATeamAvatar(teamNumber: number, year: number): Prom
 
   // 3. Fetch from TBA
   try {
-    const media = await fetchWithCache<Array<{ type: string; details?: { base64Image?: string } }>>(
+    const media = await fetchTBAWithCache<Array<{ type: string; details?: { base64Image?: string } }>>(
       `${TBA_BASE}/team/frc${teamNumber}/media/${year}`,
       `tba_media_${teamNumber}_${year}`,
-      tbaHeaders(),
       TTL.LONG  // avatars don't change mid-season
     );
     if (!Array.isArray(media)) {
@@ -276,13 +303,12 @@ export async function fetchNexusTeamStatus(
 }
 
 export async function fetchTBAEventInsights(eventKey: string) {
-  return fetchWithCache<{
+  return fetchTBAWithCache<{
     qual?: { average_score?: number; average_win_score?: number };
     playoff?: { average_score?: number };
   }>(
     `${TBA_BASE}/event/${eventKey}/insights`,
     `tba_insights_${eventKey}`,
-    tbaHeaders(),
     TTL.SHORT
   );
 }
