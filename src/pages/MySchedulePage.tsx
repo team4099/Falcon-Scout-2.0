@@ -3,7 +3,6 @@ import { useQuery } from "convex/react";
 import { useMutation } from "convex/react";
 import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
-import { useNavigate } from "react-router";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { fetchTBAEventMatches } from "@/lib/api";
 import { lsGet, lsGetStale } from "@/lib/persistentCache";
@@ -11,7 +10,7 @@ import type { TBAMatch } from "@/lib/api";
 import type { FormField } from "@/types";
 import {
   CalendarDays, CalendarCheck, ClipboardList, Wrench, Coffee,
-  Loader2, CheckCircle2, Users, ClipboardCheck, ArrowRight,
+  Loader2, CheckCircle2, Users, ClipboardCheck,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -499,62 +498,6 @@ function QualPitCard({ rotation }: { rotation: PitRotation }) {
   );
 }
 
-// ── Section shell ─────────────────────────────────────────────────────────────
-
-function Section({
-  icon: Icon, title, description, count, accent, children,
-}: {
-  icon: React.ElementType;
-  title: string;
-  description: string;
-  count: number;
-  accent?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div style={{
-      borderRadius: 16, overflow: "hidden",
-      background: accent ? G_DIM : SURFACE,
-      border: `1px solid ${accent ? G_MED : SURF_BORD}`,
-    }}>
-      {/* Header */}
-      <div style={{
-        display: "flex", alignItems: "center", gap: 10, padding: "13px 16px",
-        borderBottom: `1px solid ${accent ? G_MED : SURF_BORD}`,
-      }}>
-        <div style={{
-          width: 32, height: 32, borderRadius: 8, flexShrink: 0,
-          background: accent ? G : "oklch(1 0 0 / 6%)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          boxShadow: accent ? `0 2px 8px ${G} / 30%` : "none",
-        }}>
-          <Icon size={15} color={accent ? G_TXT : MUTED} />
-        </div>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 700, fontSize: 14, color: FG }}>{title}</div>
-          <div style={{ fontSize: 11, color: MUTED }}>{description}</div>
-        </div>
-        <span style={{
-          background: accent ? G : "oklch(1 0 0 / 6%)",
-          color: accent ? G_TXT : MUTED,
-          borderRadius: 20, padding: "2px 11px", fontSize: 12, fontWeight: 800,
-          flexShrink: 0,
-          boxShadow: accent && count > 0 ? `0 2px 8px ${G} / 30%` : "none",
-        }}>
-          {count}
-        </span>
-      </div>
-
-      <div style={{ padding: "10px 12px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
-        {count === 0 ? (
-          <p style={{ fontSize: 13, color: MUTED, padding: "8px 4px", opacity: 0.7 }}>
-            Nothing assigned here yet.
-          </p>
-        ) : children}
-      </div>
-    </div>
-  );
-}
 
 // ── Preferences Panel ────────────────────────────────────────────────────────
 
@@ -907,7 +850,6 @@ export default function MySchedulePage() {
     eventKey ? { eventKey } : "skip"
   );
 
-  const navigate = useNavigate();
 
   // Seed TBA matches from cache immediately, then refresh in background
   const [tbaMatches, setTbaMatches] = useState<TBAMatch[]>(
@@ -1215,7 +1157,7 @@ export default function MySchedulePage() {
 
                 {/* Items in this day */}
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  {items.map((item, idx) => {
+                  {items.map((item) => {
                     if (item.kind === "scout") {
                       return (
                         <div key={item.assignment._id} style={{ position: "relative" }}>

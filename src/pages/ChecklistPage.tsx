@@ -34,7 +34,6 @@ import { useOfflineSync } from "@/hooks/useOfflineSync";
 import {
   ClipboardCheck,
   CheckCircle2,
-  Clock,
   Send,
   QrCode,
   Wifi,
@@ -56,7 +55,6 @@ const G_STR = "oklch(0.85 0.18 95 / 45%)";  // gold strong border
 const G_TXT = "oklch(0.1 0 0)";             // text on gold (near-black)
 const SURFACE   = "oklch(1 0 0 / 3%)";
 const SURF_BORD = "oklch(1 0 0 / 8%)";
-const SURF_HVR  = "oklch(1 0 0 / 6%)";
 const MUTED = "var(--muted-foreground)";
 const FG    = "var(--foreground)";
 
@@ -476,7 +474,7 @@ function ChecklistFormDialog({
 
 // ── Assignment Card ────────────────────────────────────────────────────────────
 function AssignmentCard({
-  assignment, assigneeName, completedByName, isLate, isOnline, onOpen, onViewQR,
+  assignment, assigneeName, completedByName, isLate, isOnline: _isOnline, onOpen, onViewQR,
 }: {
   assignment: ChecklistAssignment;
   assigneeName: string;
