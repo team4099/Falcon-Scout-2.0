@@ -37,6 +37,7 @@ import {
   MoreHorizontal,
   X,
   ClipboardCheck,
+  DollarSign,
 } from "lucide-react";
 import { useOfflineSync } from "@/hooks/useOfflineSync";
 import { useUIStore } from "@/store/uiStore";
@@ -55,6 +56,7 @@ import ManageScoutsPage from "@/pages/ManageScoutsPage";
 import SchedulingPage from "@/pages/SchedulingPage";
 import MySchedulePage from "@/pages/MySchedulePage";
 import ChecklistPage from "@/pages/ChecklistPage";
+import BettingPage from "@/pages/BettingPage";
 
 // Base nav items — always visible
 const BASE_NAV = [
@@ -64,6 +66,7 @@ const BASE_NAV = [
   { to: "/scout",     label: "Scout Match",  icon: ClipboardList   },
   { to: "/schedule",  label: "My Schedule",  icon: CalendarDays    },
   { to: "/checklist", label: "Checklists",   icon: ClipboardCheck  },
+  { to: "/betting",   label: "FalconBet",    icon: DollarSign      },
   { to: "/qrcodes",   label: "My QR Codes",  icon: QrCode          },
   { to: "/scanner",   label: "QR Scanner",   icon: ScanLine        },
   { to: "/kanban",    label: "Picklist",     icon: Columns         },
@@ -228,6 +231,7 @@ function AuthenticatedApp() {
   const BOTTOM_NAV_MORE = [
     { to: "/matches",  label: "Matches",   icon: CalendarDays },
     { to: "/data",     label: "Data",      icon: BarChart2    },
+    { to: "/betting",  label: "FalconBet", icon: DollarSign   },
     { to: "/qrcodes",  label: "QR Codes",  icon: QrCode       },
     { to: "/scanner",  label: "Scanner",   icon: ScanLine     },
     { to: "/kanban",   label: "Picklist",  icon: Columns      },
@@ -418,6 +422,7 @@ function AuthenticatedApp() {
             <Route path="/scout"      element={<ScoutMatchPage />} />
             <Route path="/schedule"   element={<MySchedulePage />} />
             <Route path="/checklist"  element={<ChecklistPage />} />
+            <Route path="/betting"    element={<BettingPage />} />
             <Route path="/qrcodes"    element={<QRCodesPage />} />
             <Route path="/scanner"    element={<ScannerPage />} />
             <Route path="/kanban"     element={<KanbanPage />} />

@@ -154,5 +154,93 @@ export default defineSchema({
   })
     .index("by_event", ["eventKey"])
     .index("by_event_team", ["eventKey", "teamNumber"]),
-});
 
+  // ── FalconBet ──────────────────────────────────────────────────────────────
+
+  // Betting markets — one per "question" users can bet on
+  bettingMarkets: defineTable({
+    eventKey:    v.string(),
+    title:       v.string(),
+    description: v.optional(v.string()),
+    // Market category
+    type: v.union(
+      v.literal("match_winner"),       // red or blue alliance wins
+      v.literal("alliance_score_ou"),  // alliance score over/under threshold
+      v.literal("point_differential"), // |red - blue| over/under
+      v.literal("team_field_bool"),    // checkbox field → yes/no for team+match
+      v.literal("team_field_numeric"), // number/counter field → over/under for team+match
+      v.literal("team_field_select"),  // select field → equals a specific value
+      v.literal("multi_match_numeric"), // combined numeric stat O/U across N matches
+      v.literal("multi_match_count"),   // count of boolean condition met across N matches (O/U)
+    ),
+    // Match context
+    matchNumber:  v.optional(v.number()),
+    matchNumbers: v.optional(v.array(v.number())), // multi-match markets
+    teamNumber:   v.optional(v.number()),
+    alliance:     v.optional(v.union(v.literal("red"), v.literal("blue"))),
+    // Scouting-field context (for team_field_* and multi_match_*)
+    templateId: v.optional(v.id("formTemplates")),
+    fieldId:    v.optional(v.string()),
+    fieldLabel: v.optional(v.string()),
+    // Threshold for over/under markets
+    threshold:   v.optional(v.number()),
+    // Target value for select markets
+    targetValue: v.optional(v.string()),
+    // Minimum occurrences for multi_match_count (e.g. "at least 3 of 5 matches")
+    minCount: v.optional(v.number()),
+    // Who the bet targets
+    targetScope: v.optional(v.union(
+      v.literal("team"),      // specific team number
+      v.literal("alliance"),  // red or blue alliance in each match
+      v.literal("match"),     // anyone in the match (no team/alliance filter)
+    )),
+    // Outcome options — each has a house seed pool to guarantee minimum payout
+    options: v.array(v.object({
+      id:       v.string(),   // "red","blue","over","under","yes","no", or select value
+      label:    v.string(),
+      seedPool: v.number(),   // virtual coins seeded by house (from Statbotics or 50/50)
+    })),
+    // Lifecycle
+    status: v.union(
+      v.literal("open"),      // accepting bets
+      v.literal("locked"),    // no new bets (match imminent)
+      v.literal("resolved"),  // outcome known, payouts issued
+      v.literal("cancelled"), // voided — all bets refunded
+    ),
+    resolvedOptionId: v.optional(v.string()),
+    createdAt:        v.number(),
+    resolvedAt:       v.optional(v.number()),
+    createdBy:        v.optional(v.id("users")),
+  })
+    .index("by_event",       ["eventKey"])
+    .index("by_event_match", ["eventKey", "matchNumber"])
+    .index("by_status",      ["status"]),
+
+  // Individual bets placed by users
+  bets: defineTable({
+    marketId: v.id("bettingMarkets"),
+    userId:   v.id("users"),
+    optionId: v.string(),
+    amount:   v.number(),
+    eventKey: v.string(),
+    placedAt: v.number(),
+    payout:   v.optional(v.number()),  // set on resolution
+    settled:  v.optional(v.boolean()),
+  })
+    .index("by_market",     ["marketId"])
+    .index("by_user_event", ["userId", "eventKey"])
+    .index("by_user",       ["userId"]),
+
+  // Per-user per-event coin balance
+  userBalances: defineTable({
+    userId:         v.id("users"),
+    eventKey:       v.string(),
+    balance:        v.number(),
+    totalWon:       v.number(),
+    totalLost:      v.number(),
+    totalBet:       v.number(),
+    totalBegs:      v.number(), // leaderboard of shame
+    totalPenalties: v.optional(v.number()), // coins lost for skipping markets
+  })
+    .index("by_user_event", ["userId", "eventKey"]),
+});

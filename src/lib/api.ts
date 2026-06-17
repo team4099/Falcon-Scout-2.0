@@ -164,6 +164,7 @@ export interface TBAMatch {
   time: number | null;           // scheduled (unix s)
   predicted_time: number | null; // predicted (unix s)
   actual_time: number | null;    // set once played
+  winning_alliance: "red" | "blue" | "";  // "" = tie
   alliances: {
     red:  { team_keys: string[]; score: number };
     blue: { team_keys: string[]; score: number };

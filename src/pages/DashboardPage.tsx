@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { useNavigate } from "react-router";
 import { useUIStore } from "@/store/uiStore";
 import { useQuery } from "convex/react";
 import { useCached } from "@/hooks/useCached";
@@ -23,7 +24,7 @@ import {
   fetchNexusTeamStatus,
 } from "@/lib/api";
 import type { TBAMatch, NexusTeamStatus } from "@/lib/api";
-import { ExternalLink, Search, FileText, TrendingUp, ClipboardList, Trash2, AlertTriangle, ChevronDown, ChevronUp, Clock, SlidersHorizontal, KeyRound, CalendarCheck, Radio, Users2 } from "lucide-react";
+import { ExternalLink, Search, FileText, TrendingUp, TrendingDown, ClipboardList, Trash2, AlertTriangle, ChevronDown, ChevronUp, Clock, SlidersHorizontal, KeyRound, CalendarCheck, Radio, Users2, DollarSign, Coins, ArrowRight } from "lucide-react";
 import { getTBAKey } from "@/lib/api";
 import TeamDetailPanel from "@/pages/TeamDetailPanel";
 import { useMutation } from "convex/react";
@@ -1508,6 +1509,108 @@ function TbaKeyWarningBanner() {
   );
 }
 
+// ── Falcon Bets Widget ──────────────────────────────────────────────────────
+
+function formatCoinsShort(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+function FalconBetsWidget({ eventKey }: { eventKey: string }) {
+  const navigate = useNavigate();
+  const balance = useQuery(api.betting.getMyBalance, { eventKey });
+  const markets = useQuery(api.betting.listMarkets, { eventKey });
+  const myBets = useQuery(api.betting.listMyBets, { eventKey });
+
+  const openMarkets = (markets ?? []).filter((m) => m.status === "open");
+  const pendingBets = (myBets ?? []).filter((b) => !b.settled);
+  const settledBets = (myBets ?? []).filter((b) => b.settled);
+  const netPnL = balance
+    ? (balance.totalWon ?? 0) - (balance.totalLost ?? 0)
+    : 0;
+
+  // Find the hottest open market (most total wagered)
+  const hotMarket = openMarkets.length > 0
+    ? openMarkets.reduce((best, m) => {
+        const mTotal = m.options.reduce((s: number, o: { seedPool: number }) => s + o.seedPool, 0);
+        const bTotal = best.options.reduce((s: number, o: { seedPool: number }) => s + o.seedPool, 0);
+        return mTotal > bTotal ? m : best;
+      })
+    : null;
+
+  return (
+    <div
+      className="group rounded-xl border border-border bg-card p-3 cursor-pointer h-full flex flex-col"
+      onClick={() => navigate("/betting")}
+    >
+      <div className="flex flex-col flex-1">
+        {/* Header */}
+        <div className="flex items-center gap-2 pb-2 border-b border-border mb-2">
+          <div className="h-6 w-6 rounded-md bg-primary/15 flex items-center justify-center">
+            <DollarSign className="h-3.5 w-3.5 text-primary" />
+          </div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">FalconBet</p>
+          <div className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground font-semibold opacity-0 group-hover:opacity-100 transition-opacity">
+            Open
+            <ArrowRight className="h-3 w-3" />
+          </div>
+        </div>
+
+        {/* Stats 2×2 grid */}
+        <div className="grid grid-cols-2 gap-1.5 flex-1">
+          <div className="rounded-lg bg-muted/50 border border-border/50 px-2 py-1.5 text-center">
+            <p className="text-[9px] text-muted-foreground font-medium uppercase tracking-wider">Balance</p>
+            <p className="text-base font-black text-primary font-mono tabular-nums">
+              {balance ? formatCoinsShort(balance.balance) : "…"}
+            </p>
+          </div>
+          <div className="rounded-lg bg-muted/50 border border-border/50 px-2 py-1.5 text-center">
+            <p className="text-[9px] text-muted-foreground font-medium uppercase tracking-wider">Net P&L</p>
+            <p className={`text-base font-black font-mono tabular-nums ${
+              netPnL > 0 ? "text-amber-400" : netPnL < 0 ? "text-red-400" : "text-muted-foreground"
+            }`}>
+              {netPnL > 0 ? "+" : ""}{formatCoinsShort(netPnL)}
+            </p>
+          </div>
+          <div className="rounded-lg bg-muted/50 border border-border/50 px-2 py-1.5 text-center">
+            <p className="text-[9px] text-muted-foreground font-medium uppercase tracking-wider">Open</p>
+            <p className="text-base font-black text-foreground font-mono tabular-nums">
+              {openMarkets.length}
+            </p>
+          </div>
+          <div className="rounded-lg bg-muted/50 border border-border/50 px-2 py-1.5 text-center">
+            <p className="text-[9px] text-muted-foreground font-medium uppercase tracking-wider">Pending</p>
+            <p className="text-base font-black text-primary font-mono tabular-nums">
+              {pendingBets.length}
+            </p>
+          </div>
+        </div>
+
+        {/* Hot market preview */}
+        {hotMarket && (
+          <div className="mt-2 rounded-lg bg-muted/30 border border-border/50 px-2 py-1.5 flex items-center gap-1.5">
+            <span className="text-[9px] font-bold uppercase tracking-wider text-primary shrink-0">Hot</span>
+            <p className="text-[11px] text-foreground/80 truncate flex-1">{hotMarket.title}</p>
+          </div>
+        )}
+
+        {/* Bottom stats */}
+        {balance && (settledBets.length > 0 || (balance.totalBegs ?? 0) > 0) && (
+          <div className="flex gap-3 mt-1.5 text-[9px] text-muted-foreground flex-wrap">
+            <span className="flex items-center gap-1">
+              <TrendingUp className="h-2.5 w-2.5 text-amber-400" /> Won: {formatCoinsShort(balance.totalWon ?? 0)}
+            </span>
+            <span className="flex items-center gap-1">
+              <TrendingDown className="h-2.5 w-2.5 text-red-400" /> Lost: {formatCoinsShort(balance.totalLost ?? 0)}
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Dashboard Page ─────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
@@ -1891,14 +1994,21 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* ── Next 3 event matches (Nexus-powered) ── */}
-          <NextThreeMatches
-            eventKey={eventKey}
-            matchData={matchData}
-            epaMap={epaMap}
-            tbaRankings={tbaRankings}
-            nowMs={nowMs}
-          />
+          {/* ── Next 3 event matches + Falcon Bets side-by-side ── */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 shrink-0 items-stretch">
+            <div className="lg:col-span-2">
+              <NextThreeMatches
+                eventKey={eventKey}
+                matchData={matchData}
+                epaMap={epaMap}
+                tbaRankings={tbaRankings}
+                nowMs={nowMs}
+              />
+            </div>
+            <div className="lg:col-span-1">
+              <FalconBetsWidget eventKey={eventKey} />
+            </div>
+          </div>
 
           {/* Search + column picker */}
           <div className="relative shrink-0 flex gap-2">

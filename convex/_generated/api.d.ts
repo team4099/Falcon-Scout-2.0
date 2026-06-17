@@ -9,6 +9,7 @@
  */
 
 import type * as auth from "../auth.js";
+import type * as betting from "../betting.js";
 import type * as checklists from "../checklists.js";
 import type * as events from "../events.js";
 import type * as forms from "../forms.js";
@@ -26,6 +27,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
+  betting: typeof betting;
   checklists: typeof checklists;
   events: typeof events;
   forms: typeof forms;

@@ -328,18 +328,18 @@ function MatchDetailPanel({
                   {played && (
                     <span
                       className={`ml-auto text-xs font-bold ${
-                        (side === "red"
-                          ? match.alliances.red.score > match.alliances.blue.score
-                          : match.alliances.blue.score > match.alliances.red.score)
+                        match.winning_alliance === side
                           ? "text-green-400"
+                          : match.winning_alliance === ""
+                          ? "text-yellow-400"
                           : "text-muted-foreground/50"
                       }`}
                     >
                       {match.alliances[side].score} pts ·{" "}
-                      {(side === "red"
-                        ? match.alliances.red.score > match.alliances.blue.score
-                        : match.alliances.blue.score > match.alliances.red.score)
+                      {match.winning_alliance === side
                         ? "WIN"
+                        : match.winning_alliance === ""
+                        ? "TIE"
                         : "LOSS"}
                     </span>
                   )}
@@ -640,11 +640,8 @@ export default function MatchesPage() {
                   {/* Alliances */}
                   <div className="px-4 py-3 flex flex-col gap-2">
                     {(["red", "blue"] as const).map((side) => {
-                      const allianceWon =
-                        played &&
-                        (side === "red"
-                          ? m.alliances.red.score > m.alliances.blue.score
-                          : m.alliances.blue.score > m.alliances.red.score);
+                      const allianceWon = played && m.winning_alliance === side;
+                      const allianceTied = played && m.winning_alliance === "";
                       return (
                         <div key={side} className="flex items-center gap-3">
                           <div
@@ -698,10 +695,10 @@ export default function MatchesPage() {
                           {played && (
                             <span
                               className={`text-xs font-bold ml-auto shrink-0 ${
-                                allianceWon ? "text-green-400" : "text-muted-foreground/50"
+                                allianceWon ? "text-green-400" : allianceTied ? "text-yellow-400" : "text-muted-foreground/50"
                               }`}
                             >
-                              {allianceWon ? "W" : "L"}
+                              {allianceWon ? "W" : allianceTied ? "T" : "L"}
                             </span>
                           )}
                         </div>
