@@ -491,9 +491,9 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, saving, isMobile
           {isMobile || isLandscapePhone ? "#" : "Match"}
         </div>
         {POSITIONS.map((p, i) => (
-          <React.Fragment key={p}>
+          <Fragment key={p}>
             {i === 3 && (
-              <div key="divider-h" style={{ background: SURF_BORD, width: "100%", alignSelf: "stretch" }} />
+              <div style={{ background: SURF_BORD, width: "100%", alignSelf: "stretch" }} />
             )}
             <div style={{
               padding: "9px 4px", textAlign: "center",
@@ -502,7 +502,7 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, saving, isMobile
             }}>
               {POS_META[p].short}
             </div>
-          </React.Fragment>
+          </Fragment>
         ))}
       </div>
 

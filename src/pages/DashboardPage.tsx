@@ -393,39 +393,33 @@ function SubmissionsReviewDialog({
               <AlertTriangle className="h-4 w-4 text-destructive" />
               Delete scouting report?
             </AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-2 text-sm text-muted-foreground">
-                <p>
-                  This will permanently remove Match{" "}
-                  <strong className="text-foreground">
-                    {sorted.find((s) => s._id === confirmId)?.matchNumber ?? "?"}
-                  </strong>{" "}
-                  for team <strong className="text-foreground">{teamNumber}</strong>. This cannot be undone.
-                </p>
-                {(() => {
-                  const sub = sorted.find((s) => s._id === confirmId);
-                  if (!sub?.scoutId) return null;
-                  const u = userMap[sub.scoutId];
-                  if (!u) return null;
-                  const displayName = u.name ?? u.email ?? "Unknown scout";
-                  return (
-                    <div className="flex items-center gap-2 pt-1 border-t border-border/50">
-                      <span className="text-xs text-muted-foreground">Scouted by:</span>
-                      {u.image
-                        ? <img src={u.image} alt={displayName} className="h-5 w-5 rounded-full object-cover" />
-                        : <span className="h-5 w-5 rounded-full bg-primary/20 text-primary text-[10px] flex items-center justify-center font-bold shrink-0">
-                            {displayName.charAt(0).toUpperCase()}
-                          </span>
-                      }
-                      <span className="text-xs font-medium text-foreground">{displayName}</span>
-                      {u.email && u.name && (
-                        <span className="text-xs text-muted-foreground">({u.email})</span>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
+            <AlertDialogDescription>
+              This will permanently remove Match{" "}
+              {sorted.find((s) => s._id === confirmId)?.matchNumber ?? "?"} for team{" "}
+              {teamNumber}. This cannot be undone.
             </AlertDialogDescription>
+            {(() => {
+              const sub = sorted.find((s) => s._id === confirmId);
+              if (!sub?.scoutId) return null;
+              const u = userMap[sub.scoutId];
+              if (!u) return null;
+              const displayName = u.name ?? u.email ?? "Unknown scout";
+              return (
+                <div className="flex items-center gap-2 pt-2 mt-1 border-t border-border/50 text-sm">
+                  <span className="text-xs text-muted-foreground">Scouted by:</span>
+                  {u.image
+                    ? <img src={u.image} alt={displayName} className="h-5 w-5 rounded-full object-cover" />
+                    : <span className="h-5 w-5 rounded-full bg-primary/20 text-primary text-[10px] flex items-center justify-center font-bold shrink-0">
+                        {displayName.charAt(0).toUpperCase()}
+                      </span>
+                  }
+                  <span className="text-xs font-medium text-foreground">{displayName}</span>
+                  {u.email && u.name && (
+                    <span className="text-xs text-muted-foreground">({u.email})</span>
+                  )}
+                </div>
+              );
+            })()}
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
