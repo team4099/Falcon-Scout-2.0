@@ -24,7 +24,7 @@ import {
   fetchNexusTeamStatus,
 } from "@/lib/api";
 import type { TBAMatch, NexusTeamStatus } from "@/lib/api";
-import { ExternalLink, Search, FileText, TrendingUp, TrendingDown, ClipboardList, Trash2, AlertTriangle, ChevronDown, ChevronUp, Clock, SlidersHorizontal, KeyRound, CalendarCheck, Radio, Users2, DollarSign, Coins, ArrowRight } from "lucide-react";
+import { ExternalLink, Search, FileText, TrendingUp, TrendingDown, ClipboardList, Trash2, AlertTriangle, ChevronDown, ChevronUp, Clock, SlidersHorizontal, KeyRound, CalendarCheck, Radio, Users2, DollarSign, ArrowRight } from "lucide-react";
 import { getTBAKey } from "@/lib/api";
 import TeamDetailPanel from "@/pages/TeamDetailPanel";
 import { useMutation } from "convex/react";

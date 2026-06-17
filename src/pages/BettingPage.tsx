@@ -331,7 +331,6 @@ function MarketCard({
   const realBets: Record<string, number> = poolData ?? {};
 
   const resolveMarket = useMutation(api.betting.resolveMarket);
-  const cancelMarket = useMutation(api.betting.cancelMarket);
   const lockMarket = useMutation(api.betting.lockMarket);
   const unlockMarket = useMutation(api.betting.unlockMarket);
 
@@ -352,15 +351,6 @@ function MarketCard({
       toast.error((e as Error).message ?? "Failed to resolve");
     }
   };
-
-  async function handleCancel() {
-    try {
-      await cancelMarket({ marketId: market._id });
-      toast.success("Market cancelled — all bets refunded");
-    } catch (e: unknown) {
-      toast.error((e as Error).message ?? "Failed to cancel");
-    }
-  }
 
   if (market.status === "cancelled") return null;
 
@@ -535,7 +525,6 @@ function MarketCard({
 
 // ── Create Market Panel ───────────────────────────────────────────────────────
 
-const BETTABLE_TYPES = ["checkbox", "number", "counter", "select"] as const;
 
 /** Custom multi-select dropdown for picking matches (checkboxes). */
 function MatchMultiSelect({
