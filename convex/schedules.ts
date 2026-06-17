@@ -241,15 +241,16 @@ export const upsertMyPreferences = mutation({
     preferredPartners: v.array(v.id("users")),
     wantsMoreMatches:  v.boolean(),
     wantsPitRotation:  v.boolean(),
+    wantsPitScouting:  v.optional(v.boolean()),
   },
-  handler: async (ctx, { eventKey, preferredPartners, wantsMoreMatches, wantsPitRotation }) => {
+  handler: async (ctx, { eventKey, preferredPartners, wantsMoreMatches, wantsPitRotation, wantsPitScouting }) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
     const existing = await ctx.db
       .query("scoutPreferences")
       .withIndex("by_scout_event", (q) => q.eq("scoutId", userId).eq("eventKey", eventKey))
       .first();
-    const data = { preferredPartners, wantsMoreMatches, wantsPitRotation, updatedAt: Date.now() };
+    const data = { preferredPartners, wantsMoreMatches, wantsPitRotation, wantsPitScouting, updatedAt: Date.now() };
     if (existing) {
       await ctx.db.patch(existing._id, data);
     } else {

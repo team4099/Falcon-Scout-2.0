@@ -555,10 +555,105 @@ function TeamRow({
     parsed.some((d) => d[f.id] && String(d[f.id]).trim() !== "")
   );
 
+  // Build the ordered stat chips data (shared between mobile + desktop)
+  const allStats: { label: string; value: string; color: "default" | "primary" | "success" | "muted" }[] = [
+    { label: "Matches", value: String(submissions.length), color: submissions.length > 0 ? "default" : "muted" },
+    { label: "Avg Score", value: avgScore !== null ? Number(avgScore.toFixed(0)).toString() : "—", color: avgScore !== null ? "default" : "muted" },
+    { label: "Event EPA", value: epa.event !== null ? String(epa.event) : "—", color: epa.event !== null ? "primary" : "muted" },
+    { label: "Season EPA", value: epa.overall !== null ? String(epa.overall) : "—", color: epa.overall !== null ? "primary" : "muted" },
+    { label: "Auto", value: epa.auto !== null ? String(epa.auto) : "—", color: epa.auto !== null ? "default" : "muted" },
+    { label: "Teleop", value: epa.teleop !== null ? String(epa.teleop) : "—", color: epa.teleop !== null ? "default" : "muted" },
+    { label: "Endgame", value: epa.endgame !== null ? String(epa.endgame) : "—", color: epa.endgame !== null ? "default" : "muted" },
+    ...numericFields.filter((f) => visibleColumns.has(f.id)).map((f) => {
+      const av = avgNumeric(parsed, f.id);
+      return { label: f.label, value: av === null ? "—" : (Number.isInteger(av) ? String(av) : av.toFixed(1)), color: (av === null ? "muted" : "default") as "default" | "muted" };
+    }),
+    ...checkboxFields.filter((f) => visibleColumns.has(f.id)).map((f) => {
+      const pct = pctChecked(parsed, f.id);
+      return { label: f.label, value: pct === null ? "—" : `${Math.round(pct)}%`, color: (pct === null ? "muted" : pct >= 50 ? "success" : "muted") as "default" | "primary" | "success" | "muted" };
+    }),
+    ...selectFields.filter((f) => visibleColumns.has(f.id)).map((f) => {
+      const top = mostCommon(parsed, f.id);
+      return { label: f.label, value: top ?? "—", color: (top ? "default" : "muted") as "default" | "muted" };
+    }),
+  ];
+
+  const actionButtons = (
+    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+      {submissions.length > 0 && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-muted-foreground hover:text-primary"
+          title="View & manage scouting reports"
+          onClick={() => setReportsOpen(true)}
+        >
+          <ClipboardList className="h-3.5 w-3.5" />
+        </Button>
+      )}
+      {hasTextData && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-muted-foreground hover:text-foreground"
+          title="View text notes"
+          onClick={() => setTextOpen(true)}
+        >
+          <FileText className="h-3.5 w-3.5" />
+        </Button>
+      )}
+      <a
+        href={`https://www.statbotics.io/team/${teamNumber}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-primary hover:bg-muted transition-colors"
+        title="View on Statbotics"
+      >
+        <ExternalLink className="h-3.5 w-3.5" />
+      </a>
+    </div>
+  );
+
   return (
     <>
+      {/* ── Mobile card layout (hidden on sm+) ── */}
       <div
-        className="flex items-center gap-3 px-4 py-3 border-b border-border hover:bg-muted/30 transition-colors cursor-pointer"
+        className="sm:hidden border-b border-border px-3 py-3 hover:bg-muted/20 active:bg-muted/30 transition-colors cursor-pointer"
+        onClick={onOpenDetail}
+      >
+        {/* Top row: avatar + team info + actions */}
+        <div className="flex items-start gap-3">
+          <TeamAvatar teamNumber={teamNumber} avatar={avatar} size={36} />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-baseline gap-2">
+              <p className="font-bold text-base leading-tight">{teamNumber}</p>
+              {rank && <span className="text-xs text-muted-foreground font-mono">#{rank}</span>}
+              {record && (
+                <span className="text-xs font-mono text-muted-foreground">
+                  {record.wins}-{record.losses}-{record.ties}
+                </span>
+              )}
+            </div>
+            {nickname && (
+              <p className="text-xs text-muted-foreground truncate leading-snug mt-0.5">{nickname}</p>
+            )}
+          </div>
+          {actionButtons}
+        </div>
+
+        {/* Stats chips — wrap freely, no fixed columns */}
+        <div className="mt-2.5 flex flex-wrap gap-x-2 gap-y-1.5">
+          {allStats
+            .filter((s) => s.value !== "—")
+            .map((s) => (
+              <StatChip key={s.label} label={s.label} value={s.value} color={s.color} />
+            ))}
+        </div>
+      </div>
+
+      {/* ── Desktop table row (hidden on mobile) ── */}
+      <div
+        className="hidden sm:flex items-center gap-3 px-4 py-3 border-b border-border hover:bg-muted/30 transition-colors cursor-pointer"
         onClick={onOpenDetail}
       >
         {/* Avatar + team # */}
@@ -580,118 +675,31 @@ function TeamRow({
           </div>
         </div>
 
-        {/* Stats columns */}
-        <div className="flex-1 flex flex-wrap gap-x-4 gap-y-1 min-w-0">
-          {/* Scouted count — always shown so columns stay aligned */}
-          <StatChip
-            label="Matches"
-            value={String(submissions.length)}
-            color={submissions.length > 0 ? "default" : "muted"}
-          />
-
-          {/* Average score from TBA */}
-          {avgScore !== null && (
-            <StatChip label="Avg Score" value={Number(avgScore.toFixed(0)).toString()} color="default" />
-          )}
-
-          {/* Event EPA */}
-          {epa.event !== null && (
-            <StatChip label="Event EPA" value={String(epa.event)} color="primary" />
-          )}
-
-          {/* Overall / season EPA */}
-          {epa.overall !== null && (
-            <StatChip label="Season EPA" value={String(epa.overall)} color="primary" />
-          )}
-
-          {/* Auto EPA */}
-          {epa.auto !== null && (
-            <StatChip label="Auto" value={String(epa.auto)} color="default" />
-          )}
-
-          {/* Teleop EPA */}
-          {epa.teleop !== null && (
-            <StatChip label="Teleop" value={String(epa.teleop)} color="default" />
-          )}
-
-          {/* Endgame EPA */}
-          {epa.endgame !== null && (
-            <StatChip label="Endgame" value={String(epa.endgame)} color="default" />
-          )}
-
-          {/* Numeric / counter / rating → average, shown based on visibleColumns */}
-          {numericFields.filter((f) => visibleColumns.has(f.id)).map((f) => {
-            const av = avgNumeric(parsed, f.id);
-            return (
-              <StatChip
-                key={f.id}
-                label={f.label}
-                value={av === null ? "N/A" : (Number.isInteger(av) ? String(av) : av.toFixed(1))}
-                color={av === null ? "muted" : "default"}
-              />
-            );
-          })}
-
-          {/* Checkbox → % checked, shown based on visibleColumns */}
-          {checkboxFields.filter((f) => visibleColumns.has(f.id)).map((f) => {
-            const pct = pctChecked(parsed, f.id);
-            if (pct === null) return null;
-            return (
-              <StatChip
-                key={f.id}
-                label={f.label}
-                value={`${Math.round(pct)}%`}
-                color={pct >= 50 ? "success" : "muted"}
-              />
-            );
-          })}
-
-          {/* Select → most common, shown based on visibleColumns */}
-          {selectFields.filter((f) => visibleColumns.has(f.id)).map((f) => {
-            const top = mostCommon(parsed, f.id);
-            if (!top) return null;
-            return (
-              <StatChip key={f.id} label={f.label} value={top} color="default" />
-            );
-          })}
-
+        {/* Stats columns — fixed grid so every cell always occupies the same slot */}
+        <div className="flex-1 grid gap-x-4 gap-y-1 min-w-0 items-start"
+          style={{
+            gridTemplateColumns: [
+              "56px",   // Matches
+              "64px",   // Avg Score
+              "64px",   // Event EPA
+              "64px",   // Season EPA
+              "48px",   // Auto
+              "56px",   // Teleop
+              "56px",   // Endgame
+              ...numericFields.filter((f) => visibleColumns.has(f.id)).map(() => "minmax(52px, 96px)"),
+              ...checkboxFields.filter((f) => visibleColumns.has(f.id)).map(() => "minmax(52px, 96px)"),
+              ...selectFields.filter((f) => visibleColumns.has(f.id)).map(() => "minmax(52px, 96px)"),
+            ].join(" "),
+          }}
+        >
+          {allStats.map((s) => (
+            <StatChip key={s.label} label={s.label} value={s.value} color={s.color} />
+          ))}
         </div>
 
-        {/* Actions — stop propagation so buttons don't open the panel */}
-        <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-          {/* All reports — always shown if any submissions exist */}
-          {submissions.length > 0 && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 text-muted-foreground hover:text-primary"
-              title="View & manage scouting reports"
-              onClick={() => setReportsOpen(true)}
-            >
-              <ClipboardList className="h-3.5 w-3.5" />
-            </Button>
-          )}
-          {/* Text notes shortcut */}
-          {hasTextData && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 text-muted-foreground hover:text-foreground"
-              title="View text notes"
-              onClick={() => setTextOpen(true)}
-            >
-              <FileText className="h-3.5 w-3.5" />
-            </Button>
-          )}
-          <a
-            href={`https://www.statbotics.io/team/${teamNumber}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-primary hover:bg-muted transition-colors"
-            title="View on Statbotics"
-          >
-            <ExternalLink className="h-3.5 w-3.5" />
-          </a>
+        {/* Actions */}
+        <div className="shrink-0">
+          {actionButtons}
         </div>
       </div>
 
@@ -757,26 +765,37 @@ function ColumnHeader({ fields, visibleColumns }: { fields: FormField[]; visible
   return (
     <div className="flex items-center gap-3 px-4 py-2 bg-muted/40 border-b border-border text-[10px] font-semibold text-muted-foreground uppercase tracking-wider sticky top-0">
       <div className="w-32 shrink-0">Team</div>
-      <div className="flex-1 flex flex-wrap gap-x-4 gap-y-0">
-        <span className="w-14">Matches</span>
-        <span className="w-16">Avg Score</span>
-        <span className="w-16">Event EPA</span>
-        <span className="w-16">Season EPA</span>
-        <span className="w-10">Auto</span>
-        <span className="w-12">Teleop</span>
-        <span className="w-12">Endgame</span>
+      <div className="flex-1 grid gap-x-4"
+        style={{
+          gridTemplateColumns: [
+            "56px",   // Matches
+            "64px",   // Avg Score
+            "64px",   // Event EPA
+            "64px",   // Season EPA
+            "48px",   // Auto
+            "56px",   // Teleop
+            "56px",   // Endgame
+            ...numericFields.map(() => "minmax(52px, 96px)"),
+            ...checkboxFields.map(() => "minmax(52px, 96px)"),
+            ...selectFields.map(() => "minmax(52px, 96px)"),
+          ].join(" "),
+        }}
+      >
+        <span>Matches</span>
+        <span>Avg Score</span>
+        <span>Event EPA</span>
+        <span>Season EPA</span>
+        <span>Auto</span>
+        <span>Teleop</span>
+        <span>Endgame</span>
         {numericFields.map((f) => (
-          <span key={f.id} className="truncate max-w-[96px]" title={`avg ${f.label}`}>⏀ {f.label}</span>
+          <span key={f.id} className="truncate" title={`avg ${f.label}`}>⏀ {f.label}</span>
         ))}
         {checkboxFields.map((f) => (
-          <span key={f.id} className="truncate max-w-[96px]" title={`% ${f.label}`}>
-            % {f.label}
-          </span>
+          <span key={f.id} className="truncate" title={`% ${f.label}`}>% {f.label}</span>
         ))}
         {selectFields.map((f) => (
-          <span key={f.id} className="truncate max-w-[96px]" title={f.label}>
-            ↑ {f.label}
-          </span>
+          <span key={f.id} className="truncate" title={f.label}>↑ {f.label}</span>
         ))}
       </div>
       <div className="w-14 text-right">Links</div>
@@ -812,6 +831,19 @@ function matchTime(m: TBAMatch): number | null {
 
 function isPlayed(m: TBAMatch): boolean {
   return m.alliances.red.score >= 0 && m.alliances.blue.score >= 0;
+}
+
+/**
+ * isConsideredPlayed — returns true if TBA has posted scores OR if the match
+ * scheduled time is more than 10 minutes in the past (match duration ~8 min).
+ * This keeps widgets advancing in real-time even when offline and TBA match
+ * data is stale/cached.
+ */
+function isConsideredPlayed(m: TBAMatch, nowMs: number): boolean {
+  if (isPlayed(m)) return true;
+  const t = matchTime(m);
+  if (t !== null && nowMs - t * 1000 > 10 * 60 * 1000) return true;
+  return false;
 }
 
 // Compact team pill used in next-match banner and schedule rows
@@ -919,7 +951,7 @@ function NextMatchBanner({
       m.alliances.red.team_keys.includes(`frc${MY_TEAM}`) ||
       m.alliances.blue.team_keys.includes(`frc${MY_TEAM}`)
   );
-  const allDone = all4099.length > 0 && all4099.every(isPlayed);
+  const allDone = all4099.length > 0 && all4099.every((m) => isConsideredPlayed(m, nowMs));
   const noneScheduled = all4099.length === 0 && matchData.length > 0;
 
   // ── No upcoming match states ──────────────────────────────────────────────
@@ -1100,14 +1132,14 @@ function MyScouting({
     for (const m of matchData) matchMap.set(m.match_number, m);
     return assignments
       .map((a) => ({ assignment: a, match: matchMap.get(a.matchNumber) ?? null }))
-      .filter(({ match }) => !match || !isPlayed(match))
+      .filter(({ match }) => !match || !isConsideredPlayed(match, nowMs))
       .sort((a, b) => {
         const ta = a.match ? (matchTime(a.match) ?? 9e12) : 9e12;
         const tb = b.match ? (matchTime(b.match) ?? 9e12) : 9e12;
         return ta - tb;
       })
       .slice(0, 5);
-  }, [assignments, matchData]);
+  }, [assignments, matchData, nowMs]);
 
   const loading = assignmentsLive === undefined;
 
@@ -1154,7 +1186,7 @@ function MyScouting({
             const t = match ? matchTime(match) : null;
             const ms = t ? t * 1000 - nowMs : null;
             const soon = ms !== null && ms > 0 && ms < 10 * 60 * 1000;
-            const played = match ? isPlayed(match) : false;
+            const played = match ? isConsideredPlayed(match, nowMs) : false;
             const timeStr = t
               ? new Date(t * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
               : null;
@@ -1215,10 +1247,10 @@ function NextThreeMatches({
   // Next 3 unplayed matches across the whole event
   const next3 = useMemo(() => {
     return matchData
-      .filter((m) => !isPlayed(m))
+      .filter((m) => !isConsideredPlayed(m, nowMs))
       .sort((a, b) => (matchTime(a) ?? 9e12) - (matchTime(b) ?? 9e12))
       .slice(0, 3);
-  }, [matchData]);
+  }, [matchData, nowMs]);
 
   // Poll Nexus for each unique team in the next 3 matches
   const allTeamNums = useMemo(() => {
@@ -1756,7 +1788,7 @@ export default function DashboardPage() {
   // Next unplayed match that includes team 4099
   const nextMatch = useMemo(() => {
     const unplayed = matchData
-      .filter((m) => !isPlayed(m))
+      .filter((m) => !isConsideredPlayed(m, nowMs))
       .filter(
         (m) =>
           m.alliances.red.team_keys.includes(`frc${MY_TEAM}`) ||
@@ -1764,7 +1796,7 @@ export default function DashboardPage() {
       )
       .sort((a, b) => (matchTime(a) ?? 9e12) - (matchTime(b) ?? 9e12));
     return unplayed[0] ?? null;
-  }, [matchData]);
+  }, [matchData, nowMs]);
 
   // Build team list
   const scoutedTeams = new Set(
@@ -1853,7 +1885,7 @@ export default function DashboardPage() {
               />
             </div>
             {/* My scouting assignments sidebar */}
-            <div className="lg:col-span-1" style={{ minHeight: 160, maxHeight: 260 }}>
+            <div className="lg:col-span-1 min-h-[160px] max-h-[260px] lg:max-h-none">
               <MyScouting
                 eventKey={eventKey}
                 matchData={matchData}
@@ -1942,15 +1974,17 @@ export default function DashboardPage() {
           )}
 
           <div className="flex-1 bg-card border border-border rounded-xl overflow-hidden flex flex-col min-h-0">
-            <div className="overflow-x-auto shrink-0">
-              <div className="min-w-[480px]">
+            {/* Column header — desktop only (mobile uses card layout) */}
+            <div className="hidden sm:block overflow-x-auto shrink-0">
+              <div className="min-w-[540px]">
                 <ColumnHeader fields={fields} visibleColumns={visibleColumns} />
               </div>
             </div>
+
             <ScrollArea className="flex-1">
-              <div className="min-w-[480px]">
+              {/* Desktop table rows */}
+              <div className="hidden sm:block min-w-[540px]">
                 {loadingExternal && tbaTeams.length === 0 ? (
-                  // Show skeleton rows while TBA team list is still loading (first login / no cache)
                   <div className="divide-y divide-border">
                     {Array.from({ length: 8 }).map((_, i) => (
                       <div key={i} className="flex items-center gap-3 px-4 py-3">
@@ -1972,6 +2006,54 @@ export default function DashboardPage() {
                   </div>
                 ) : filtered.length === 0 ? (
                   <p className="text-center py-12 text-muted-foreground text-sm">
+                    {search ? "No teams match your search." : "No teams found for this event."}
+                  </p>
+                ) : (
+                  filtered.map((teamNumber) => {
+                    const teamEpa = epaMap[teamNumber as number] ?? {
+                      event: null, overall: null, auto: null, teleop: null, endgame: null,
+                    };
+                    return (
+                      <TeamRow
+                        key={teamNumber as number}
+                        teamNumber={teamNumber as number}
+                        eventYear={eventYear}
+                        submissions={submissionsByTeam[teamNumber as number] ?? []}
+                        epa={teamEpa}
+                        avgScore={avgScoreByTeam[teamNumber as number] ?? null}
+                        tbaRank={tbaRankings[teamNumber as number] ?? null}
+                        fields={fields}
+                        visibleColumns={visibleColumns}
+                        onOpenDetail={() => setSelectedTeam(teamNumber as number)}
+                      />
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Mobile card list */}
+              <div className="sm:hidden">
+                {loadingExternal && tbaTeams.length === 0 ? (
+                  <div className="divide-y divide-border">
+                    {Array.from({ length: 6 }).map((_, i) => (
+                      <div key={i} className="px-3 py-3 space-y-2">
+                        <div className="flex items-center gap-3">
+                          <div className="h-9 w-9 rounded bg-muted animate-pulse shrink-0" />
+                          <div className="space-y-1.5 flex-1">
+                            <div className="h-4 w-14 bg-muted rounded animate-pulse" />
+                            <div className="h-2.5 w-24 bg-muted/60 rounded animate-pulse" />
+                          </div>
+                        </div>
+                        <div className="flex gap-2 flex-wrap">
+                          {Array.from({ length: 4 }).map((_, j) => (
+                            <div key={j} className="h-7 w-16 bg-muted/50 rounded animate-pulse" />
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : filtered.length === 0 ? (
+                  <p className="text-center py-12 text-muted-foreground text-sm px-4">
                     {search ? "No teams match your search." : "No teams found for this event."}
                   </p>
                 ) : (

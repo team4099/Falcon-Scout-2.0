@@ -14,6 +14,15 @@ const fieldTypeValidator = v.union(
   v.literal("rating")
 );
 
+const formTypeValidator = v.optional(
+  v.union(
+    v.literal("default"),
+    v.literal("super"),
+    v.literal("pit"),
+    v.literal("checklist")
+  )
+);
+
 const fieldValidator = v.object({
   id: v.string(),
   type: fieldTypeValidator,
@@ -65,7 +74,7 @@ export const createTemplate = mutation({
   args: {
     name: v.string(),
     description: v.optional(v.string()),
-    formType: v.optional(v.union(v.literal("default"), v.literal("super"), v.literal("pit"))),
+    formType: formTypeValidator,
     fields: v.array(fieldValidator),
     isActive: v.boolean(),
   },
@@ -79,7 +88,7 @@ export const updateTemplate = mutation({
     id: v.id("formTemplates"),
     name: v.optional(v.string()),
     description: v.optional(v.string()),
-    formType: v.optional(v.union(v.literal("default"), v.literal("super"), v.literal("pit"))),
+    formType: formTypeValidator,
     fields: v.optional(v.array(fieldValidator)),
     isActive: v.optional(v.boolean()),
   },
@@ -90,7 +99,7 @@ export const updateTemplate = mutation({
 
 /**
  * Activate a template and deactivate any other template of the same formType.
- * This enforces the rule: at most one Default form active, at most one Super form active.
+ * Checklist forms are exempt — any number can be active simultaneously.
  */
 export const activateTemplate = mutation({
   args: { id: v.id("formTemplates") },
@@ -99,11 +108,14 @@ export const activateTemplate = mutation({
     if (!template) throw new Error("Template not found");
     const myType = template.formType ?? "default";
 
-    // Deactivate all active templates of the same type
-    const all = await ctx.db.query("formTemplates").collect();
-    for (const t of all) {
-      if (t._id !== id && (t.formType ?? "default") === myType && t.isActive) {
-        await ctx.db.patch(t._id, { isActive: false });
+    // Checklists: allow multiple to be active — skip deactivating others
+    if (myType !== "checklist") {
+      // Deactivate all active templates of the same type
+      const all = await ctx.db.query("formTemplates").collect();
+      for (const t of all) {
+        if (t._id !== id && (t.formType ?? "default") === myType && t.isActive) {
+          await ctx.db.patch(t._id, { isActive: false });
+        }
       }
     }
 

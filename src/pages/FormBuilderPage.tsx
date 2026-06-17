@@ -23,6 +23,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Tabs,
   TabsContent,
   TabsList,
@@ -55,6 +65,7 @@ import {
   ChevronRight,
   Menu,
   X as XIcon,
+  ClipboardCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -99,6 +110,17 @@ const SUPER_FIELD_TYPES: Partial<Record<FieldType, { label: string; icon: React.
 // Pit scouting forms: all field types (same as default)
 const PIT_FIELD_TYPES: Partial<Record<FieldType, { label: string; icon: React.ReactNode }>> = {
   ...DEFAULT_FIELD_TYPES,
+};
+
+// Checklist forms: all field types except teamNumber (not team-specific)
+const CHECKLIST_FIELD_TYPES: Partial<Record<FieldType, { label: string; icon: React.ReactNode }>> = {
+  text:     { label: "Short Text", icon: <Type className="h-4 w-4" /> },
+  textarea: { label: "Long Text",  icon: <AlignLeft className="h-4 w-4" /> },
+  number:   { label: "Number",     icon: <Hash className="h-4 w-4" /> },
+  counter:  { label: "Counter",    icon: <Zap className="h-4 w-4" /> },
+  checkbox: { label: "Checkbox",   icon: <CheckSquare className="h-4 w-4" /> },
+  select:   { label: "Dropdown",   icon: <List className="h-4 w-4" /> },
+  rating:   { label: "Rating",     icon: <Star className="h-4 w-4" /> },
 };
 
 // The pinned auto team-number field for Default forms
@@ -157,6 +179,7 @@ function SortableField({
     attributes, listeners, setNodeRef, setActivatorNodeRef,
     transform, transition, isDragging,
   } = useSortable({ id: field.id });
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -166,19 +189,41 @@ function SortableField({
   };
 
   return (
-    <div ref={setNodeRef} style={style} className="flex items-center gap-1.5">
-      <button
-        ref={setActivatorNodeRef} {...attributes} {...listeners}
-        type="button"
-        className="cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground p-1 touch-none"
-        aria-label={`Drag to reorder ${field.label}`}
-      >
-        <GripVertical className="h-4 w-4" />
-      </button>
-      <div className="flex-1">
-        <FieldEditor field={field} onChange={onUpdate} onDelete={onDelete} sections={sections} />
+    <>
+      <div ref={setNodeRef} style={style} className="flex items-center gap-1.5">
+        <button
+          ref={setActivatorNodeRef} {...attributes} {...listeners}
+          type="button"
+          className="cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground p-1 touch-none"
+          aria-label={`Drag to reorder ${field.label}`}
+        >
+          <GripVertical className="h-4 w-4" />
+        </button>
+        <div className="flex-1">
+          <FieldEditor field={field} onChange={onUpdate} onDelete={() => setConfirmDelete(true)} sections={sections} />
+        </div>
       </div>
-    </div>
+
+      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete field?</AlertDialogTitle>
+            <AlertDialogDescription>
+              <strong className="text-foreground">{field.label}</strong> will be permanently removed from this form. Any data already collected under this field will remain in submissions but won't be displayed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => { setConfirmDelete(false); onDelete(); }}
+              className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+            >
+              Delete Field
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 
@@ -359,6 +404,7 @@ function SectionBlock({
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState(sectionName);
   const [showAddField, setShowAddField] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   function commitRename() {
     const trimmed = draftName.trim();
@@ -393,13 +439,37 @@ function SectionBlock({
           <Pencil className="h-3.5 w-3.5" />
         </button>
         {canDelete && (
-          <button
-            onClick={onDelete}
-            className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-            title="Delete section (fields move to first remaining section)"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+          <>
+            <button
+              onClick={() => setConfirmDelete(true)}
+              className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+              title="Delete section (fields move to first remaining section)"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+
+            <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete section "{sectionName}"?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {fields.length > 0
+                      ? `All ${fields.length} field${fields.length !== 1 ? "s" : ""} in this section will be moved to the first remaining section. The fields themselves won't be deleted.`
+                      : "This empty section will be removed."}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => { setConfirmDelete(false); onDelete(); }}
+                    className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+                  >
+                    Delete Section
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </>
         )}
       </div>
 
@@ -502,6 +572,8 @@ function FormTypeBadge({ type }: { type: FormType }) {
     return <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 font-semibold">Super Scout</span>;
   if (type === "pit")
     return <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 font-semibold">Pit Scout</span>;
+  if (type === "checklist")
+    return <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-400 font-semibold">Checklist</span>;
   return <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/20 text-primary font-semibold">Default</span>;
 }
 
@@ -554,14 +626,16 @@ function FormBuilderContent() {
   const [fields, setFields] = useState<FormField[]>([]);
   const [sectionNames, setSectionNames] = useState<string[]>(["General"]);
   const [saving, setSaving] = useState(false);
+  const [confirmFormDelete, setConfirmFormDelete] = useState(false);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   // Identify currently active forms by type
-  const activeDefault = templates?.find((t) => t.isActive && (t.formType ?? "default") === "default");
-  const activeSuper   = templates?.find((t) => t.isActive && (t.formType ?? "default") === "super");
-  const activePit     = templates?.find((t) => t.isActive && (t.formType ?? "default") === "pit");
+  const activeDefault   = templates?.find((t) => t.isActive && (t.formType ?? "default") === "default");
+  const activeSuper     = templates?.find((t) => t.isActive && (t.formType ?? "default") === "super");
+  const activePit       = templates?.find((t) => t.isActive && (t.formType ?? "default") === "pit");
+  const activeChecklists = templates?.filter((t) => t.isActive && t.formType === "checklist") ?? [];
 
   function loadTemplate(t: NonNullable<typeof templates>[number]) {
     setSelectedId(t._id);
@@ -581,9 +655,24 @@ function FormBuilderContent() {
     setSectionNames(orderedSections.length > 0 ? orderedSections : ["General"]);
   }
 
+  /** Returns a name that doesn't already exist among other templates.
+   *  If `name` is taken (by any template other than `excludeId`),
+   *  it tries "name (2)", "name (3)", … until finding a free slot. */
+  function uniqueName(name: string, excludeId?: string | null): string {
+    const taken = new Set(
+      (templates ?? [])
+        .filter(t => t._id !== excludeId)
+        .map(t => t.name)
+    );
+    if (!taken.has(name)) return name;
+    let n = 2;
+    while (taken.has(`${name} (${n})`)) n++;
+    return `${name} (${n})`;
+  }
+
   function newForm() {
     setSelectedId(null);
-    setName("New Scouting Form");
+    setName(uniqueName("New Scouting Form"));
     setDescription("");
     setFormType("default");
     setFields([]);
@@ -599,16 +688,21 @@ function FormBuilderContent() {
         : fields;
 
       if (selectedId) {
+        // Deduplicate name against all other templates (excluding self)
+        const safeName = uniqueName(name, selectedId);
+        if (safeName !== name) setName(safeName);
         await updateTemplate({
           id: selectedId as Id<"formTemplates">,
-          name, description: description || undefined,
+          name: safeName, description: description || undefined,
           formType,
           fields: savedFields,
         });
         toast.success("Form saved!");
       } else {
+        const safeName = uniqueName(name);
+        if (safeName !== name) setName(safeName);
         const newId = await createTemplate({
-          name, description: description || undefined,
+          name: safeName, description: description || undefined,
           formType,
           fields: savedFields,
           isActive: false,
@@ -632,7 +726,7 @@ function FormBuilderContent() {
     await saveTemplate();
     try {
       await activateTemplate({ id: selectedId as Id<"formTemplates"> });
-      const label = formType === "default" ? "Default" : formType === "super" ? "Super Scout" : "Pit Scout";
+      const label = formType === "default" ? "Default" : formType === "super" ? "Super Scout" : formType === "pit" ? "Pit Scout" : "Checklist";
       toast.success(`Activated as ${label} form!`);
     } catch {
       toast.error("Failed to activate.");
@@ -696,7 +790,7 @@ function FormBuilderContent() {
     }
   }
 
-  const fieldTypeMeta = formType === "super" ? SUPER_FIELD_TYPES : formType === "pit" ? PIT_FIELD_TYPES : DEFAULT_FIELD_TYPES;
+  const fieldTypeMeta = formType === "super" ? SUPER_FIELD_TYPES : formType === "pit" ? PIT_FIELD_TYPES : formType === "checklist" ? CHECKLIST_FIELD_TYPES : DEFAULT_FIELD_TYPES;
 
   // Group fields by section for preview
   const previewFields = (formType === "default" || formType === "pit") ? [AUTO_TEAM_FIELD, ...fields] : fields;
@@ -769,6 +863,12 @@ function FormBuilderContent() {
                       <span className="truncate font-medium">{activePit.name}</span>
                     </div>
                   )}
+                  {activeChecklists.map((cl) => (
+                    <div key={cl._id} className="flex items-center gap-1.5 text-xs text-violet-400 px-2 py-1 rounded-md bg-violet-500/10">
+                      <ClipboardCheck className="h-3 w-3" />
+                      <span className="truncate font-medium">{cl.name}</span>
+                    </div>
+                  ))}
                 </div>
               )}
               {templates === undefined && <p className="text-sm text-muted-foreground">Loading…</p>}
@@ -804,7 +904,7 @@ function FormBuilderContent() {
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Forms</p>
 
           {/* Active form indicators */}
-          {(activeDefault || activeSuper || activePit) && (
+          {(activeDefault || activeSuper || activePit || activeChecklists.length > 0) && (
             <div className="mb-2 space-y-1">
               {activeDefault && (
                 <div className="flex items-center gap-1.5 text-xs text-primary px-2 py-1 rounded-md bg-primary/10">
@@ -824,6 +924,12 @@ function FormBuilderContent() {
                   <span className="truncate font-medium">{activePit.name}</span>
                 </div>
               )}
+              {activeChecklists.map((cl) => (
+                <div key={cl._id} className="flex items-center gap-1.5 text-xs text-violet-400 px-2 py-1 rounded-md bg-violet-500/10">
+                  <ClipboardCheck className="h-3 w-3" />
+                  <span className="truncate font-medium">{cl.name}</span>
+                </div>
+              ))}
             </div>
           )}
 
@@ -869,7 +975,7 @@ function FormBuilderContent() {
                   ) : (
                     <Button onClick={handleActivate} size="sm" variant="outline" className="border-green-500/50 text-green-400 hover:bg-green-500/10">
                       <ActiveIcon className="h-4 w-4 mr-1" />
-                      Activate as {formType === "default" ? "Default" : formType === "super" ? "Super Scout" : "Pit Scout"}
+                      Activate as {formType === "default" ? "Default" : formType === "super" ? "Super Scout" : formType === "pit" ? "Pit Scout" : "Checklist"}
                     </Button>
                   )
                 )}
@@ -878,17 +984,40 @@ function FormBuilderContent() {
                   {saving ? "Saving…" : selectedId ? "Save Form" : "Create Form"}
                 </Button>
                 {selectedId && (
-                  <Button
-                    variant="ghost" size="sm"
-                    className="text-destructive hover:text-destructive"
-                    onClick={async () => {
-                      await deleteTemplate({ id: selectedId as Id<"formTemplates"> });
-                      toast.success("Form deleted.");
-                      newForm();
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <>
+                    <Button
+                      variant="ghost" size="sm"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => setConfirmFormDelete(true)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+
+                    <AlertDialog open={confirmFormDelete} onOpenChange={setConfirmFormDelete}>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Delete this form?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            <strong className="text-foreground">{name || "This form"}</strong> will be permanently deleted. All {fields.length} field{fields.length !== 1 ? "s" : ""} will be lost. Existing submissions that reference this form will still be stored but won't be viewable.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction
+                            className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+                            onClick={async () => {
+                              setConfirmFormDelete(false);
+                              await deleteTemplate({ id: selectedId as Id<"formTemplates"> });
+                              toast.success("Form deleted.");
+                              newForm();
+                            }}
+                          >
+                            Delete Form
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </>
                 )}
               </div>
             </div>
@@ -899,7 +1028,7 @@ function FormBuilderContent() {
                 {/* Form type selector */}
                 <div className="space-y-1.5">
                   <Label>Form Type</Label>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     <button
                       onClick={() => { setFormType("default"); setFields((prev) => prev); }}
                       className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm transition-all ${
@@ -946,6 +1075,24 @@ function FormBuilderContent() {
                         <p className="text-[10px] opacity-70 mt-0.5">Per-team, no match#</p>
                       </div>
                     </button>
+                    <button
+                      onClick={() => {
+                        setFormType("checklist");
+                        // Remove teamNumber fields — not applicable for checklists
+                        setFields((prev) => prev.filter((f) => f.type !== "teamNumber"));
+                      }}
+                      className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm transition-all ${
+                        formType === "checklist"
+                          ? "border-violet-500 bg-violet-500/10 text-violet-400 font-semibold"
+                          : "border-border text-muted-foreground hover:bg-muted/50"
+                      }`}
+                    >
+                      <ClipboardCheck className="h-4 w-4 shrink-0" />
+                      <div className="text-left">
+                        <p className="font-medium leading-none">Checklist</p>
+                        <p className="text-[10px] opacity-70 mt-0.5">Pit duty tasks</p>
+                      </div>
+                    </button>
                   </div>
                 </div>
 
@@ -970,6 +1117,18 @@ function FormBuilderContent() {
                     <span className="text-sm font-medium">Team Number</span>
                     <span className="text-xs px-1.5 py-0.5 rounded-sm bg-primary/20 text-primary font-mono ml-1">req</span>
                     <span className="ml-auto text-xs text-muted-foreground italic">auto · pinned</span>
+                  </div>
+                </div>
+              )}
+              {formType === "checklist" && (
+                <div className="flex items-center gap-1.5">
+                  <div className="p-1 text-muted-foreground/40">
+                    <Lock className="h-4 w-4" />
+                  </div>
+                  <div className="flex-1 flex items-center gap-2 bg-violet-500/5 border border-violet-500/20 border-dashed rounded-lg px-3 py-2 opacity-80">
+                    <ClipboardCheck className="h-4 w-4 text-violet-400 shrink-0" />
+                    <span className="text-sm font-medium text-violet-400">Pit Scout Checklist</span>
+                    <span className="ml-auto text-xs text-muted-foreground italic">assigned by match · no team#</span>
                   </div>
                 </div>
               )}

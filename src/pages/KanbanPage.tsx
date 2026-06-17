@@ -15,6 +15,16 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
@@ -1163,8 +1173,12 @@ function BoardView({
   );
   const allSubmissions = useCached(allSubmissionsLive, `submissions_${eventKey}`);
 
-  const activeTemplateLive = useQuery(api.forms.getActiveTemplate);
-  const activeTemplate = useCached(activeTemplateLive, `active_template`);
+  const activeTemplatesLive = useQuery(api.forms.listActiveTemplates);
+  const activeTemplates = useCached(activeTemplatesLive, `active_templates`);
+  // Prefer the default form type; fall back to first active of any type
+  const activeTemplate = (activeTemplates ?? []).find((t) => (t.formType ?? "default") === "default")
+    ?? (activeTemplates ?? [])[0]
+    ?? null;
 
   const updateColumns    = useMutation(api.kanban.updateBoardColumns);
   const moveCardMutation = useMutation(api.kanban.moveCard);
@@ -1195,6 +1209,10 @@ function BoardView({
   // Column drag-to-reorder state
   const [draggingColId, setDraggingColId]       = useState<string | null>(null);
   const [colDropTargetId, setColDropTargetId]   = useState<string | null>(null);
+
+  // Confirmation state for destructive actions
+  const [confirmRemoveCardId, setConfirmRemoveCardId] = useState<string | null>(null);
+  const [confirmRemoveColId, setConfirmRemoveColId]   = useState<string | null>(null);
 
   const columns: KanbanColumn[] = board?.columns ?? [];
 
@@ -1332,6 +1350,10 @@ function BoardView({
 
   async function handleRemoveColumn(colId: string) {
     if (colId === "unsorted") return; // Unsorted is permanent
+    setConfirmRemoveColId(colId);
+  }
+
+  async function doRemoveColumn(colId: string) {
     await updateColumns({ boardId, columns: columns.filter((c) => c.id !== colId) });
   }
 
@@ -1458,6 +1480,10 @@ function BoardView({
   }
 
   async function handleRemoveCard(cardId: string) {
+    setConfirmRemoveCardId(cardId);
+  }
+
+  async function doRemoveCard(cardId: string) {
     // Optimistic remove
     setRemovedCardIds((prev) => new Set([...prev, cardId]));
 
@@ -1720,6 +1746,76 @@ function BoardView({
         cardPrefs={cardPrefs}
         onSave={handleSavePrefs}
       />
+
+      {/* Confirm remove card */}
+      {(() => {
+        const card = confirmRemoveCardId ? cards.find((c) => c._id === confirmRemoveCardId) : null;
+        return (
+          <AlertDialog
+            open={!!confirmRemoveCardId}
+            onOpenChange={(o) => { if (!o) setConfirmRemoveCardId(null); }}
+          >
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Remove Team {card?.teamNumber ?? ""}?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will remove <strong className="text-foreground">Team {card?.teamNumber}</strong> from the board.
+                  Any notes you've added will be lost. You can re-add the team by syncing with TBA.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+                  onClick={() => {
+                    const id = confirmRemoveCardId!;
+                    setConfirmRemoveCardId(null);
+                    doRemoveCard(id);
+                  }}
+                >
+                  Remove
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        );
+      })()}
+
+      {/* Confirm remove column */}
+      {(() => {
+        const col = confirmRemoveColId ? columns.find((c) => c.id === confirmRemoveColId) : null;
+        const cardCount = confirmRemoveColId ? cards.filter((c) => c.columnId === confirmRemoveColId).length : 0;
+        return (
+          <AlertDialog
+            open={!!confirmRemoveColId}
+            onOpenChange={(o) => { if (!o) setConfirmRemoveColId(null); }}
+          >
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete column "{col?.title ?? ""}"?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  {cardCount > 0
+                    ? <><strong className="text-foreground">{cardCount} team{cardCount !== 1 ? "s" : ""}</strong> will be moved to the Unsorted column. This cannot be undone.</>
+                    : "This empty column will be permanently deleted."}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+                  onClick={() => {
+                    const id = confirmRemoveColId!;
+                    setConfirmRemoveColId(null);
+                    doRemoveColumn(id);
+                  }}
+                >
+                  Delete Column
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        );
+      })()}
     </div>
   );
 }

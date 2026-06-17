@@ -130,8 +130,18 @@ async function fetchTBAWithCache<T>(
 
 // ── TBA ───────────────────────────────────────────────────────────────────────
 
+export interface TBATeam {
+  key: string;              // e.g. "frc4099"
+  team_number: number;
+  nickname: string;
+  name: string;
+  city: string | null;
+  state_prov: string | null;
+  country: string | null;
+}
+
 export async function fetchTBAEventTeams(eventKey: string) {
-  return fetchTBAWithCache(
+  return fetchTBAWithCache<TBATeam[]>(
     `${TBA_BASE}/event/${eventKey}/teams`,
     `tba_teams_${eventKey}`,
     TTL.MEDIUM  // team lists for an event don't change after registration

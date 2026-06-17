@@ -65,6 +65,8 @@ export interface SchedulerInput {
   preferences: ScoutPref[];
   existingPitRotations: ExistingPitRotation[];
   existingMatchAssignments: ExistingMatchAssignment[];
+  /** Scout IDs to skip entirely — they receive no auto-generated assignments. */
+  excludedScoutIds?: string[];
 }
 
 export interface GeneratedPitRotation {
@@ -173,7 +175,12 @@ function assignPositions(
 // ── Main entry point ──────────────────────────────────────────────────────────
 
 export function generateSchedule(input: SchedulerInput): SchedulerOutput {
-  const { qualMatches, scouts, preferences, existingPitRotations, existingMatchAssignments } = input;
+  const { qualMatches, preferences, existingPitRotations, existingMatchAssignments } = input;
+  const excludedSet = new Set(input.excludedScoutIds ?? []);
+  // Remove excluded scouts from the pool entirely before any scheduling logic
+  const scouts = excludedSet.size > 0
+    ? input.scouts.filter(s => !excludedSet.has(s._id))
+    : input.scouts;
   const warnings: string[] = [];
 
   if (scouts.length === 0 || qualMatches.length === 0) {

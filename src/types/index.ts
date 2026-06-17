@@ -2,7 +2,7 @@
 
 export type FieldType = "text" | "number" | "checkbox" | "select" | "counter" | "textarea" | "teamNumber" | "rating";
 
-export type FormType = "default" | "super" | "pit";
+export type FormType = "default" | "super" | "pit" | "checklist";
 
 export interface FormField {
   id: string;

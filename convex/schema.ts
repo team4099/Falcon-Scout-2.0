@@ -23,7 +23,7 @@ export default defineSchema({
     // "super"   = super scout (text + rating only)
     // "pit"     = pit scouting (all field types, team# pinned, no match number)
     // optional for backwards compat with existing records
-    formType: v.optional(v.union(v.literal("default"), v.literal("super"), v.literal("pit"))),
+    formType: v.optional(v.union(v.literal("default"), v.literal("super"), v.literal("pit"), v.literal("checklist"))),
     fields: v.array(v.object({
       id: v.string(),
       type: fieldTypeValidator,
@@ -46,6 +46,21 @@ export default defineSchema({
     offlineId: v.optional(v.string()), // idempotency key from offline queue
   })
     .index("by_event_team", ["eventKey", "teamNumber"])
+    .index("by_offline_id", ["offlineId"]),
+
+  // Checklist submissions — one per checklist template per match
+  checklistSubmissions: defineTable({
+    templateId: v.id("formTemplates"),
+    eventKey: v.string(),
+    matchNumber: v.number(),          // the match this checklist is for
+    assignedScoutId: v.id("users"),   // pit scout assigned to fill it out
+    completedById: v.optional(v.id("users")),
+    data: v.string(),                 // JSON stringified response map
+    completedAt: v.optional(v.number()),
+    offlineId: v.optional(v.string()), // idempotency key
+  })
+    .index("by_event_match", ["eventKey", "matchNumber"])
+    .index("by_assigned_event", ["assignedScoutId", "eventKey"])
     .index("by_offline_id", ["offlineId"]),
 
   // Kanban boards
@@ -120,14 +135,24 @@ export default defineSchema({
 
   // Scout self-reported scheduling preferences (shown when no schedule assigned)
   scoutPreferences: defineTable({
-    scoutId:           v.id("users"),
-    eventKey:          v.string(),
-    preferredPartners: v.array(v.id("users")), // up to 3 scout IDs
-    wantsMoreMatches:  v.boolean(),
-    wantsPitRotation:  v.boolean(),
-    updatedAt:         v.number(),
+    scoutId:             v.id("users"),
+    eventKey:            v.string(),
+    preferredPartners:   v.array(v.id("users")),
+    wantsMoreMatches:    v.boolean(),
+    wantsPitRotation:    v.boolean(),
+    wantsPitScouting:    v.optional(v.boolean()), // pre-competition pit scouting
+    updatedAt:           v.number(),
   })
     .index("by_scout_event", ["scoutId", "eventKey"])
     .index("by_event",       ["eventKey"]),
+  // Pre-competition pit scouting teams — groups of scouts assigned to
+  // scout specific teams' pits before quals start.
+  pitScoutingTeams: defineTable({
+    eventKey:   v.string(),
+    teamNumber: v.number(),            // FRC team number from TBA
+    scoutIds:   v.array(v.id("users")),
+  })
+    .index("by_event", ["eventKey"])
+    .index("by_event_team", ["eventKey", "teamNumber"]),
 });
 

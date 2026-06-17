@@ -5,12 +5,13 @@ import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { useUIStore } from "@/store/uiStore";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { fetchTBAEventMatches } from "@/lib/api";
-import type { TBAMatch } from "@/lib/api";
+import { fetchTBAEventMatches, fetchTBAEventTeams } from "@/lib/api";
+import type { TBAMatch, TBATeam } from "@/lib/api";
 import {
   Users, ShieldAlert, Lock, CalendarDays, Wrench, Loader2,
   AlertCircle, Plus, Trash2, Pencil, Check,
   Zap, LayoutGrid, Sparkles, TriangleAlert, ChevronDown as ChevDown,
+  ClipboardList,
 } from "lucide-react";
 import {
   generateSchedule,
@@ -45,8 +46,15 @@ interface PitRotation {
   scoutIds: string[];
 }
 
+interface PitScoutingTeam {
+  _id: string;
+  eventKey: string;
+  teamNumber: number;
+  scoutIds: string[];
+}
+
 type Position = "red1" | "red2" | "red3" | "blue1" | "blue2" | "blue3";
-type TabType = "matches" | "pit";
+type TabType = "matches" | "pit" | "pitScouting";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -1364,6 +1372,297 @@ function AutoGenerateModal({
   );
 }
 
+// ── Pit scouting tab (TBA-driven per-team assignments) ────────────────────────
+
+interface TBATeamSimple {
+  key: string;
+  team_number: number;
+  nickname: string;
+}
+
+function PitScoutingTab({
+  tbaTeams,
+  tbaLoading,
+  tbaError,
+  assignments,
+  allUsers,
+  onToggleScout,
+  onClearAll,
+  onAutoAssign,
+  optedInCount,
+  isMobile,
+}: {
+  tbaTeams: TBATeamSimple[];
+  tbaLoading: boolean;
+  tbaError: boolean;
+  assignments: Map<number, string[]>;
+  allUsers: User[];
+  onToggleScout: (teamNumber: number, scoutId: string) => Promise<void>;
+  onClearAll: () => Promise<void>;
+  onAutoAssign: (teams: TBATeamSimple[]) => Promise<void>;
+  optedInCount: number;
+  isMobile: boolean;
+}) {
+  const [pinnedScoutId, setPinnedScoutId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [saving, setSaving] = useState<Set<number>>(new Set());
+  const [clearingAll, setClearingAll] = useState(false);
+  const [autoAssigning, setAutoAssigning] = useState(false);
+
+  const filtered = useMemo(() =>
+    tbaTeams.filter(t =>
+      !search ||
+      String(t.team_number).includes(search) ||
+      (t.nickname ?? "").toLowerCase().includes(search.toLowerCase())
+    ), [tbaTeams, search]);
+
+  const assignedCount = assignments.size;
+  const totalCount    = tbaTeams.length;
+
+  async function handleCellClick(teamNum: number) {
+    if (!pinnedScoutId) return;
+    setSaving(prev => new Set(prev).add(teamNum));
+    try { await onToggleScout(teamNum, pinnedScoutId); }
+    finally { setSaving(prev => { const n = new Set(prev); n.delete(teamNum); return n; }); }
+  }
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 10, minHeight: 0 }}>
+
+      {/* ── Scout selector + stats row ── */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", flexShrink: 0, alignItems: "flex-start" }}>
+
+        {/* Scout chips */}
+        <div style={{
+          flex: "1 1 200px", borderRadius: 12, border: `1px solid ${SURF_BORD}`,
+          background: SURFACE, padding: "10px 12px",
+        }}>
+          <div style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: MUTED, marginBottom: 8 }}>
+            Pin a scout then click teams
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+            {allUsers.map(u => {
+              const pinned = u._id === pinnedScoutId;
+              const count  = [...assignments.values()].filter(ids => ids.includes(u._id)).length;
+              return (
+                <button key={u._id}
+                  onClick={() => setPinnedScoutId(pinned ? null : u._id)}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 5,
+                    padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600,
+                    cursor: "pointer", transition: "all 0.12s",
+                    background: pinned ? G : SURF_HVR,
+                    color:      pinned ? G_TXT : MUTED,
+                    border:     `1.5px solid ${pinned ? G_STR : SURF_BORD}`,
+                    boxShadow:  pinned ? `0 2px 8px ${G} / 30%` : "none",
+                  }}
+                >
+                  {u.image
+                    ? <img src={u.image} alt="" style={{ width: 14, height: 14, borderRadius: "50%", objectFit: "cover" }} />
+                    : <span style={{ width: 14, height: 14, borderRadius: "50%", background: pinned ? G_TXT+"30" : G_MED, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 800, color: pinned ? G_TXT : G, flexShrink: 0 }}>{avatarLetter(u)}</span>
+                  }
+                  {firstName(u)}
+                  {count > 0 && (
+                    <span style={{ background: pinned ? "oklch(0 0 0 / 20%)" : G_MED, borderRadius: 20, padding: "0 5px", fontSize: 10, fontWeight: 800, color: pinned ? G_TXT : G }}>
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Stats + clear */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{
+            display: "flex", gap: 6,
+            padding: "10px 12px", borderRadius: 12,
+            background: SURFACE, border: `1px solid ${SURF_BORD}`,
+          }}>
+            {[
+              { label: "Assigned", val: assignedCount,              col: G       },
+              { label: "Total",    val: totalCount,                  col: MUTED   },
+              { label: "Empty",    val: totalCount - assignedCount,  col: MUTED   },
+            ].map(({ label, val, col }) => (
+              <div key={label} style={{ textAlign: "center", padding: "0 10px" }}>
+                <div style={{ fontSize: 20, fontWeight: 900, color: col, lineHeight: 1 }}>{val}</div>
+                <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: MUTED }}>{label}</div>
+              </div>
+            ))}
+          </div>
+          {/* Auto Assign */}
+          {tbaTeams.length > 0 && (
+            <button
+              onClick={async () => {
+                const msg = optedInCount > 0
+                  ? `Auto-assign ${optedInCount} opted-in scouts into pairs of 2, covering ~5 teams each?`
+                  : `No scouts have opted in yet — assign all ${allUsers.length} scouts into pairs of 2 anyway?`;
+                if (!window.confirm(msg)) return;
+                setAutoAssigning(true);
+                try { await onAutoAssign(tbaTeams); } finally { setAutoAssigning(false); }
+              }}
+              disabled={autoAssigning}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                padding: "7px 12px", borderRadius: 9, fontSize: 12, fontWeight: 700,
+                background: G_DIM, color: G, border: `1.5px solid ${G_STR}`, cursor: "pointer",
+                boxShadow: `0 2px 8px ${G} / 20%`,
+              }}
+            >
+              {autoAssigning
+                ? <><Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />Assigning…</>
+                : <><Zap size={12} />Auto Assign{optedInCount > 0 ? ` (${optedInCount} opted in)` : ""}</>
+              }
+            </button>
+          )}
+          {assignedCount > 0 && (
+            <button
+              onClick={async () => {
+                if (!window.confirm(`Clear all ${assignedCount} pit scouting assignments for this event?`)) return;
+                setClearingAll(true);
+                try { await onClearAll(); } finally { setClearingAll(false); }
+              }}
+              disabled={clearingAll}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                padding: "7px 12px", borderRadius: 9, fontSize: 12, fontWeight: 700,
+                background: "oklch(0.577 0.245 27 / 10%)", color: "var(--destructive)",
+                border: "1.5px solid oklch(0.577 0.245 27 / 30%)", cursor: "pointer",
+              }}
+            >
+              {clearingAll ? <><Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />Clearing…</> : <><Trash2 size={12} />Clear All</>}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* ── Search bar ── */}
+      <input
+        type="text"
+        placeholder="Search by team number or name…"
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        style={{
+          padding: "8px 12px", borderRadius: 10, fontSize: 13,
+          background: SURFACE, border: `1.5px solid ${SURF_BORD}`,
+          color: FG, outline: "none", flexShrink: 0, width: "100%",
+        }}
+      />
+
+      {/* ── Team grid ── */}
+      {tbaLoading ? (
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, color: MUTED }}>
+          <Loader2 size={20} style={{ animation: "spin 1s linear infinite" }} />
+          <span style={{ fontSize: 14 }}>Loading teams from TBA…</span>
+        </div>
+      ) : tbaError || tbaTeams.length === 0 ? (
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, textAlign: "center", color: MUTED }}>
+          <AlertCircle size={28} style={{ opacity: 0.4 }} />
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 4, color: FG }}>
+              {tbaTeams.length === 0 && !tbaError ? "No teams yet" : "Couldn't load teams"}
+            </div>
+            <div style={{ fontSize: 12 }}>Check your TBA API key in Settings.</div>
+          </div>
+        </div>
+      ) : (
+        <ScrollArea style={{ flex: 1 }}>
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: isMobile ? "repeat(auto-fill, minmax(130px, 1fr))" : "repeat(auto-fill, minmax(160px, 1fr))",
+            gap: 6, paddingBottom: 16,
+          }}>
+            {filtered.map(team => {
+              const scoutIds   = assignments.get(team.team_number) ?? [];
+              const hasPinned  = pinnedScoutId ? scoutIds.includes(pinnedScoutId) : false;
+              const isSaving   = saving.has(team.team_number);
+              const hasAny     = scoutIds.length > 0;
+
+              return (
+                <button
+                  key={team.team_number}
+                  onClick={() => pinnedScoutId && handleCellClick(team.team_number)}
+                  disabled={!pinnedScoutId || isSaving}
+                  style={{
+                    display: "flex", flexDirection: "column", alignItems: "flex-start",
+                    padding: "10px 12px", borderRadius: 12, textAlign: "left",
+                    cursor: pinnedScoutId ? "pointer" : "default",
+                    background: hasPinned ? G : hasAny ? G_DIM : SURFACE,
+                    border: `1.5px solid ${hasPinned ? G_STR : hasAny ? G_MED : SURF_BORD}`,
+                    transition: "all 0.12s",
+                    boxShadow: hasPinned ? `0 2px 10px ${G} / 30%` : "none",
+                    opacity: isSaving ? 0.6 : 1,
+                    position: "relative",
+                    overflow: "hidden",
+                  }}
+                  onMouseEnter={e => { if (pinnedScoutId && !isSaving) (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-1px)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.transform = "none"; }}
+                >
+                  {isSaving && (
+                    <Loader2 size={12} style={{ position: "absolute", top: 8, right: 8, animation: "spin 1s linear infinite", color: hasPinned ? G_TXT : G }} />
+                  )}
+                  {/* Team number */}
+                  <div style={{
+                    fontSize: 20, fontWeight: 900, lineHeight: 1,
+                    color: hasPinned ? G_TXT : G,
+                    letterSpacing: "-0.02em",
+                  }}>
+                    {team.team_number}
+                  </div>
+                  {/* Nickname */}
+                  <div style={{
+                    fontSize: 10, color: hasPinned ? `${G_TXT}cc` : MUTED,
+                    marginTop: 2, lineHeight: 1.3,
+                    overflow: "hidden", textOverflow: "ellipsis",
+                    display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+                    maxWidth: "100%",
+                  }}>
+                    {team.nickname}
+                  </div>
+                  {/* Assigned scout chips */}
+                  {scoutIds.length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 6 }}>
+                      {scoutIds.map(id => {
+                        const u = allUsers.find(u => u._id === id);
+                        return (
+                          <span key={id} style={{
+                            fontSize: 9, fontWeight: 700,
+                            padding: "1px 6px", borderRadius: 20,
+                            background: hasPinned ? "oklch(0 0 0 / 20%)" : G_MED,
+                            color: hasPinned ? G_TXT : G,
+                          }}>
+                            {u ? firstName(u) : "?"}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+            {filtered.length === 0 && (
+              <div style={{ gridColumn: "1/-1", textAlign: "center", padding: "24px 0", color: MUTED, fontSize: 13 }}>
+                No teams match "{search}"
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+      )}
+
+      {/* Hint when no scout pinned */}
+      {!pinnedScoutId && tbaTeams.length > 0 && !tbaLoading && (
+        <div style={{
+          flexShrink: 0, textAlign: "center", fontSize: 12, color: MUTED,
+          padding: "8px 0", borderTop: `1px solid ${SURF_BORD}`,
+        }}>
+          ↑ Pin a scout above, then click team cards to assign them
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function SchedulingPage() {
@@ -1380,6 +1679,8 @@ export default function SchedulingPage() {
   const [autoGenRunning, setAutoGenRunning] = useState(false);
   const [autoGenError, setAutoGenError] = useState<string | null>(null);
   const [clearingAll, setClearingAll] = useState(false);
+  const [excludedScoutIds, setExcludedScoutIds] = useState<Set<string>>(new Set());
+  const [showExcludePanel, setShowExcludePanel] = useState(false);
 
   // Responsive: track viewport size + orientation
   const getVp = () =>
@@ -1413,12 +1714,125 @@ export default function SchedulingPage() {
     currentEvent ? { eventKey: currentEvent.eventKey } : "skip"
   );
 
-  const setMatchAssignment      = useMutation(api.schedules.setMatchAssignment);
-  const clearMatchAssignment    = useMutation(api.schedules.clearMatchAssignment);
+  const setMatchAssignment       = useMutation(api.schedules.setMatchAssignment);
+  const clearMatchAssignment     = useMutation(api.schedules.clearMatchAssignment);
   const clearAllMatchAssignments = useMutation(api.schedules.clearAllMatchAssignments);
-  const batchSet                = useMutation(api.schedules.batchSetMatchAssignments);
-  const upsertRotation          = useMutation(api.schedules.upsertPitRotation);
-  const deleteRotation          = useMutation(api.schedules.deletePitRotation);
+  const batchSet                 = useMutation(api.schedules.batchSetMatchAssignments);
+  const upsertRotation           = useMutation(api.schedules.upsertPitRotation);
+  const deleteRotation           = useMutation(api.schedules.deletePitRotation);
+  const togglePitScout           = useMutation(api.pitScouting.upsertPitScoutingAssignment);
+  const clearAllPitScouting      = useMutation(api.pitScouting.clearAllPitScoutingAssignments);
+  const batchUpsertPitScouting   = useMutation(api.pitScouting.batchUpsertPitScoutingAssignments);
+
+  const pitScoutingTeams = useQuery(
+    api.pitScouting.listPitScoutingTeams,
+    currentEvent ? { eventKey: currentEvent.eventKey } : "skip"
+  ) as PitScoutingTeam[] | undefined;
+
+  // TBA event teams (for pit scouting tab)
+  const [tbaTeams, setTbaTeams] = useState<TBATeam[]>([]);
+  const [tbaTeamsLoading, setTbaTeamsLoading] = useState(false);
+  const [tbaTeamsError, setTbaTeamsError] = useState(false);
+
+  useEffect(() => {
+    if (activeTab !== "pitScouting" || !currentEvent?.eventKey) return;
+    setTbaTeamsLoading(true); setTbaTeamsError(false);
+    fetchTBAEventTeams(currentEvent.eventKey)
+      .then(data => {
+        if (Array.isArray(data)) setTbaTeams([...data].sort((a, b) => a.team_number - b.team_number));
+        else setTbaTeamsError(true);
+      })
+      .catch(() => setTbaTeamsError(true))
+      .finally(() => setTbaTeamsLoading(false));
+  }, [activeTab, currentEvent?.eventKey]);
+
+  // Map teamNumber -> scoutIds from Convex pitScoutingTeams
+  const pitAssignmentsMap = useMemo(() => {
+    const m = new Map<number, string[]>();
+    for (const t of pitScoutingTeams ?? []) m.set(t.teamNumber, [...t.scoutIds]);
+    return m;
+  }, [pitScoutingTeams]);
+
+  async function handleTogglePitScout(teamNumber: number, scoutId: string) {
+    if (!currentEvent) return;
+    const current = pitAssignmentsMap.get(teamNumber) ?? [];
+    const next = current.includes(scoutId)
+      ? current.filter(id => id !== scoutId)
+      : [...current, scoutId];
+    await togglePitScout({
+      eventKey: currentEvent.eventKey,
+      teamNumber,
+      scoutIds: next as Id<"users">[],
+    });
+  }
+
+  /**
+   * Auto-assign pit scouting:
+   * 1. Take scouts who opted in (wantsPitScouting=true). Fall back to all users if none opted in.
+   * 2. Group into pairs of 2 (last group may be 2 or 3 depending on count).
+   * 3. Distribute TBA teams sequentially across pairs, ~5 teams each.
+   *    (actual count = ceil(totalTeams / numPairs))
+   * 4. Batch-save to Convex.
+   */
+  async function handleAutoAssignPitScouting(teams: TBATeamSimple[]) {
+    if (!currentEvent || teams.length === 0) return;
+    const prefs = (allPreferences ?? []) as Array<{ scoutId: string; wantsPitScouting?: boolean }>;
+    const optedIn = prefs.filter(p => p.wantsPitScouting === true).map(p => p.scoutId);
+    // Fall back to all users if nobody has opted in yet
+    const pool = optedIn.length > 0
+      ? (allUsers ?? []).filter(u => optedIn.includes(u._id))
+      : (allUsers ?? []);
+    if (pool.length === 0) return;
+
+    // Build pairs (groups of 2, last group may be 3 if odd)
+    const pairs: string[][] = [];
+    for (let i = 0; i < pool.length; i += 2) {
+      if (i + 1 < pool.length) {
+        pairs.push([pool[i]._id, pool[i + 1]._id]);
+      } else {
+        // Odd scout: add to last pair to make a trio
+        if (pairs.length > 0) pairs[pairs.length - 1].push(pool[i]._id);
+        else pairs.push([pool[i]._id]);
+      }
+    }
+
+    // Distribute teams: ~5 per pair
+    const teamsPerPair = Math.ceil(teams.length / pairs.length);
+    const assignments: { teamNumber: number; scoutIds: Id<"users">[] }[] = [];
+    for (let i = 0; i < pairs.length; i++) {
+      const slice = teams.slice(i * teamsPerPair, (i + 1) * teamsPerPair);
+      for (const t of slice) {
+        assignments.push({ teamNumber: t.team_number, scoutIds: pairs[i] as Id<"users">[] });
+      }
+    }
+
+    await batchUpsertPitScouting({ eventKey: currentEvent.eventKey, assignments });
+  }
+
+  // Load / persist excluded scout IDs per event
+  useEffect(() => {
+    if (!currentEvent?.eventKey) return;
+    try {
+      const saved = localStorage.getItem(`falconscout_excluded_scouts_${currentEvent.eventKey}`);
+      setExcludedScoutIds(saved ? new Set(JSON.parse(saved) as string[]) : new Set());
+    } catch { setExcludedScoutIds(new Set()); }
+  }, [currentEvent?.eventKey]);
+
+  function toggleExcluded(id: string) {
+    setExcludedScoutIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      if (currentEvent?.eventKey) {
+        try {
+          localStorage.setItem(
+            `falconscout_excluded_scouts_${currentEvent.eventKey}`,
+            JSON.stringify([...next])
+          );
+        } catch { /* ignore */ }
+      }
+      return next;
+    });
+  }
 
   // Load TBA matches
   useEffect(() => {
@@ -1561,13 +1975,14 @@ export default function SchedulingPage() {
         preferences: prefs,
         existingPitRotations: existingPit,
         existingMatchAssignments: existingAssigns,
+        excludedScoutIds: [...excludedScoutIds],
       });
 
       setAutoGenResult(result);
     } finally {
       setAutoGenRunning(false);
     }
-  }, [currentEvent, allUsers, matches, allPreferences, allAssignments, pitRotations]);
+  }, [currentEvent, allUsers, matches, allPreferences, allAssignments, pitRotations, excludedScoutIds]);
 
   const handleAutoApply = useCallback(async () => {
     if (!autoGenResult || !currentEvent) return;
@@ -1656,52 +2071,187 @@ export default function SchedulingPage() {
         </div>
         {/* Action buttons row — hidden in landscape phone to save space (use auto-gen sparingly) */}
         {!isLandscapePhone && currentEvent && (allUsers && matches.length > 0 || filledSlots > 0) && (
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {allUsers && matches.length > 0 && (
-              <button
-                onClick={handleAutoGenerate}
-                disabled={autoGenRunning}
-                style={{
-                  display: "flex", alignItems: "center", gap: 7,
-                  padding: "8px 16px", borderRadius: 10, fontSize: 13, fontWeight: 700,
-                  background: G, color: G_TXT, border: "none",
-                  cursor: autoGenRunning ? "wait" : "pointer",
-                  boxShadow: `0 4px 14px ${G} / 35%`,
-                  flexShrink: 0, opacity: autoGenRunning ? 0.7 : 1,
-                  transition: "opacity 0.15s, box-shadow 0.15s",
-                  flex: isMobile ? "1 1 auto" : "none",
-                }}
-                onMouseEnter={e => { if (!autoGenRunning) (e.currentTarget as HTMLButtonElement).style.boxShadow = `0 6px 20px ${G} / 50%`; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.boxShadow = `0 4px 14px ${G} / 35%`; }}
-              >
-                {autoGenRunning
-                  ? <><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />Generating…</>
-                  : <><Sparkles size={14} />Auto-Generate</>}
-              </button>
-            )}
-            {filledSlots > 0 && (
-              <button
-                onClick={handleClearAll}
-                disabled={clearingAll}
-                title="Remove all match assignments for this event"
-                style={{
-                  display: "flex", alignItems: "center", gap: 6,
-                  padding: "8px 14px", borderRadius: 10, fontSize: 13, fontWeight: 700,
-                  background: "oklch(0.577 0.245 27 / 12%)",
-                  color: "var(--destructive)",
-                  border: "1.5px solid oklch(0.577 0.245 27 / 35%)",
-                  cursor: clearingAll ? "wait" : "pointer",
-                  flexShrink: 0, opacity: clearingAll ? 0.6 : 1,
-                  transition: "opacity 0.15s, background 0.15s",
-                  flex: isMobile ? "1 1 auto" : "none",
-                }}
-                onMouseEnter={e => { if (!clearingAll) (e.currentTarget as HTMLButtonElement).style.background = "oklch(0.577 0.245 27 / 20%)"; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "oklch(0.577 0.245 27 / 12%)"; }}
-              >
-                {clearingAll
-                  ? <><Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />Clearing…</>
-                  : <><Trash2 size={13} />Clear All</>}
-              </button>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {allUsers && matches.length > 0 && (
+                <button
+                  onClick={handleAutoGenerate}
+                  disabled={autoGenRunning}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 7,
+                    padding: "8px 16px", borderRadius: 10, fontSize: 13, fontWeight: 700,
+                    background: G, color: G_TXT, border: "none",
+                    cursor: autoGenRunning ? "wait" : "pointer",
+                    boxShadow: `0 4px 14px ${G} / 35%`,
+                    flexShrink: 0, opacity: autoGenRunning ? 0.7 : 1,
+                    transition: "opacity 0.15s, box-shadow 0.15s",
+                    flex: isMobile ? "1 1 auto" : "none",
+                  }}
+                  onMouseEnter={e => { if (!autoGenRunning) (e.currentTarget as HTMLButtonElement).style.boxShadow = `0 6px 20px ${G} / 50%`; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.boxShadow = `0 4px 14px ${G} / 35%`; }}
+                >
+                  {autoGenRunning
+                    ? <><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />Generating…</>
+                    : <><Sparkles size={14} />Auto-Generate</>}
+                </button>
+              )}
+              {/* Exclude scouts toggle button */}
+              {allUsers && allUsers.length > 0 && matches.length > 0 && (
+                <button
+                  onClick={() => setShowExcludePanel(v => !v)}
+                  title="Select scouts to exclude from auto-schedule generation"
+                  style={{
+                    display: "flex", alignItems: "center", gap: 6,
+                    padding: "8px 14px", borderRadius: 10, fontSize: 13, fontWeight: 700,
+                    background: excludedScoutIds.size > 0
+                      ? "oklch(0.55 0.18 30 / 15%)"
+                      : SURF_HVR,
+                    color: excludedScoutIds.size > 0
+                      ? "oklch(0.75 0.18 30)"
+                      : MUTED,
+                    border: excludedScoutIds.size > 0
+                      ? "1.5px solid oklch(0.55 0.18 30 / 40%)"
+                      : `1.5px solid ${SURF_BORD}`,
+                    cursor: "pointer", flexShrink: 0,
+                    transition: "all 0.15s",
+                  }}
+                >
+                  <Users size={13} />
+                  Exclude
+                  {excludedScoutIds.size > 0 && (
+                    <span style={{
+                      background: "oklch(0.55 0.18 30 / 25%)",
+                      borderRadius: 20, padding: "0 6px", fontSize: 11, fontWeight: 800,
+                      color: "oklch(0.75 0.18 30)",
+                    }}>
+                      {excludedScoutIds.size}
+                    </span>
+                  )}
+                </button>
+              )}
+              {filledSlots > 0 && (
+                <button
+                  onClick={handleClearAll}
+                  disabled={clearingAll}
+                  title="Remove all match assignments for this event"
+                  style={{
+                    display: "flex", alignItems: "center", gap: 6,
+                    padding: "8px 14px", borderRadius: 10, fontSize: 13, fontWeight: 700,
+                    background: "oklch(0.577 0.245 27 / 12%)",
+                    color: "var(--destructive)",
+                    border: "1.5px solid oklch(0.577 0.245 27 / 35%)",
+                    cursor: clearingAll ? "wait" : "pointer",
+                    flexShrink: 0, opacity: clearingAll ? 0.6 : 1,
+                    transition: "opacity 0.15s, background 0.15s",
+                    flex: isMobile ? "1 1 auto" : "none",
+                  }}
+                  onMouseEnter={e => { if (!clearingAll) (e.currentTarget as HTMLButtonElement).style.background = "oklch(0.577 0.245 27 / 20%)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "oklch(0.577 0.245 27 / 12%)"; }}
+                >
+                  {clearingAll
+                    ? <><Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />Clearing…</>
+                    : <><Trash2 size={13} />Clear All</>}
+                </button>
+              )}
+            </div>
+
+            {/* ── Exclude from auto-schedule panel ── */}
+            {showExcludePanel && allUsers && allUsers.length > 0 && (
+              <div style={{
+                padding: "12px 14px",
+                borderRadius: 12,
+                border: `1.5px solid oklch(0.55 0.18 30 / 35%)`,
+                background: "oklch(0.55 0.18 30 / 6%)",
+                display: "flex", flexDirection: "column", gap: 10,
+              }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                    <Users size={13} style={{ color: "oklch(0.72 0.18 30)" }} />
+                    <span style={{
+                      fontSize: 11, fontWeight: 700, textTransform: "uppercase",
+                      letterSpacing: "0.08em", color: "oklch(0.72 0.18 30)",
+                    }}>
+                      Exclude from Auto-Schedule
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {excludedScoutIds.size > 0 && (
+                      <button
+                        onClick={() => {
+                          setExcludedScoutIds(new Set());
+                          if (currentEvent?.eventKey) {
+                            try { localStorage.removeItem(`falconscout_excluded_scouts_${currentEvent.eventKey}`); } catch { /* ignore */ }
+                          }
+                        }}
+                        style={{
+                          fontSize: 11, fontWeight: 700, color: "oklch(0.72 0.18 30)",
+                          background: "transparent", border: "none", cursor: "pointer",
+                          textDecoration: "underline", textUnderlineOffset: 2,
+                        }}
+                      >
+                        Clear all
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setShowExcludePanel(false)}
+                      style={{
+                        fontSize: 16, lineHeight: 1, background: SURF_HVR,
+                        border: `1px solid ${SURF_BORD}`, borderRadius: 6,
+                        padding: "1px 7px", color: MUTED, cursor: "pointer",
+                      }}
+                    >×</button>
+                  </div>
+                </div>
+                <p style={{ fontSize: 11, color: MUTED, margin: 0, lineHeight: 1.4 }}>
+                  Scouts toggled below will be skipped when auto-generating — they won't receive any new match assignments or pit rotations.
+                </p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {(allUsers ?? []).map(u => {
+                    const excluded = excludedScoutIds.has(u._id);
+                    return (
+                      <button
+                        key={u._id}
+                        onClick={() => toggleExcluded(u._id)}
+                        style={{
+                          display: "inline-flex", alignItems: "center", gap: 6,
+                          padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600,
+                          cursor: "pointer", transition: "all 0.12s",
+                          background: excluded ? "oklch(0.55 0.18 30 / 18%)" : SURF_HVR,
+                          color: excluded ? "oklch(0.75 0.18 30)" : MUTED,
+                          border: excluded
+                            ? "1.5px solid oklch(0.55 0.18 30 / 50%)"
+                            : `1.5px solid ${SURF_BORD}`,
+                        }}
+                      >
+                        {u.image
+                          ? <img src={u.image} alt="" style={{ width: 16, height: 16, borderRadius: "50%", objectFit: "cover" }} />
+                          : <span style={{
+                              width: 16, height: 16, borderRadius: "50%", flexShrink: 0,
+                              background: excluded ? "oklch(0.55 0.18 30 / 40%)" : G_MED,
+                              color: excluded ? "oklch(0.75 0.18 30)" : G,
+                              display: "flex", alignItems: "center", justifyContent: "center",
+                              fontSize: 9, fontWeight: 800,
+                            }}>
+                              {avatarLetter(u)}
+                            </span>
+                        }
+                        <span style={{
+                          textDecoration: excluded ? "line-through" : "none",
+                          opacity: excluded ? 0.75 : 1,
+                        }}>
+                          {firstName(u)}
+                        </span>
+                        {excluded && (
+                          <span style={{
+                            fontSize: 9, fontWeight: 800, textTransform: "uppercase",
+                            letterSpacing: "0.05em", color: "oklch(0.72 0.18 30)",
+                          }}>✕</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             )}
           </div>
         )}
@@ -1722,8 +2272,9 @@ export default function SchedulingPage() {
           {/* ── Tab bar ─────────────────────────────────────────────────── */}
           <div style={{ display: "flex", gap: 4, flexShrink: 0, background: SURFACE, borderRadius: 10, padding: 4, width: isMobile ? "100%" : "fit-content", border: `1px solid ${SURF_BORD}` }}>
             {([
-              { id: "matches" as TabType, label: "Match Assignments", icon: LayoutGrid },
-              { id: "pit"     as TabType, label: "Pit Rotations",     icon: Wrench    },
+              { id: "matches"     as TabType, label: "Match Assignments", icon: LayoutGrid    },
+              { id: "pit"         as TabType, label: "Pit Rotations",     icon: Wrench        },
+              { id: "pitScouting" as TabType, label: "Pit Scouting",      icon: ClipboardList },
             ]).map(({ id, label, icon: Icon }) => (
               <button key={id} onClick={() => setActiveTab(id)}
                 style={{
@@ -1736,10 +2287,15 @@ export default function SchedulingPage() {
                 }}
               >
                 <Icon size={14} />
-                {label}
+                {!isMobile && label}
                 {id === "pit" && (pitRotations?.length ?? 0) > 0 && (
                   <span style={{ background: "oklch(0 0 0 / 20%)", borderRadius: 20, padding: "0 6px", fontSize: 11, fontWeight: 700 }}>
                     {pitRotations!.length}
+                  </span>
+                )}
+                {id === "pitScouting" && (pitScoutingTeams?.length ?? 0) > 0 && (
+                  <span style={{ background: "oklch(0 0 0 / 20%)", borderRadius: 20, padding: "0 6px", fontSize: 11, fontWeight: 700 }}>
+                    {pitScoutingTeams!.length}
                   </span>
                 )}
               </button>
@@ -1885,6 +2441,24 @@ export default function SchedulingPage() {
               </div>
             );
           })()}
+          {/* ── Pit scouting teams tab ──────────────────────────────────── */}
+          {activeTab === "pitScouting" && (
+            <PitScoutingTab
+              tbaTeams={tbaTeams}
+              tbaLoading={tbaTeamsLoading}
+              tbaError={tbaTeamsError}
+              assignments={pitAssignmentsMap}
+              allUsers={allUsers ?? []}
+              onToggleScout={handleTogglePitScout}
+              onClearAll={async () => {
+                if (!currentEvent) return;
+                await clearAllPitScouting({ eventKey: currentEvent.eventKey });
+              }}
+              onAutoAssign={handleAutoAssignPitScouting}
+              optedInCount={(allPreferences ?? []).filter((p: any) => p.wantsPitScouting === true).length}
+              isMobile={isMobile}
+            />
+          )}
         </>
       )}
       </div>

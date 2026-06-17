@@ -36,6 +36,7 @@ import {
   ScanLine,
   MoreHorizontal,
   X,
+  ClipboardCheck,
 } from "lucide-react";
 import { useOfflineSync } from "@/hooks/useOfflineSync";
 import { useUIStore } from "@/store/uiStore";
@@ -53,6 +54,7 @@ import LoginPage from "@/pages/LoginPage";
 import ManageScoutsPage from "@/pages/ManageScoutsPage";
 import SchedulingPage from "@/pages/SchedulingPage";
 import MySchedulePage from "@/pages/MySchedulePage";
+import ChecklistPage from "@/pages/ChecklistPage";
 
 // Base nav items — always visible
 const BASE_NAV = [
@@ -61,6 +63,7 @@ const BASE_NAV = [
   { to: "/data",      label: "Data Viewer",  icon: BarChart2       },
   { to: "/scout",     label: "Scout Match",  icon: ClipboardList   },
   { to: "/schedule",  label: "My Schedule",  icon: CalendarDays    },
+  { to: "/checklist", label: "Checklists",   icon: ClipboardCheck  },
   { to: "/qrcodes",   label: "My QR Codes",  icon: QrCode          },
   { to: "/scanner",   label: "QR Scanner",   icon: ScanLine        },
   { to: "/kanban",    label: "Picklist",     icon: Columns         },
@@ -216,10 +219,10 @@ function AuthenticatedApp() {
 
   // Bottom nav (most-used on mobile) — max 4 primary + More overflow
   const BOTTOM_NAV_PRIMARY = [
-    { to: "/",        label: "Dashboard", icon: LayoutDashboard },
-    { to: "/scout",   label: "Scout",     icon: ClipboardList   },
-    { to: "/schedule",label: "Schedule",  icon: CalendarDays    },
-    { to: "/kanban",  label: "Picklist",  icon: Columns         },
+    { to: "/",          label: "Dashboard", icon: LayoutDashboard },
+    { to: "/scout",     label: "Scout",     icon: ClipboardList   },
+    { to: "/schedule",  label: "Schedule",  icon: CalendarDays    },
+    { to: "/checklist", label: "Checklist", icon: ClipboardCheck  },
   ];
 
   const BOTTOM_NAV_MORE = [
@@ -227,6 +230,7 @@ function AuthenticatedApp() {
     { to: "/data",     label: "Data",      icon: BarChart2    },
     { to: "/qrcodes",  label: "QR Codes",  icon: QrCode       },
     { to: "/scanner",  label: "Scanner",   icon: ScanLine     },
+    { to: "/kanban",   label: "Picklist",  icon: Columns      },
     ...(isAdminMode
       ? [
           { to: "/scouts",      label: "Scouts",       icon: Users       },
@@ -413,6 +417,7 @@ function AuthenticatedApp() {
             <Route path="/data"       element={<DataViewerPage />} />
             <Route path="/scout"      element={<ScoutMatchPage />} />
             <Route path="/schedule"   element={<MySchedulePage />} />
+            <Route path="/checklist"  element={<ChecklistPage />} />
             <Route path="/qrcodes"    element={<QRCodesPage />} />
             <Route path="/scanner"    element={<ScannerPage />} />
             <Route path="/kanban"     element={<KanbanPage />} />

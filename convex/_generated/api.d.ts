@@ -9,10 +9,12 @@
  */
 
 import type * as auth from "../auth.js";
+import type * as checklists from "../checklists.js";
 import type * as events from "../events.js";
 import type * as forms from "../forms.js";
 import type * as http from "../http.js";
 import type * as kanban from "../kanban.js";
+import type * as pitScouting from "../pitScouting.js";
 import type * as schedules from "../schedules.js";
 import type * as users from "../users.js";
 
@@ -24,10 +26,12 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
+  checklists: typeof checklists;
   events: typeof events;
   forms: typeof forms;
   http: typeof http;
   kanban: typeof kanban;
+  pitScouting: typeof pitScouting;
   schedules: typeof schedules;
   users: typeof users;
 }>;
