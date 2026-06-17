@@ -160,6 +160,9 @@ export function ingestQRPayload(raw: string): IngestResult {
     let data: Record<string, unknown> = {};
     try { data = JSON.parse(env.d) as Record<string, unknown>; } catch { /* ignore */ }
 
+    // Checklist QR codes are not scouting data — silently skip them
+    if (data._checklist === true) return { status: "duplicate" };
+
     const sub: ScannedSubmission = {
       id: env.id,
       matchNumber: env.m,
@@ -205,6 +208,9 @@ export function ingestQRPayload(raw: string): IngestResult {
   saveChunkBuffers(bufs);
 
   if (isDuplicate(env.id)) return { status: "duplicate" };
+
+  // Checklist QR codes are not scouting data — silently skip them
+  if (data._checklist === true) return { status: "duplicate" };
 
   const sub: ScannedSubmission = {
     id: env.id,

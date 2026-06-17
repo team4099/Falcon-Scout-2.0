@@ -393,7 +393,7 @@ function SubmissionsReviewDialog({
               <AlertTriangle className="h-4 w-4 text-destructive" />
               Delete scouting report?
             </AlertDialogTitle>
-            <AlertDialogDescription>
+            <AlertDialogDescription asChild>
               <div className="space-y-2 text-sm text-muted-foreground">
                 <p>
                   This will permanently remove Match{" "}
@@ -557,7 +557,7 @@ function TeamRow({
 
   // Build the ordered stat chips data (shared between mobile + desktop)
   const allStats: { label: string; value: string; color: "default" | "primary" | "success" | "muted" }[] = [
-    { label: "Matches", value: String(submissions.length), color: submissions.length > 0 ? "default" : "muted" },
+    { label: "Reports", value: String(submissions.length), color: submissions.length > 0 ? "default" : "muted" },
     { label: "Avg Score", value: avgScore !== null ? Number(avgScore.toFixed(0)).toString() : "—", color: avgScore !== null ? "default" : "muted" },
     { label: "Event EPA", value: epa.event !== null ? String(epa.event) : "—", color: epa.event !== null ? "primary" : "muted" },
     { label: "Season EPA", value: epa.overall !== null ? String(epa.overall) : "—", color: epa.overall !== null ? "primary" : "muted" },
@@ -781,7 +781,7 @@ function ColumnHeader({ fields, visibleColumns }: { fields: FormField[]; visible
           ].join(" "),
         }}
       >
-        <span>Matches</span>
+        <span>Reports</span>
         <span>Avg Score</span>
         <span>Event EPA</span>
         <span>Season EPA</span>
@@ -1798,9 +1798,11 @@ export default function DashboardPage() {
     return unplayed[0] ?? null;
   }, [matchData, nowMs]);
 
-  // Build team list
+  // Build team list — exclude teamNumber === 0 (checklist submissions)
   const scoutedTeams = new Set(
-    (allSubmissions ?? []).map((s: { teamNumber: number }) => s.teamNumber)
+    (allSubmissions ?? [])
+      .map((s: { teamNumber: number }) => s.teamNumber)
+      .filter((n: number) => n > 0)
   );
   const allTeams = Array.from(new Set([...tbaTeams, ...scoutedTeams])).sort(
     (a, b) => (a as number) - (b as number)
@@ -1809,7 +1811,8 @@ export default function DashboardPage() {
   const submissionsByTeam = (allSubmissions ?? []).reduce<
     Record<number, Submission[]>
   >((acc, s: Submission) => {
-    // Only include non-pit submissions in the match scouting view
+    // Exclude checklist submissions (teamNumber === 0) and pit submissions
+    if (s.teamNumber === 0) return acc;
     if (pitTemplate && s.templateId === pitTemplate._id) return acc;
     acc[s.teamNumber] = [...(acc[s.teamNumber] ?? []), s];
     return acc;

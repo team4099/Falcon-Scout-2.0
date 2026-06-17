@@ -18,6 +18,22 @@ import {
 } from "recharts";
 import { fetchStatboticsEventTeams, fetchStatboticsEventTeamMatches, fetchTBAEventTeams } from "@/lib/api";
 
+// ─────────────────────────────── Mobile hook ──────────────────────────────────
+
+function useIsMobile(breakpoint = 640) {
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth < breakpoint : false
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${breakpoint - 1}px)`);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    setIsMobile(mq.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, [breakpoint]);
+  return isMobile;
+}
+
 
 // ─────────────────────────────── Types ────────────────────────────────────────
 
@@ -1053,21 +1069,119 @@ function Empty({ msg }: { msg: string }) {
 
 // ─────────────────────────────── Chart Card ───────────────────────────────────
 
-function ChartCard({ cfg, rows, teamRows, matchEpaRows, fields, axes, onRemove, onEdit }: {
+function ChartCard({
+  cfg, rows, teamRows, matchEpaRows, fields, axes,
+  onRemove, onEdit,
+  isDragOver, onDragStart, onDragEnter, onDragLeave, onDragOver: onDragOverProp, onDrop, onDragEnd,
+  initialSize, onSizeChange, isMobile,
+}: {
   cfg: ChartCfg; rows: Record<string, unknown>[]; teamRows: Record<string, unknown>[];
   matchEpaRows: Record<string, unknown>[];
   fields: FormField[]; axes: AxisOpt[];
   onRemove: () => void; onEdit: () => void;
+  isDragOver: boolean;
+  onDragStart: (e: React.DragEvent) => void;
+  onDragEnter: (e: React.DragEvent) => void;
+  onDragLeave: (e: React.DragEvent) => void;
+  onDragOver: (e: React.DragEvent) => void;
+  onDrop: (e: React.DragEvent) => void;
+  onDragEnd: () => void;
+  initialSize?: { width: number | "100%"; height: number };
+  onSizeChange: (size: { width: number | "100%"; height: number }) => void;
+  isMobile?: boolean;
 }) {
   const yLabel = axes.find((a) => a.id === cfg.yAxis)?.label ?? cfg.yAxis;
   const xLabel = axes.find((a) => a.id === cfg.xAxis)?.label ?? cfg.xAxis;
   const needsX = cfg.type === "scatter" || cfg.type === "line";
+
+  // ── Resizable card via custom drag handle ────────────────────────────────
+  const [size, setSize] = useState<{ width: number | "100%"; height: number }>(
+    initialSize ?? { width: "100%", height: 360 }
+  );
+  // Track current size in a ref so onResizePointerUp can read it without
+  // calling onSizeChange inside a setState updater (which triggers the
+  // "update during render" React warning).
+  const currentSizeRef = useRef(size);
+  const resizeOrigin = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  // Allow HTML5 drag only when initiated from the grip handle
+  const draggableRef = useRef(false);
+
+  const onResizePointerDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = cardRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    resizeOrigin.current = { x: e.clientX, y: e.clientY, w: rect.width, h: rect.height };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  }, []);
+
+  const onResizePointerMove = useCallback((e: React.PointerEvent) => {
+    if (!resizeOrigin.current) return;
+    const dx = e.clientX - resizeOrigin.current.x;
+    const dy = e.clientY - resizeOrigin.current.y;
+    const next = { width: Math.max(280, resizeOrigin.current.w + dx), height: Math.max(240, resizeOrigin.current.h + dy) };
+    currentSizeRef.current = next;
+    setSize(next);
+  }, []);
+
+  // Save to parent on drag-end only — reads from ref to avoid calling
+  // onSizeChange inside a setState updater ("update while rendering" error).
+  const onResizePointerUp = useCallback(() => {
+    resizeOrigin.current = null;
+    onSizeChange(currentSizeRef.current);
+  }, [onSizeChange]);
+
+  // On mobile: always fill container width, no horizontal resize
+  const effectiveWidth = isMobile ? "100%" : size.width;
+
   return (
-    <div className="rounded-xl border border-border bg-card flex flex-col overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-muted/20 shrink-0">
-        <div>
-          <p className="text-sm font-semibold">{cfg.title}</p>
+    <div
+      ref={cardRef}
+      draggable
+      onDragStart={(e) => {
+        if (!draggableRef.current) { e.preventDefault(); return; }
+        onDragStart(e);
+      }}
+      onDragEnter={onDragEnter}
+      onDragLeave={onDragLeave}
+      onDragOver={onDragOverProp}
+      onDrop={onDrop}
+      onDragEnd={() => { draggableRef.current = false; onDragEnd(); }}
+      className="rounded-xl border bg-card flex flex-col transition-[border-color,box-shadow] duration-150"
+      style={{
+        width: effectiveWidth,
+        height: size.height,
+        minWidth: isMobile ? 0 : 280,
+        minHeight: 240,
+        position: "relative",
+        overflow: "hidden",
+        borderColor: isDragOver ? "hsl(var(--primary))" : "hsl(var(--border))",
+        boxShadow: isDragOver ? "inset 3px 0 0 hsl(var(--primary))" : undefined,
+      }}
+    >
+      {/* Header — grip on the left activates drag */}
+      <div className="flex items-center gap-2 px-2 py-2.5 border-b border-border bg-muted/20 shrink-0">
+        {/* Drag grip — mousedown enables draggable, mouseup disables it */}
+        <div
+          onMouseDown={() => { draggableRef.current = true; }}
+          onMouseUp={() => { draggableRef.current = false; }}
+          className="cursor-grab active:cursor-grabbing p-1 rounded text-muted-foreground/50 hover:text-muted-foreground hover:bg-muted/60 transition-colors shrink-0"
+          title="Drag to reorder"
+        >
+          <svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor">
+            <circle cx="2" cy="3"  r="1.5" />
+            <circle cx="8" cy="3"  r="1.5" />
+            <circle cx="2" cy="8"  r="1.5" />
+            <circle cx="8" cy="8"  r="1.5" />
+            <circle cx="2" cy="13" r="1.5" />
+            <circle cx="8" cy="13" r="1.5" />
+          </svg>
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold truncate">{cfg.title}</p>
           <p className="text-[10px] text-muted-foreground capitalize">
             {cfg.type}
             {cfg.type === "radar"
@@ -1077,16 +1191,52 @@ function ChartCard({ cfg, rows, teamRows, matchEpaRows, fields, axes, onRemove, 
             {cfg.type !== "radar" && (cfg.teams?.length ?? 0) > 0 && ` · ${cfg.teams.length} teams`}
           </p>
         </div>
-        <div className="flex items-center gap-1">
+
+        <div className="flex items-center gap-1 shrink-0">
           <button onClick={onEdit} className="text-[10px] text-muted-foreground hover:text-foreground px-2 py-1 rounded hover:bg-muted transition-colors">Edit</button>
           <button onClick={onRemove} className="text-muted-foreground hover:text-destructive p-1 rounded hover:bg-destructive/10 transition-colors"><X className="h-3.5 w-3.5" /></button>
         </div>
       </div>
-      {/* Resizable chart area */}
-      <div className="p-2 overflow-auto" style={{ resize: "vertical", minHeight: 220, height: 320 }}>
-        <div style={{ width: "100%", height: "100%" }}>
+
+      {/* Chart area — fills remaining space; minHeight guards against recharts -1 warning */}
+      <div className="flex-1 min-h-0 p-2" style={{ minHeight: 180 }}>
+        <div style={{ width: "100%", height: "100%", minHeight: 180 }}>
           <ChartInner cfg={cfg} rows={rows} teamRows={teamRows} matchEpaRows={matchEpaRows} fields={fields} axes={axes} />
         </div>
+      </div>
+
+      {/* Resize handle — bottom-right on desktop, bottom-center on mobile (height only) */}
+      <div
+        onPointerDown={onResizePointerDown}
+        onPointerMove={onResizePointerMove}
+        onPointerUp={onResizePointerUp}
+        onPointerCancel={onResizePointerUp}
+        style={{
+          position: "absolute",
+          bottom: 0,
+          ...(isMobile
+            ? { left: 0, right: 0, height: 20, cursor: "ns-resize", justifyContent: "center" }
+            : { right: 0, width: 18, height: 18, cursor: "nwse-resize", justifyContent: "flex-end" }
+          ),
+          display: "flex", alignItems: "flex-end",
+          padding: 3, zIndex: 10, touchAction: "none",
+        }}
+        title="Drag to resize"
+      >
+        {isMobile ? (
+          // Horizontal bar handle for mobile
+          <svg width="32" height="4" viewBox="0 0 32 4" fill="none" className="mb-1">
+            <rect x="0" y="1" width="32" height="2" rx="1" fill="currentColor" className="text-muted-foreground/40" />
+          </svg>
+        ) : (
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <circle cx="10" cy="10" r="1.5" fill="currentColor" className="text-muted-foreground/60" />
+            <circle cx="6"  cy="10" r="1.5" fill="currentColor" className="text-muted-foreground/40" />
+            <circle cx="10" cy="6"  r="1.5" fill="currentColor" className="text-muted-foreground/40" />
+            <circle cx="2"  cy="10" r="1.5" fill="currentColor" className="text-muted-foreground/20" />
+            <circle cx="10" cy="2"  r="1.5" fill="currentColor" className="text-muted-foreground/20" />
+          </svg>
+        )}
       </div>
     </div>
   );
@@ -1282,6 +1432,10 @@ export default function DataViewerPage() {
   const [charts, setChartsRaw] = useState<ChartCfg[]>([]);
   const loadedKeyRef = useRef<string | null>(null);
 
+  // Card sizes — persisted separately so layout survives page reloads
+  type CardSizes = Record<string, { width: number | "100%"; height: number }>;
+  const [cardSizes, setCardSizesRaw] = useState<CardSizes>({});
+
   useEffect(() => {
     const key = `falconscout_charts_${eventKey || "__global__"}`;
     if (loadedKeyRef.current === key) return; // already loaded for this event
@@ -1290,20 +1444,84 @@ export default function DataViewerPage() {
       const raw = localStorage.getItem(key);
       if (raw) setChartsRaw(JSON.parse(raw) as ChartCfg[]);
     } catch { /* corrupted storage — start fresh */ }
+    try {
+      const rawSizes = localStorage.getItem(`${key}_sizes`);
+      if (rawSizes) setCardSizesRaw(JSON.parse(rawSizes) as CardSizes);
+    } catch { /* ignore */ }
   }, [eventKey]);
 
-  // Write to localStorage on every charts change
+  // Write charts to localStorage on every charts change
   useEffect(() => {
-    if (!loadedKeyRef.current) return; // don't write before the first load
+    if (!loadedKeyRef.current) return;
     try { localStorage.setItem(loadedKeyRef.current, JSON.stringify(charts)); }
     catch { /* storage quota exceeded */ }
   }, [charts]);
 
+  // Write sizes to localStorage whenever they change
+  useEffect(() => {
+    if (!loadedKeyRef.current) return;
+    try { localStorage.setItem(`${loadedKeyRef.current}_sizes`, JSON.stringify(cardSizes)); }
+    catch { /* storage quota exceeded */ }
+  }, [cardSizes]);
+
+  function setCardSizes(id: string, size: { width: number | "100%"; height: number }) {
+    setCardSizesRaw((prev) => ({ ...prev, [id]: size }));
+  }
+
   function setCharts(updater: ChartCfg[] | ((prev: ChartCfg[]) => ChartCfg[])) {
     setChartsRaw(updater);
   }
-  const [building, setBuilding]         = useState(false);
-  const [editingId, setEditingId]       = useState<string | null>(null);
+  const [building, setBuilding]   = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  // ── Drag-to-reorder state ──────────────────────────────────────────────
+  const [dragId, setDragId]   = useState<string | null>(null);
+  const [dropId, setDropId]   = useState<string | null>(null);
+
+  function handleDragStart(id: string, e: React.DragEvent) {
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", id);
+    setDragId(id);
+  }
+
+  function handleDragEnter(id: string, e: React.DragEvent) {
+    e.preventDefault();
+    if (id !== dragId) setDropId(id);
+  }
+
+  function handleDragLeave(id: string, e: React.DragEvent) {
+    // Only clear if the pointer truly left this card (not just entered a child)
+    const rel = e.relatedTarget as Node | null;
+    if (rel && (e.currentTarget as HTMLElement).contains(rel)) return;
+    if (dropId === id) setDropId(null);
+  }
+
+  function handleDragOver(e: React.DragEvent) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  }
+
+  function handleDrop(targetId: string, e: React.DragEvent) {
+    e.preventDefault();
+    const srcId = e.dataTransfer.getData("text/plain") || dragId;
+    if (!srcId || srcId === targetId) { setDragId(null); setDropId(null); return; }
+    setCharts((prev) => {
+      const next = [...prev];
+      const fromIdx = next.findIndex((c) => c.id === srcId);
+      const toIdx   = next.findIndex((c) => c.id === targetId);
+      if (fromIdx < 0 || toIdx < 0) return prev;
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, moved);
+      return next;
+    });
+    setDragId(null);
+    setDropId(null);
+  }
+
+  function handleDragEnd() {
+    setDragId(null);
+    setDropId(null);
+  }
 
   useEffect(() => {
     if (!eventKey) return;
@@ -1411,6 +1629,9 @@ export default function DataViewerPage() {
     setEditingId(null);
   }
 
+  const isMobile = useIsMobile();
+  const builderOpen = building || editingId !== null;
+
   if (!eventKey) {
     return (
       <div className="flex flex-col items-center justify-center h-64 gap-2 text-muted-foreground">
@@ -1422,26 +1643,38 @@ export default function DataViewerPage() {
 
   return (
     <div className="h-full flex flex-col gap-4">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
-        <div>
+      {/* ── Header ── */}
+      <div className="flex items-center justify-between gap-3 shrink-0">
+        <div className="min-w-0">
           <h2 className="text-xl sm:text-2xl font-bold tracking-tight">Data Viewer</h2>
-          <p className="text-muted-foreground text-sm">
-            {currentEvent?.eventName ?? eventKey} · {rows.length} data points · {scoutedTeams.length} teams scouted
+          <p className="text-muted-foreground text-sm truncate">
+            {currentEvent?.eventName ?? eventKey} · {rows.length} pts · {scoutedTeams.length} teams
           </p>
         </div>
-        <Button onClick={() => { setBuilding(true); setEditingId(null); }} className="gap-2 self-start sm:self-auto" disabled={axes.length <= 1}>
-          <Plus className="h-4 w-4" />New Chart
+        <Button
+          onClick={() => { setBuilding(true); setEditingId(null); }}
+          className="gap-2 shrink-0"
+          disabled={axes.length <= 1}
+          size={isMobile ? "sm" : "default"}
+        >
+          <Plus className="h-4 w-4" />
+          <span className="hidden sm:inline">New Chart</span>
+          <span className="sm:hidden">New</span>
         </Button>
       </div>
 
-      <div className="flex-1 flex gap-4 min-h-0">
-        {/* Sidebar */}
-        {(building || editingId !== null) && (
+      {/* ── Body ── */}
+      <div className="flex-1 flex gap-4 min-h-0 relative">
+
+        {/* ── Desktop sidebar ── */}
+        {!isMobile && builderOpen && (
           <div className="w-72 shrink-0 rounded-xl border border-border bg-card flex flex-col overflow-hidden">
             <div className="px-4 py-3 border-b border-border bg-muted/20 shrink-0 flex items-center justify-between">
               <p className="text-sm font-semibold">{editingId ? "Edit Chart" : "New Chart"}</p>
-              <button onClick={() => { setBuilding(false); setEditingId(null); }}
-                className="text-muted-foreground hover:text-foreground p-1 rounded hover:bg-muted transition-colors">
+              <button
+                onClick={() => { setBuilding(false); setEditingId(null); }}
+                className="text-muted-foreground hover:text-foreground p-1 rounded hover:bg-muted transition-colors"
+              >
                 <X className="h-4 w-4" />
               </button>
             </div>
@@ -1459,30 +1692,40 @@ export default function DataViewerPage() {
           </div>
         )}
 
-        {/* Canvas */}
+        {/* ── Canvas ── */}
         <div className="flex-1 min-w-0 min-h-0">
           {charts.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground rounded-xl border-2 border-dashed border-border">
+            <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground rounded-xl border-2 border-dashed border-border px-4">
               <BarChart2 className="h-12 w-12 opacity-20" />
               <div className="text-center">
                 <p className="font-medium">No charts yet</p>
-                <p className="text-sm opacity-70">Click "New Chart" to visualize your scouting data</p>
+                <p className="text-sm opacity-70">Tap "New" to visualize your scouting data</p>
               </div>
               <Button variant="outline" onClick={() => setBuilding(true)} className="gap-2" disabled={axes.length <= 1}>
                 <Plus className="h-4 w-4" />Create Chart
               </Button>
               {axes.length <= 1 && (
-                <p className="text-xs text-amber-500">⚠ No scouting form is active or no submissions exist yet</p>
+                <p className="text-xs text-amber-500 text-center">⚠ No scouting form is active or no submissions exist yet</p>
               )}
             </div>
           ) : (
             <ScrollArea className="h-full">
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 pb-4">
+              <div className="flex flex-wrap gap-3 sm:gap-4 pb-4 items-start">
                 {charts.map((c) => (
                   <ChartCard
                     key={c.id} cfg={c} rows={rows} teamRows={teamRows} matchEpaRows={matchEpaRows} fields={fields} axes={axes}
                     onRemove={() => setCharts((p) => p.filter((x) => x.id !== c.id))}
                     onEdit={() => { setEditingId(c.id); setBuilding(false); }}
+                    isDragOver={dropId === c.id}
+                    onDragStart={(e) => handleDragStart(c.id, e)}
+                    onDragEnter={(e) => handleDragEnter(c.id, e)}
+                    onDragLeave={(e) => handleDragLeave(c.id, e)}
+                    onDragOver={handleDragOver}
+                    onDrop={(e) => handleDrop(c.id, e)}
+                    onDragEnd={handleDragEnd}
+                    initialSize={cardSizes[c.id]}
+                    onSizeChange={(size) => setCardSizes(c.id, size)}
+                    isMobile={isMobile}
                   />
                 ))}
               </div>
@@ -1490,6 +1733,49 @@ export default function DataViewerPage() {
           )}
         </div>
       </div>
+
+      {/* ── Mobile bottom-sheet builder ── */}
+      {isMobile && builderOpen && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+            onClick={() => { setBuilding(false); setEditingId(null); }}
+          />
+          {/* Sheet */}
+          <div
+            className="fixed bottom-0 left-0 right-0 z-50 rounded-t-2xl border-t border-border bg-card flex flex-col"
+            style={{ maxHeight: "85dvh" }}
+          >
+            {/* Sheet handle */}
+            <div className="flex justify-center pt-2.5 pb-1 shrink-0">
+              <div className="h-1 w-10 rounded-full bg-muted-foreground/30" />
+            </div>
+            {/* Sheet header */}
+            <div className="px-4 py-2.5 border-b border-border bg-muted/20 shrink-0 flex items-center justify-between">
+              <p className="text-sm font-semibold">{editingId ? "Edit Chart" : "New Chart"}</p>
+              <button
+                onClick={() => { setBuilding(false); setEditingId(null); }}
+                className="text-muted-foreground hover:text-foreground p-1.5 rounded hover:bg-muted transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            {/* Sheet content */}
+            <ScrollArea className="flex-1">
+              <Builder
+                key={editingId ?? "new"}
+                axes={axes}
+                fields={fields}
+                allTeams={teamList}
+                initial={editingCfg}
+                onSave={upsert}
+                onCancel={() => { setBuilding(false); setEditingId(null); }}
+              />
+            </ScrollArea>
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -179,6 +179,7 @@ export async function fetchTBAEventMatches(eventKey: string) {
 }
 
 export async function fetchTBATeamInfo(teamNumber: number) {
+  if (teamNumber <= 0) return null; // guard against invalid team numbers (e.g. checklist submissions)
   return fetchTBAWithCache<{
     nickname: string;
     school_name: string;
@@ -197,6 +198,7 @@ export async function fetchTBATeamInfo(teamNumber: number) {
  * Falls back to IndexedDB stale data if offline or request fails.
  */
 export async function fetchTBATeamAvatar(teamNumber: number, year: number): Promise<string | null> {
+  if (teamNumber <= 0) return null; // guard against invalid team numbers
   const cacheKey = `tba_avatar_${teamNumber}_${year}`;
 
   // 1. Check IndexedDB first (fresh entry within TTL.LONG)

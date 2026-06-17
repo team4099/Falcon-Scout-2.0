@@ -491,18 +491,18 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, saving, isMobile
           {isMobile || isLandscapePhone ? "#" : "Match"}
         </div>
         {POSITIONS.map((p, i) => (
-          <>
+          <React.Fragment key={p}>
             {i === 3 && (
               <div key="divider-h" style={{ background: SURF_BORD, width: "100%", alignSelf: "stretch" }} />
             )}
-            <div key={p} style={{
+            <div style={{
               padding: "9px 4px", textAlign: "center",
               fontSize: 10, fontWeight: 800, letterSpacing: "0.07em", color: G,
               borderBottom: `2px solid ${G}`,
             }}>
               {POS_META[p].short}
             </div>
-          </>
+          </React.Fragment>
         ))}
       </div>
 
