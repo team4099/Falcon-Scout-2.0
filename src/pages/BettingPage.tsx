@@ -348,13 +348,12 @@ function MarketCard({
   myBalance,
   onResolved,
   isAdmin,
-  _hasBet,
 }: {
   market: Market;
   myBalance: number;
   onResolved: () => void;
   isAdmin: boolean;
-  _hasBet: boolean;
+  hasBet?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [resolveOpen, setResolveOpen] = useState(false);
@@ -376,8 +375,8 @@ function MarketCard({
   const handleResolve = async () => {
     try {
       const result = await resolveMarket({ marketId: market._id, resolvedOptionId: resolveOption });
-      const r = result as { settledBets: number; penalised: number };
-      toast.success(`Market resolved! ${r.settledBets} bets settled. ${r.penalised} scouts penalised.`);
+      const r = result as { settledBets: number; totalPool: number };
+      toast.success(`Market resolved! ${r.settledBets} bets settled.`);
       setResolveOpen(false);
       onResolved();
     } catch (e: unknown) {
