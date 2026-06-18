@@ -16,7 +16,7 @@ import {
   HandCoins, Swords, BarChart3, Target, ListFilter,
   BadgeCheck, AlertCircle, Timer, Users, X, Medal, Dices,
   Flame, Square, Play, Circle, ArrowDown, Bird,
-  Bomb, Gem, Grid3X3, Diamond, ShieldCheck, Sparkles,
+  Bomb, Gem, Diamond, ShieldCheck, Sparkles,
   Cherry, Bell, Star, DollarSign, Citrus, HelpCircle, CircleCheck, CircleDollarSign, Skull,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
