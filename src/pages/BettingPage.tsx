@@ -15,7 +15,7 @@ import {
   Plus, Zap, Lock, CheckCircle2, XCircle, RefreshCw,
   HandCoins, Swords, BarChart3, Target, ListFilter,
   BadgeCheck, AlertCircle, Timer, Users, X, Medal, Dices,
-  Volume2, VolumeX, Flame, Square, Play,
+  Flame, Square, Play,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -348,13 +348,13 @@ function MarketCard({
   myBalance,
   onResolved,
   isAdmin,
-  hasBet,
+  _hasBet,
 }: {
   market: Market;
   myBalance: number;
   onResolved: () => void;
   isAdmin: boolean;
-  hasBet: boolean;
+  _hasBet: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [resolveOpen, setResolveOpen] = useState(false);
@@ -1896,7 +1896,7 @@ function getSymbolEmoji(id: string): string {
 }
 
 /** Coin particle for win animation */
-function CoinParticle({ index }: { index: number }) {
+function CoinParticle({ index: _index }: { index: number }) {
   const left = Math.random() * 100;
   const delay = Math.random() * 0.8;
   const size = 16 + Math.random() * 16;
@@ -1939,7 +1939,7 @@ function generateAdjacentRow(centerReels: string[]): string[] {
   // High-value symbols that feel painful to "almost" match
   const highValue = ["money", "seven", "star"];
 
-  return centerReels.map((centerSym) => {
+  return centerReels.map((_centerSym) => {
     // 35% chance: place the best pay-line symbol here (near-miss tease)
     if (bestCnt >= 2 && Math.random() < 0.35) return bestSym;
     // 25% chance: place a high-value symbol to tease jackpot

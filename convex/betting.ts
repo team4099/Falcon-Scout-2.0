@@ -412,7 +412,7 @@ export const resolveMarket = mutation({
       resolvedAt:       Date.now(),
     });
 
-    return { settledBets: allBets.length, totalPool, penalised: eventBalances.length - bettedUserIds.size };
+    return { settledBets: allBets.length, totalPool };
   },
 });
 
