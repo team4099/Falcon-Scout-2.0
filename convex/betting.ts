@@ -1009,3 +1009,186 @@ export const crossyCashOut = mutation({
     };
   },
 });
+
+// ── Mines ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Reveal a tile in the Mines game.
+ * On the first reveal (revealedCount === 0), deducts the bet.
+ * Server determines mine positions on first reveal and uses a deterministic
+ * seed so positions stay consistent across reveals within the same game.
+ */
+export const minesReveal = mutation({
+  args: {
+    eventKey:      v.string(),
+    betAmount:     v.number(),
+    mineCount:     v.number(),    // 1–24
+    tileIndex:     v.number(),    // 0–24
+    revealedCount: v.number(),    // how many gems already revealed this game
+    gameSeed:      v.string(),    // client-generated unique game ID for deterministic mine placement
+  },
+  handler: async (ctx, { eventKey, betAmount, mineCount, tileIndex, revealedCount, gameSeed }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    if (betAmount < 10) throw new Error("Minimum bet is 10 coins");
+    if (mineCount < 1 || mineCount > 24) throw new Error("Mine count must be 1-24");
+    if (tileIndex < 0 || tileIndex > 24) throw new Error("Invalid tile index");
+
+    // Get or create balance
+    let bal = await ctx.db
+      .query("userBalances")
+      .withIndex("by_user_event", (q) =>
+        q.eq("userId", userId).eq("eventKey", eventKey)
+      )
+      .first();
+
+    if (!bal) {
+      const id = await ctx.db.insert("userBalances", {
+        userId,
+        eventKey,
+        balance:   STARTING_BALANCE,
+        totalWon:  0,
+        totalLost: 0,
+        totalBet:  0,
+        totalBegs: 0,
+      });
+      bal = (await ctx.db.get(id))!;
+    }
+
+    // On first reveal, deduct the bet
+    if (revealedCount === 0) {
+      if (bal.balance < betAmount) throw new Error("Insufficient balance");
+      await ctx.db.patch(bal._id, {
+        balance:  bal.balance - betAmount,
+        totalBet: bal.totalBet + betAmount,
+      });
+    }
+
+    // Generate deterministic mine positions from gameSeed
+    // Simple hash-based seeded RNG
+    let hash = 0;
+    const seedStr = gameSeed + ":" + userId;
+    for (let i = 0; i < seedStr.length; i++) {
+      const chr = seedStr.charCodeAt(i);
+      hash = ((hash << 5) - hash) + chr;
+      hash |= 0;
+    }
+
+    // Fisher-Yates shuffle with seeded random to pick mine positions
+    const indices = Array.from({ length: 25 }, (_, i) => i);
+    let seed = Math.abs(hash);
+    const seededRandom = () => {
+      seed = (seed * 1664525 + 1013904223) & 0x7fffffff;
+      return seed / 0x7fffffff;
+    };
+    for (let i = indices.length - 1; i > 0; i--) {
+      const j = Math.floor(seededRandom() * (i + 1));
+      [indices[i], indices[j]] = [indices[j], indices[i]];
+    }
+    const minePositions = indices.slice(0, mineCount);
+
+    const hitMine = minePositions.includes(tileIndex);
+
+    // Calculate multiplier using combinatorial formula with 3% house edge
+    // Multiplier = 0.97 * C(25, s) / C(25 - N, s)
+    // where s = gems revealed (including this one if safe), N = mine count
+    const HOUSE_EDGE = 0.97;
+    const gemsRevealed = hitMine ? revealedCount : revealedCount + 1;
+
+    const combination = (n: number, k: number): number => {
+      if (k > n || k < 0) return 0;
+      if (k === 0 || k === n) return 1;
+      let result = 1;
+      for (let i = 0; i < k; i++) {
+        result = result * (n - i) / (i + 1);
+      }
+      return result;
+    };
+
+    const safeTotal = 25 - mineCount;
+    const multiplier = gemsRevealed === 0
+      ? 1
+      : parseFloat(
+          (HOUSE_EDGE * combination(25, gemsRevealed) / combination(safeTotal, gemsRevealed)).toFixed(2)
+        );
+
+    if (hitMine) {
+      // Player lost
+      const updated = (await ctx.db.get(bal._id))!;
+      await ctx.db.patch(bal._id, {
+        totalLost: updated.totalLost + betAmount,
+      });
+      const final = (await ctx.db.get(bal._id))!;
+      return {
+        safe: false,
+        minePositions,
+        multiplier: revealedCount === 0 ? 1 : parseFloat(
+          (HOUSE_EDGE * combination(25, revealedCount) / combination(safeTotal, revealedCount)).toFixed(2)
+        ),
+        payout: 0,
+        newBalance: final.balance,
+        gameOver: true,
+      };
+    }
+
+    // Safe tile — check if all safe tiles are revealed (auto cash-out)
+    const allGemsRevealed = gemsRevealed >= safeTotal;
+    const payout = Math.floor(betAmount * multiplier);
+    
+    if (allGemsRevealed) {
+      // Auto cash out — all gems found!
+      const current = (await ctx.db.get(bal._id))!;
+      await ctx.db.patch(bal._id, {
+        balance:  current.balance + payout,
+        totalWon: current.totalWon + (payout > betAmount ? payout - betAmount : 0),
+      });
+    }
+
+    const final = (await ctx.db.get(bal._id))!;
+    return {
+      safe: true,
+      minePositions: allGemsRevealed ? minePositions : [],
+      multiplier,
+      payout,
+      newBalance: final.balance,
+      gameOver: allGemsRevealed,
+    };
+  },
+});
+
+/**
+ * Cash out the current Mines game.
+ * Credits bet × multiplier to the player's balance.
+ */
+export const minesCashOut = mutation({
+  args: {
+    eventKey:   v.string(),
+    betAmount:  v.number(),
+    multiplier: v.number(),
+  },
+  handler: async (ctx, { eventKey, betAmount, multiplier }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+
+    let bal = await ctx.db
+      .query("userBalances")
+      .withIndex("by_user_event", (q) =>
+        q.eq("userId", userId).eq("eventKey", eventKey)
+      )
+      .first();
+
+    if (!bal) throw new Error("No balance record");
+
+    const payout = Math.floor(betAmount * multiplier);
+    await ctx.db.patch(bal._id, {
+      balance:  bal.balance + payout,
+      totalWon: bal.totalWon + (payout > betAmount ? payout - betAmount : 0),
+    });
+
+    const final = (await ctx.db.get(bal._id))!;
+    return {
+      payout,
+      newBalance: final.balance,
+    };
+  },
+});

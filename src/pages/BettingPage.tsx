@@ -16,6 +16,8 @@ import {
   HandCoins, Swords, BarChart3, Target, ListFilter,
   BadgeCheck, AlertCircle, Timer, Users, X, Medal, Dices,
   Flame, Square, Play, Circle, ArrowDown, Bird,
+  Bomb, Gem, Grid3X3, Diamond, ShieldCheck, Sparkles,
+  Cherry, Bell, Star, DollarSign, Citrus, HelpCircle, CircleCheck, CircleDollarSign, Skull,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1873,25 +1875,33 @@ function LeaderboardTab({ eventKey }: { eventKey: string }) {
 // -- Slot Machine --------------------------------------------------------------
 
 const SLOT_SYMBOLS_UI = [
-  { id: "lemon",  emoji: "W", label: "Lemon",   color: "text-yellow-300" },
-  { id: "cherry", emoji: "T", label: "Cherry",  color: "text-red-400" },
-  { id: "bell",   emoji: "L", label: "Bell",    color: "text-amber-400" },
-  { id: "star",   emoji: "S", label: "Star",    color: "text-yellow-400" },
-  { id: "seven",  emoji: "7",  label: "Seven",   color: "text-yellow-500" },
-  { id: "money",  emoji: "$", label: "Jackpot", color: "text-yellow-400" },
+  { id: "lemon",  icon: Citrus,     label: "Lemon",   color: "text-yellow-300",  gradient: "from-yellow-300 to-lime-400" },
+  { id: "cherry", icon: Cherry,      label: "Cherry",  color: "text-red-400",     gradient: "from-red-400 to-pink-500" },
+  { id: "bell",   icon: Bell,        label: "Bell",    color: "text-amber-400",   gradient: "from-amber-400 to-orange-500" },
+  { id: "star",   icon: Star,        label: "Star",    color: "text-yellow-400",  gradient: "from-yellow-400 to-amber-500" },
+  { id: "seven",  icon: Diamond,     label: "Seven",   color: "text-purple-400",  gradient: "from-purple-400 to-violet-500" },
+  { id: "money",  icon: DollarSign,  label: "Jackpot", color: "text-emerald-400", gradient: "from-emerald-400 to-green-500" },
 ] as const;
 
-const SLOT_PAYOUTS_UI: { symbol: string; emoji: string; x5: number; x4: number; x3: number; x2: number }[] = [
-  { symbol: "money",  emoji: "$", x5: 500, x4: 75, x3: 15,  x2: 0.5  },
-  { symbol: "seven",  emoji: "7",  x5: 150, x4: 30, x3: 8,   x2: 0.4  },
-  { symbol: "star",   emoji: "S", x5: 75,  x4: 15, x3: 4,   x2: 0.3  },
-  { symbol: "bell",   emoji: "L", x5: 30,  x4: 8,  x3: 2,   x2: 0.2  },
-  { symbol: "cherry", emoji: "T", x5: 15,  x4: 5,  x3: 1.5, x2: 0.15 },
-  { symbol: "lemon",  emoji: "W", x5: 8,   x4: 3,  x3: 1,   x2: 0.1  },
+const SLOT_PAYOUTS_UI: { symbol: string; icon: React.ElementType; x5: number; x4: number; x3: number; x2: number; color: string }[] = [
+  { symbol: "money",  icon: DollarSign, x5: 500, x4: 75, x3: 15,  x2: 0.5,  color: "text-emerald-400" },
+  { symbol: "seven",  icon: Diamond,    x5: 150, x4: 30, x3: 8,   x2: 0.4,  color: "text-purple-400" },
+  { symbol: "star",   icon: Star,       x5: 75,  x4: 15, x3: 4,   x2: 0.3,  color: "text-yellow-400" },
+  { symbol: "bell",   icon: Bell,       x5: 30,  x4: 8,  x3: 2,   x2: 0.2,  color: "text-amber-400" },
+  { symbol: "cherry", icon: Cherry,     x5: 15,  x4: 5,  x3: 1.5, x2: 0.15, color: "text-red-400" },
+  { symbol: "lemon",  icon: Citrus,     x5: 8,   x4: 3,  x3: 1,   x2: 0.1,  color: "text-yellow-300" },
 ];
 
-function getSymbolEmoji(id: string): string {
-  return SLOT_SYMBOLS_UI.find((s) => s.id === id)?.emoji ?? "?";
+function getSymbolDef(id: string) {
+  return SLOT_SYMBOLS_UI.find((s) => s.id === id) ?? SLOT_SYMBOLS_UI[0];
+}
+
+/** Render a slot symbol icon */
+function SlotIcon({ symbolId, size = "md" }: { symbolId: string; size?: "sm" | "md" | "lg" }) {
+  const def = getSymbolDef(symbolId);
+  const Icon = def.icon;
+  const sizeClasses = size === "sm" ? "h-4 w-4" : size === "lg" ? "h-8 w-8 sm:h-9 sm:w-9" : "h-6 w-6 sm:h-7 sm:w-7";
+  return <Icon className={`${sizeClasses} ${def.color} drop-shadow-[0_0_6px_currentColor]`} strokeWidth={2.5} />;
 }
 
 /** Coin particle for win animation */
@@ -1912,7 +1922,7 @@ function CoinParticle({ index: _index }: { index: number }) {
         transform: `rotate(${rotation}deg)`,
       }}
     >
-      $
+      <Coins className="h-full w-full" />
     </div>
   );
 }
@@ -2315,9 +2325,7 @@ function SlotMachine({ eventKey, myBalance, onBalanceOverride }: { eventKey: str
                         }}
                       >
                         <span
-                          className={`select-none transition-all ${
-                            isCenter ? "text-2xl sm:text-3xl" : "text-lg sm:text-xl"
-                          } ${
+                          className={`select-none transition-all flex items-center justify-center ${
                             !isCenter ? "opacity-40 grayscale-[30%]" : ""
                           } ${
                             !stopped ? "slot-spinning opacity-60" : ""
@@ -2328,7 +2336,7 @@ function SlotMachine({ eventKey, myBalance, onBalanceOverride }: { eventKey: str
                           }`}
                           style={{ lineHeight: 1 }}
                         >
-                          {getSymbolEmoji(sym)}
+                          <SlotIcon symbolId={sym} size={isCenter ? "lg" : "md"} />
                         </span>
                       </div>
                     );
@@ -2543,8 +2551,10 @@ function SlotMachine({ eventKey, myBalance, onBalanceOverride }: { eventKey: str
               {SLOT_PAYOUTS_UI.map((row) => (
                 <tr key={row.symbol} className="border-b border-yellow-400/5 hover:bg-yellow-400/5 transition-colors">
                   <td className="px-3 py-2 font-medium">
-                    <span className="mr-2">{row.emoji}</span>
-                    <span className="text-muted-foreground/70 capitalize">{row.symbol}</span>
+                    <span className="inline-flex items-center gap-2">
+                      {(() => { const Icon = row.icon; return <Icon className={`h-4 w-4 ${row.color} drop-shadow-[0_0_4px_currentColor]`} strokeWidth={2.5} />; })()}
+                      <span className="text-muted-foreground/70 capitalize">{row.symbol}</span>
+                    </span>
                   </td>
                   <td className="text-center px-2 py-2 font-mono font-bold text-yellow-400">{row.x5}x</td>
                   <td className="text-center px-2 py-2 font-mono font-bold text-yellow-400/70">{row.x4}x</td>
@@ -3442,7 +3452,7 @@ function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: 
           onBalanceOverride(cashResult.newBalance);
           isAnimatingRef.current = false;
 
-          toast.success(`🏆 Max row! Won ${formatCoins(cashResult.payout)} coins at ${result.multiplier}x!`);
+          toast.success(`Max row! Won ${formatCoins(cashResult.payout)} coins at ${result.multiplier}x!`);
           setTimeout(() => setShowCoinShower(false), 2500);
         } else {
           setCurrentRow(r => r + 1);
@@ -3458,7 +3468,7 @@ function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: 
         onBalanceOverride(result.newBalance);
         isAnimatingRef.current = false;
 
-        toast.error(`💀 Hit a trap on row ${currentRow + 1}! Lost ${formatCoins(betAmount)} coins.`);
+        toast.error(`Hit a trap on row ${currentRow + 1}! Lost ${formatCoins(betAmount)} coins.`);
         setTimeout(() => setShakeBoard(false), 600);
       }
     } catch (err: unknown) {
@@ -3493,7 +3503,7 @@ function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: 
       onBalanceOverride(result.newBalance);
       isAnimatingRef.current = false;
 
-      toast.success(`💰 Cashed out ${formatCoins(result.payout)} coins at ${currentMultiplier}x!`);
+      toast.success(`Cashed out ${formatCoins(result.payout)} coins at ${currentMultiplier}x!`);
       setTimeout(() => setShowCoinShower(false), 2500);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
@@ -3511,18 +3521,18 @@ function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: 
     return parseFloat((HOOK_MULT * Math.pow(config.baseMultiplier, row)).toFixed(2));
   };
 
-  // Tile emoji helper
+  // Tile icon helper
   const getTileDisplay = (state: CrossyTileState, isSelected: boolean) => {
     switch (state) {
-      case "hidden": return "❓";
-      case "safe": return isSelected ? "🐔" : "✅";
-      case "trap": return isSelected ? "💀" : "☠️";
-      default: return "❓";
+      case "hidden": return <HelpCircle className="h-5 w-5 text-muted-foreground/60" />;
+      case "safe": return isSelected ? <Bird className="h-5 w-5 text-yellow-400" /> : <CircleCheck className="h-5 w-5 text-green-400" />;
+      case "trap": return isSelected ? <Skull className="h-5 w-5 text-red-400" /> : <Skull className="h-5 w-5 text-red-400/60" />;
+      default: return <HelpCircle className="h-5 w-5 text-muted-foreground/60" />;
     }
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-2 lg:space-y-4">
       {/* Coin shower effect */}
       {showCoinShower && (
         <div className="fixed inset-0 pointer-events-none z-50">
@@ -3538,15 +3548,132 @@ function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: 
                 animationDuration: `${1.5 + Math.random() * 1}s`,
               }}
             >
-              🪙
+              <DollarSign className="h-full w-full" />
             </span>
           ))}
         </div>
       )}
 
-      <div className="flex flex-col lg:flex-row gap-4">
-        {/* == Controls Panel (Left) == */}
-        <div className="lg:w-64 shrink-0 space-y-3">
+      {/* == Mobile Compact Controls (visible < lg) == */}
+      <div className="lg:hidden space-y-2">
+        {/* Bet + Difficulty + Start in one compact row */}
+        <div className="rounded-xl border border-border/50 bg-card/60 p-2.5 space-y-2">
+          <div className="flex items-end gap-2">
+            {/* Bet */}
+            <div className="flex-1 min-w-0 space-y-1">
+              <Label className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Bet</Label>
+              <div className="flex items-center gap-1">
+                <Coins className="h-3.5 w-3.5 text-yellow-400 shrink-0" />
+                <Input
+                  type="number"
+                  min={10}
+                  value={betAmount}
+                  onChange={e => setBetAmount(Math.max(10, parseInt(e.target.value) || 10))}
+                  disabled={gameState === "playing"}
+                  className="h-7 font-mono font-bold text-xs bg-muted/40"
+                />
+              </div>
+            </div>
+            {/* Quick bet buttons */}
+            <div className="flex gap-0.5 shrink-0">
+              {[{ l: "½", fn: () => setBetAmount(Math.max(10, Math.floor(betAmount / 2))) },
+                { l: "2×", fn: () => setBetAmount(betAmount * 2) },
+              ].map(({ l, fn }) => (
+                <Button
+                  key={l}
+                  variant="outline"
+                  size="sm"
+                  className="h-7 w-8 text-[10px] font-bold px-0"
+                  disabled={gameState === "playing"}
+                  onClick={fn}
+                >
+                  {l}
+                </Button>
+              ))}
+            </div>
+            {/* Difficulty */}
+            <div className="w-24 shrink-0 space-y-1">
+              <Label className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Diff</Label>
+              <Select value={difficulty} onValueChange={(v) => setDifficulty(v as typeof difficulty)} disabled={gameState === "playing"}>
+                <SelectTrigger className="h-7 text-xs font-semibold bg-muted/40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(CROSSY_DIFFICULTIES_UI).map(([key, val]) => (
+                    <SelectItem key={key} value={key}>
+                      <span className={val.color}>{val.label}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* Start/CashOut/Result row */}
+          <div className="flex items-center gap-2">
+            {gameState !== "playing" && (
+              <Button
+                onClick={startGame}
+                className="flex-1 h-9 font-black text-sm bg-yellow-400 hover:bg-yellow-300 text-black"
+                disabled={displayBalance < betAmount}
+              >
+                {gameState === "idle" ? (
+                  <><Play className="h-4 w-4 mr-1" /> START</>
+                ) : (
+                  <><RefreshCw className="h-4 w-4 mr-1" /> AGAIN</>
+                )}
+              </Button>
+            )}
+            {gameState === "playing" && currentRow > 0 && (
+              <>
+                <div className="text-center shrink-0">
+                  <div className="text-lg font-black text-yellow-400 crossy-mult-pop leading-tight" key={`mult-m-${currentRow}`}>
+                    {currentMultiplier}x
+                  </div>
+                  <div className="text-[10px] font-mono text-muted-foreground">
+                    {formatCoins(Math.floor(betAmount * currentMultiplier))}
+                  </div>
+                </div>
+                <Button
+                  onClick={handleCashOut}
+                  disabled={isProcessing}
+                  className="flex-1 h-9 font-black text-sm bg-yellow-400 hover:bg-yellow-300 text-black crossy-cashout-pulse"
+                >
+                  <CircleDollarSign className="h-4 w-4 mr-1" /> CASH OUT
+                </Button>
+              </>
+            )}
+            {gameState === "playing" && currentRow === 0 && (
+              <div className="flex-1 text-center text-xs text-muted-foreground/70 py-1">
+                Pick a tile on row 1 to begin
+              </div>
+            )}
+            {/* Inline result on mobile */}
+            {gameState === "won" && (
+              <div className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-yellow-400/40 bg-yellow-400/10 px-3 py-1.5">
+                <Trophy className="h-5 w-5 text-yellow-400 shrink-0" />
+                <div>
+                  <span className="text-sm font-black text-yellow-400">{formatCoins(lastPayout)}</span>
+                  <span className="text-[10px] text-muted-foreground ml-1">at {currentMultiplier}x</span>
+                </div>
+              </div>
+            )}
+            {gameState === "lost" && (
+              <div className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-red-400/30 bg-red-400/10 px-3 py-1.5">
+                <Skull className="h-5 w-5 text-red-400 shrink-0" />
+                <div>
+                  <span className="text-sm font-black text-red-400">-{formatCoins(betAmount)}</span>
+                  <span className="text-[10px] text-muted-foreground ml-1">Row {currentRow + 1}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-col lg:flex-row gap-2 lg:gap-4">
+        {/* == Controls Panel (Left - desktop only) == */}
+        <div className="hidden lg:block lg:w-64 shrink-0 space-y-3">
           {/* Bet Amount */}
           <div className="rounded-xl border border-border/50 bg-card/60 p-3 space-y-2">
             <Label className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Bet Amount</Label>
@@ -3622,7 +3749,7 @@ function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: 
                 disabled={isProcessing}
                 className={`w-full h-10 font-black text-base bg-yellow-400 hover:bg-yellow-300 text-black crossy-cashout-pulse`}
               >
-                💰 CASH OUT
+                <CircleDollarSign className="h-5 w-5 mr-1" /> CASH OUT
               </Button>
             </div>
           )}
@@ -3645,7 +3772,7 @@ function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: 
           {/* Result Display */}
           {gameState === "won" && (
             <div className="rounded-xl border-2 border-yellow-400/60 bg-yellow-400/10 p-3 text-center crossy-win-glow">
-              <div className="text-2xl">🏆</div>
+              <div className="flex justify-center"><Trophy className="h-7 w-7 text-yellow-400" /></div>
               <div className="text-xs text-muted-foreground uppercase">You Won!</div>
               <div className="text-xl font-black text-yellow-400">{formatCoins(lastPayout)}</div>
               <div className="text-xs text-muted-foreground">at {currentMultiplier}x</div>
@@ -3653,7 +3780,7 @@ function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: 
           )}
           {gameState === "lost" && (
             <div className="rounded-xl border-2 border-red-400/40 bg-red-400/10 p-3 text-center">
-              <div className="text-2xl">💀</div>
+              <div className="flex justify-center"><Skull className="h-7 w-7 text-red-400" /></div>
               <div className="text-xs text-muted-foreground uppercase">Game Over</div>
               <div className="text-xl font-black text-red-400">-{formatCoins(betAmount)}</div>
               <div className="text-xs text-muted-foreground">Row {currentRow + 1} trap</div>
@@ -3684,19 +3811,19 @@ function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: 
 
         {/* == Game Board (Center) == */}
         <div className="flex-1 min-w-0">
-          <div className={`rounded-2xl border border-border/50 bg-card/80 p-4 relative overflow-hidden ${
+          <div className={`rounded-2xl border border-border/50 bg-card/80 p-2.5 lg:p-4 relative overflow-hidden ${
             shakeBoard ? "crossy-death-shake" : ""
           } ${gameState === "won" ? "crossy-win-glow" : ""}`}>
             {/* Title bar */}
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-2 lg:mb-4">
               <div className="flex items-center gap-2">
-                <span className="text-2xl">🐔</span>
+                <Bird className="h-5 w-5 lg:h-7 lg:w-7 text-yellow-400" />
                 <div>
-                  <h3 className="font-black text-sm tracking-tight">CHICKEN CROSS</h3>
-                  <p className="text-[10px] text-muted-foreground">Pick a tile, dodge the traps</p>
+                  <h3 className="font-black text-xs lg:text-sm tracking-tight">CHICKEN CROSS</h3>
+                  <p className="text-[9px] lg:text-[10px] text-muted-foreground">Pick a tile, dodge the traps</p>
                 </div>
               </div>
-              <div className="flex items-center gap-2 text-xs">
+              <div className="flex items-center gap-2 text-[10px] lg:text-xs">
                 <span className={`font-semibold ${config.color}`}>{config.label}</span>
                 <span className="text-muted-foreground">·</span>
                 <span className="text-muted-foreground">Row {gameState === "playing" ? currentRow + 1 : 0}/{CROSSY_ROWS}</span>
@@ -3704,7 +3831,7 @@ function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: 
             </div>
 
             {/* Road / Grid */}
-            <div className="space-y-1.5">
+            <div className="space-y-1 lg:space-y-1.5">
               {/* Rows displayed top-to-bottom (row 9 at top, row 0 at bottom) */}
               {Array.from({ length: CROSSY_ROWS }).map((_, displayIdx) => {
                 const rowIdx = CROSSY_ROWS - 1 - displayIdx; // reverse: top = highest row
@@ -3717,7 +3844,7 @@ function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: 
                 return (
                   <div
                     key={`row-${rowIdx}`}
-                    className={`flex items-center gap-2 rounded-lg p-1.5 transition-all duration-200 ${
+                    className={`flex items-center gap-1 lg:gap-2 rounded-lg p-1 lg:p-1.5 transition-all duration-200 ${
                       isCurrentRow
                         ? "bg-yellow-400/10 border border-yellow-400/30 shadow-[0_0_15px_rgba(234,179,8,0.15)]"
                         : isCompletedRow
@@ -3728,8 +3855,8 @@ function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: 
                     } ${isCurrentRow ? "crossy-row-unlock" : ""}`}
                   >
                     {/* Row number */}
-                    <div className="w-7 text-center shrink-0">
-                      <span className={`text-xs font-bold ${
+                    <div className="w-5 lg:w-7 text-center shrink-0">
+                      <span className={`text-[10px] lg:text-xs font-bold ${
                         isCurrentRow ? "text-yellow-400" : isCompletedRow ? "text-muted-foreground" : "text-muted-foreground/40"
                       }`}>
                         {rowIdx + 1}
@@ -3737,7 +3864,7 @@ function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: 
                     </div>
 
                     {/* Tiles */}
-                    <div className="flex-1 flex gap-1.5 justify-center">
+                    <div className="flex-1 flex gap-1 lg:gap-1.5 justify-center">
                       {Array.from({ length: config.tilesPerRow }).map((_, tileIdx) => {
                         const tileState = rowData?.tiles[tileIdx] ?? "hidden";
                         const isSelected = rowData?.selectedIndex === tileIdx;
@@ -3752,8 +3879,8 @@ function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: 
                             disabled={!isClickable}
                             className={`
                               relative flex items-center justify-center
-                              w-full aspect-square max-w-[56px] rounded-lg
-                              text-lg font-bold transition-all duration-200
+                              w-full aspect-square max-w-[42px] lg:max-w-[56px] rounded-md lg:rounded-lg
+                              text-base lg:text-lg font-bold transition-all duration-200
                               border-2
                               ${isClickable
                                 ? "bg-yellow-400/10 border-yellow-400/40 hover:bg-yellow-400/20 hover:border-yellow-400/60 hover:shadow-[0_0_12px_rgba(234,179,8,0.3)] cursor-pointer crossy-tile-active"
@@ -3769,7 +3896,7 @@ function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: 
                               }
                             `}
                           >
-                            <span className={`text-lg ${
+                            <span className={`text-base lg:text-lg ${
                               isClickable ? "opacity-50" : ""
                             } ${isSelected && isSafe ? "crossy-hop" : ""}`}
                               key={isSelected && isSafe ? `hop-${hopKey}` : undefined}
@@ -3782,8 +3909,8 @@ function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: 
                     </div>
 
                     {/* Multiplier for this row */}
-                    <div className="w-16 text-right shrink-0">
-                      <span className={`text-xs font-mono font-bold ${
+                    <div className="w-12 lg:w-16 text-right shrink-0">
+                      <span className={`text-[10px] lg:text-xs font-mono font-bold ${
                         isCompletedRow && rowData?.tiles[rowData.selectedIndex!] === "safe"
                           ? "text-yellow-400"
                           : isCompletedRow && rowData?.tiles[rowData.selectedIndex!] === "trap"
@@ -3804,16 +3931,38 @@ function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: 
             {gameState === "idle" && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm rounded-2xl">
                 <div className="text-center space-y-2">
-                  <div className="text-5xl">🐔</div>
-                  <p className="text-sm font-semibold text-muted-foreground">Set your bet and start the game</p>
-                  <p className="text-xs text-muted-foreground/60">Pick tiles to cross the road. Cash out anytime!</p>
+                  <div className="flex justify-center"><Bird className="h-10 w-10 lg:h-12 lg:w-12 text-yellow-400" /></div>
+                  <p className="text-xs lg:text-sm font-semibold text-muted-foreground">Set your bet and start the game</p>
+                  <p className="text-[10px] lg:text-xs text-muted-foreground/60">Pick tiles to cross the road. Cash out anytime!</p>
                 </div>
               </div>
             )}
           </div>
 
+          {/* Session stats - mobile only (compact inline) */}
+          <div className="lg:hidden mt-2 rounded-xl border border-border/50 bg-card/60 p-2">
+            <div className="flex items-center justify-around text-center">
+              <div>
+                <div className="text-[10px] text-muted-foreground">Rounds</div>
+                <div className="text-xs font-bold">{sessionRounds}</div>
+              </div>
+              <div className="w-px h-6 bg-border/30" />
+              <div>
+                <div className="text-[10px] text-muted-foreground">Profit</div>
+                <div className={`text-xs font-bold font-mono ${sessionProfit >= 0 ? "text-green-400" : "text-red-400"}`}>
+                  {sessionProfit >= 0 ? "+" : ""}{formatCoins(sessionProfit)}
+                </div>
+              </div>
+              <div className="w-px h-6 bg-border/30" />
+              <div>
+                <div className="text-[10px] text-muted-foreground">Best</div>
+                <div className="text-xs font-bold text-yellow-400">{bestMultiplier > 0 ? `${bestMultiplier}x` : "—"}</div>
+              </div>
+            </div>
+          </div>
+
           {/* Multiplier ladder reference */}
-          <details className="mt-3 text-xs">
+          <details className="mt-2 lg:mt-3 text-xs">
             <summary className="text-muted-foreground/60 cursor-pointer hover:text-muted-foreground transition-colors">
               View multiplier table
             </summary>
@@ -3851,7 +4000,851 @@ function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: 
   );
 }
 
-type Tab = "markets" | "my-bets" | "leaderboard" | "slots" | "plinko" | "crossy";
+// -- Mines Game ----------------------------------------------------------------
+
+const MINES_PRESETS = [1, 3, 5, 10, 24];
+
+type MinesTileState = "hidden" | "gem" | "bomb";
+type MinesGameState = "idle" | "playing" | "won" | "lost";
+
+/** Combinatorial C(n, k) */
+function minesCombination(n: number, k: number): number {
+  if (k > n || k < 0) return 0;
+  if (k === 0 || k === n) return 1;
+  let result = 1;
+  for (let i = 0; i < k; i++) {
+    result = (result * (n - i)) / (i + 1);
+  }
+  return result;
+}
+
+/** Calculate mines multiplier: 0.97 * C(25, s) / C(25 - N, s) */
+function getMinesMultiplier(mineCount: number, gemsRevealed: number): number {
+  if (gemsRevealed === 0) return 1;
+  const HOUSE_EDGE = 0.97;
+  const safeTotal = 25 - mineCount;
+  return parseFloat(
+    (
+      HOUSE_EDGE *
+      (minesCombination(25, gemsRevealed) /
+        minesCombination(safeTotal, gemsRevealed))
+    ).toFixed(2)
+  );
+}
+
+function MinesGame({
+  eventKey,
+  myBalance,
+  onBalanceOverride,
+}: {
+  eventKey: string;
+  myBalance: number;
+  onBalanceOverride: (v: number | null) => void;
+}) {
+  const [betAmount, setBetAmount] = useState(50);
+  const [mineCount, setMineCount] = useState(3);
+  const [gameState, setGameState] = useState<MinesGameState>("idle");
+  const [tiles, setTiles] = useState<MinesTileState[]>(
+    Array(25).fill("hidden")
+  );
+  const [minePositions, setMinePositions] = useState<number[]>([]);
+  const [gemsRevealed, setGemsRevealed] = useState(0);
+  const [currentMultiplier, setCurrentMultiplier] = useState(1);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [lastPayout, setLastPayout] = useState(0);
+  const [showCoinShower, setShowCoinShower] = useState(false);
+  const [shakeBoard, setShakeBoard] = useState(false);
+  const [gameSeed, setGameSeed] = useState("");
+
+  // Session stats
+  const [sessionRounds, setSessionRounds] = useState(0);
+  const [sessionProfit, setSessionProfit] = useState(0);
+  const [bestMultiplier, setBestMultiplier] = useState(0);
+
+  // Local display balance
+  const [displayBalance, setDisplayBalance] = useState(myBalance);
+  const isAnimatingRef = useRef(false);
+
+  useEffect(() => {
+    if (!isAnimatingRef.current) {
+      setDisplayBalance(myBalance);
+      onBalanceOverride(null);
+    }
+  }, [myBalance, onBalanceOverride]);
+
+  useEffect(() => {
+    return () => {
+      onBalanceOverride(null);
+    };
+  }, [onBalanceOverride]);
+
+  const minesReveal = useMutation(api.betting.minesReveal);
+  const minesCashOutMut = useMutation(api.betting.minesCashOut);
+
+  const nextMultiplier = getMinesMultiplier(mineCount, gemsRevealed + 1);
+
+  const generateGameSeed = useCallback(() => {
+    return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  }, []);
+
+  const startGame = useCallback(() => {
+    if (displayBalance < betAmount) {
+      toast.error("Insufficient balance!");
+      return;
+    }
+    const seed = generateGameSeed();
+    setGameSeed(seed);
+    setGameState("playing");
+    setTiles(Array(25).fill("hidden"));
+    setMinePositions([]);
+    setGemsRevealed(0);
+    setCurrentMultiplier(1);
+    setLastPayout(0);
+    setShowCoinShower(false);
+    setShakeBoard(false);
+
+    // Optimistically deduct bet
+    isAnimatingRef.current = true;
+    const newBal = displayBalance - betAmount;
+    setDisplayBalance(newBal);
+    onBalanceOverride(newBal);
+  }, [displayBalance, betAmount, generateGameSeed, onBalanceOverride]);
+
+  const handleTileClick = useCallback(
+    async (tileIndex: number) => {
+      if (gameState !== "playing" || isProcessing) return;
+      if (tiles[tileIndex] !== "hidden") return;
+
+      setIsProcessing(true);
+
+      try {
+        const result = await minesReveal({
+          eventKey,
+          betAmount,
+          mineCount,
+          tileIndex,
+          revealedCount: gemsRevealed,
+          gameSeed,
+        });
+
+        if (result.safe) {
+          // Reveal gem
+          setTiles((prev) => {
+            const updated = [...prev];
+            updated[tileIndex] = "gem";
+            return updated;
+          });
+          const newGems = gemsRevealed + 1;
+          setGemsRevealed(newGems);
+          setCurrentMultiplier(result.multiplier);
+
+          if (result.gameOver) {
+            // All gems found - auto cashout
+            setGameState("won");
+            setLastPayout(result.payout);
+            setSessionRounds((p) => p + 1);
+            setSessionProfit((p) => p + (result.payout - betAmount));
+            if (result.multiplier > bestMultiplier)
+              setBestMultiplier(result.multiplier);
+
+            // Reveal all mines
+            if (result.minePositions.length > 0) {
+              setMinePositions(result.minePositions);
+              setTiles((prev) => {
+                const updated = [...prev];
+                result.minePositions.forEach((pos: number) => {
+                  if (updated[pos] === "hidden") updated[pos] = "bomb";
+                });
+                return updated;
+              });
+            }
+
+            setShowCoinShower(true);
+            setTimeout(() => setShowCoinShower(false), 2500);
+            setDisplayBalance(result.newBalance);
+            onBalanceOverride(result.newBalance);
+            isAnimatingRef.current = false;
+          }
+        } else {
+          // Hit a bomb
+          setTiles((prev) => {
+            const updated = [...prev];
+            updated[tileIndex] = "bomb";
+            // Reveal all mines
+            result.minePositions.forEach((pos: number) => {
+              if (updated[pos] === "hidden") updated[pos] = "bomb";
+            });
+            // Reveal remaining safe tiles as gems
+            for (let i = 0; i < 25; i++) {
+              if (
+                updated[i] === "hidden" &&
+                !result.minePositions.includes(i)
+              ) {
+                updated[i] = "gem";
+              }
+            }
+            return updated;
+          });
+          setMinePositions(result.minePositions);
+          setGameState("lost");
+          setShakeBoard(true);
+          setTimeout(() => setShakeBoard(false), 500);
+          setSessionRounds((p) => p + 1);
+          setSessionProfit((p) => p - betAmount);
+          setDisplayBalance(result.newBalance);
+          onBalanceOverride(result.newBalance);
+          isAnimatingRef.current = false;
+        }
+      } catch (err: unknown) {
+        const msg =
+          err instanceof Error ? err.message : "An error occurred";
+        toast.error(msg);
+        isAnimatingRef.current = false;
+      } finally {
+        setIsProcessing(false);
+      }
+    },
+    [
+      gameState,
+      isProcessing,
+      tiles,
+      gemsRevealed,
+      minesReveal,
+      eventKey,
+      betAmount,
+      mineCount,
+      gameSeed,
+      bestMultiplier,
+      onBalanceOverride,
+    ]
+  );
+
+  const handleCashOut = useCallback(async () => {
+    if (gameState !== "playing" || isProcessing || gemsRevealed === 0) return;
+
+    setIsProcessing(true);
+    try {
+      const result = await minesCashOutMut({
+        eventKey,
+        betAmount,
+        multiplier: currentMultiplier,
+      });
+
+      setGameState("won");
+      setLastPayout(result.payout);
+      setSessionRounds((p) => p + 1);
+      setSessionProfit((p) => p + (result.payout - betAmount));
+      if (currentMultiplier > bestMultiplier)
+        setBestMultiplier(currentMultiplier);
+
+      setShowCoinShower(true);
+      setTimeout(() => setShowCoinShower(false), 2500);
+      setDisplayBalance(result.newBalance);
+      onBalanceOverride(result.newBalance);
+      isAnimatingRef.current = false;
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "An error occurred";
+      toast.error(msg);
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [
+    gameState,
+    isProcessing,
+    gemsRevealed,
+    minesCashOutMut,
+    eventKey,
+    betAmount,
+    currentMultiplier,
+    bestMultiplier,
+    onBalanceOverride,
+  ]);
+
+  return (
+    <div className="space-y-2 lg:space-y-4">
+      {/* Coin shower effect */}
+      {showCoinShower && (
+        <div className="fixed inset-0 pointer-events-none z-50">
+          {Array.from({ length: 20 }).map((_, i) => (
+            <span
+              key={`mines-coin-${i}`}
+              className="mines-coin absolute text-yellow-400 z-50"
+              style={{
+                left: `${Math.random() * 100}%`,
+                top: "-20px",
+                fontSize: `${16 + Math.random() * 16}px`,
+                animationDelay: `${Math.random() * 0.8}s`,
+                animationDuration: `${1.5 + Math.random() * 1}s`,
+              }}
+            >
+              <Coins className="h-5 w-5" />
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* == Mobile Compact Controls (visible < lg) == */}
+      <div className="lg:hidden space-y-2">
+        <div className="rounded-xl border border-border/50 bg-card/60 p-2.5 space-y-2">
+          {/* Row 1: Bet + Mine presets */}
+          <div className="flex items-end gap-2">
+            {/* Bet */}
+            <div className="flex-1 min-w-0 space-y-1">
+              <Label className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Bet</Label>
+              <div className="flex items-center gap-1">
+                <Coins className="h-3.5 w-3.5 text-yellow-400 shrink-0" />
+                <Input
+                  type="number"
+                  min={10}
+                  value={betAmount}
+                  onChange={(e) =>
+                    setBetAmount(Math.max(10, parseInt(e.target.value) || 10))
+                  }
+                  disabled={gameState === "playing"}
+                  className="h-7 font-mono font-bold text-xs bg-muted/40"
+                />
+              </div>
+            </div>
+            {/* Quick bet */}
+            <div className="flex gap-0.5 shrink-0">
+              {[
+                { l: "½", fn: () => setBetAmount(Math.max(10, Math.floor(betAmount / 2))) },
+                { l: "2×", fn: () => setBetAmount(betAmount * 2) },
+              ].map(({ l, fn }) => (
+                <Button
+                  key={l}
+                  variant="outline"
+                  size="sm"
+                  className="h-7 w-8 text-[10px] font-bold px-0"
+                  disabled={gameState === "playing"}
+                  onClick={fn}
+                >
+                  {l}
+                </Button>
+              ))}
+            </div>
+            {/* Mines count */}
+            <div className="shrink-0 space-y-1">
+              <Label className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Mines</Label>
+              <div className="flex gap-0.5">
+                {MINES_PRESETS.map((count) => (
+                  <button
+                    key={count}
+                    onClick={() => setMineCount(count)}
+                    disabled={gameState === "playing"}
+                    className={`w-7 h-7 rounded-md text-[10px] font-mono font-bold transition-all border ${
+                      mineCount === count
+                        ? "bg-yellow-400 text-black border-yellow-400"
+                        : "border-yellow-400/20 text-yellow-400/70 bg-black/30"
+                    } ${gameState === "playing" ? "opacity-50 cursor-not-allowed" : ""}`}
+                  >
+                    {count}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Row 2: Start/CashOut/Result */}
+          <div className="flex items-center gap-2">
+            {gameState !== "playing" && (
+              <Button
+                onClick={startGame}
+                className="flex-1 h-9 font-black text-sm bg-yellow-400 hover:bg-yellow-300 text-black"
+                disabled={displayBalance < betAmount}
+              >
+                {gameState === "idle" ? (
+                  <><Play className="h-4 w-4 mr-1" /> START</>
+                ) : (
+                  <><RefreshCw className="h-4 w-4 mr-1" /> AGAIN</>
+                )}
+              </Button>
+            )}
+            {gameState === "playing" && gemsRevealed > 0 && (
+              <>
+                <div className="text-center shrink-0">
+                  <div className="text-lg font-black text-yellow-400 mines-multiplier-pop leading-tight" key={`mult-m-${gemsRevealed}`}>
+                    {currentMultiplier}x
+                  </div>
+                  <div className="text-[10px] font-mono text-muted-foreground">
+                    {formatCoins(Math.floor(betAmount * currentMultiplier))}
+                  </div>
+                </div>
+                <Button
+                  onClick={handleCashOut}
+                  disabled={isProcessing}
+                  className="flex-1 h-9 font-black text-sm bg-yellow-400 hover:bg-yellow-300 text-black mines-cashout-pulse"
+                >
+                  <ShieldCheck className="h-4 w-4 mr-1" /> CASH OUT
+                </Button>
+              </>
+            )}
+            {gameState === "playing" && gemsRevealed === 0 && (
+              <div className="flex-1 text-center text-xs text-muted-foreground/70 py-1">
+                <span className="text-yellow-400/70 font-bold">{nextMultiplier}x</span> · Click a tile to begin
+              </div>
+            )}
+            {/* Inline result on mobile */}
+            {gameState === "won" && (
+              <div className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-yellow-400/40 bg-yellow-400/10 px-3 py-1.5">
+                <Trophy className="h-5 w-5 text-yellow-400 shrink-0" />
+                <div>
+                  <span className="text-sm font-black text-yellow-400">{formatCoins(lastPayout)}</span>
+                  <span className="text-[10px] text-muted-foreground ml-1">at {currentMultiplier}x</span>
+                </div>
+              </div>
+            )}
+            {gameState === "lost" && (
+              <div className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-red-400/30 bg-red-400/10 px-3 py-1.5">
+                <Bomb className="h-5 w-5 text-red-400 shrink-0" />
+                <div>
+                  <span className="text-sm font-black text-red-400">-{formatCoins(betAmount)}</span>
+                  <span className="text-[10px] text-muted-foreground ml-1">{gemsRevealed} gems</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-col lg:flex-row gap-2 lg:gap-4">
+        {/* == Controls Panel (Left - desktop only) == */}
+        <div className="hidden lg:block lg:w-64 shrink-0 space-y-3">
+          {/* Bet Amount */}
+          <div className="rounded-xl border border-border/50 bg-card/60 p-3 space-y-2">
+            <Label className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">
+              Bet Amount
+            </Label>
+            <div className="flex items-center gap-1">
+              <Coins className="h-4 w-4 text-yellow-400 shrink-0" />
+              <Input
+                type="number"
+                min={10}
+                value={betAmount}
+                onChange={(e) =>
+                  setBetAmount(Math.max(10, parseInt(e.target.value) || 10))
+                }
+                disabled={gameState === "playing"}
+                className="h-8 font-mono font-bold text-sm bg-muted/40"
+              />
+            </div>
+            <div className="flex gap-1">
+              {[
+                {
+                  l: "½",
+                  fn: () =>
+                    setBetAmount(Math.max(10, Math.floor(betAmount / 2))),
+                },
+                { l: "2×", fn: () => setBetAmount(betAmount * 2) },
+                { l: "Max", fn: () => setBetAmount(displayBalance) },
+              ].map(({ l, fn }) => (
+                <Button
+                  key={l}
+                  variant="outline"
+                  size="sm"
+                  className="flex-1 h-7 text-xs font-bold"
+                  disabled={gameState === "playing"}
+                  onClick={fn}
+                >
+                  {l}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          {/* Mine Count */}
+          <div className="rounded-xl border border-border/50 bg-card/60 p-3 space-y-2">
+            <Label className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">
+              Mines
+            </Label>
+            <div className="flex flex-wrap gap-1">
+              {MINES_PRESETS.map((count) => (
+                <button
+                  key={count}
+                  onClick={() => setMineCount(count)}
+                  disabled={gameState === "playing"}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all border ${
+                    mineCount === count
+                      ? "bg-yellow-400 text-black border-yellow-400 shadow-lg shadow-yellow-400/20"
+                      : "border-yellow-400/20 text-yellow-400/70 hover:border-yellow-400/50 hover:bg-yellow-400/5 bg-black/30"
+                  } ${gameState === "playing" ? "opacity-50 cursor-not-allowed" : ""}`}
+                >
+                  {count}
+                </button>
+              ))}
+            </div>
+            {/* Custom slider */}
+            <div className="flex items-center gap-2">
+              <input
+                type="range"
+                min={1}
+                max={24}
+                value={mineCount}
+                onChange={(e) => setMineCount(parseInt(e.target.value))}
+                disabled={gameState === "playing"}
+                className="flex-1 accent-yellow-400 h-1.5"
+              />
+              <span className="text-xs font-mono font-bold text-yellow-400 w-6 text-right">
+                {mineCount}
+              </span>
+            </div>
+            <div className="text-[10px] text-muted-foreground/70 leading-tight">
+              {mineCount} mine{mineCount > 1 ? "s" : ""} · {25 - mineCount}{" "}
+              gems · Next: {nextMultiplier}x
+            </div>
+          </div>
+
+          {/* Current Multiplier & Cash Out */}
+          {gameState === "playing" && gemsRevealed > 0 && (
+            <div
+              className={`rounded-xl border-2 border-yellow-400/50 bg-yellow-400/5 p-3 space-y-2 ${
+                currentMultiplier >= 5 ? "mines-win-glow" : ""
+              }`}
+            >
+              <div className="text-center">
+                <div className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">
+                  Current Multiplier
+                </div>
+                <div
+                  className="text-3xl font-black text-yellow-400 mines-multiplier-pop"
+                  key={`mult-${gemsRevealed}`}
+                >
+                  {currentMultiplier}x
+                </div>
+                <div className="text-sm font-mono text-muted-foreground">
+                  Payout:{" "}
+                  <span className="text-yellow-400 font-bold">
+                    {formatCoins(
+                      Math.floor(betAmount * currentMultiplier)
+                    )}
+                  </span>
+                </div>
+              </div>
+              <Button
+                onClick={handleCashOut}
+                disabled={isProcessing}
+                className="w-full h-10 font-black text-base bg-yellow-400 hover:bg-yellow-300 text-black mines-cashout-pulse"
+              >
+                <ShieldCheck className="h-5 w-5 mr-2" /> CASH OUT
+              </Button>
+            </div>
+          )}
+
+          {/* Next Multiplier Preview (when playing, before any reveal) */}
+          {gameState === "playing" && gemsRevealed === 0 && (
+            <div className="rounded-xl border border-yellow-400/20 bg-yellow-400/5 p-3 text-center">
+              <div className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">
+                First Gem
+              </div>
+              <div className="text-xl font-black text-yellow-400/70">
+                {nextMultiplier}x
+              </div>
+              <div className="text-[10px] text-muted-foreground/60">
+                Click a tile to begin
+              </div>
+            </div>
+          )}
+
+          {/* Start / Play Again */}
+          {gameState !== "playing" && (
+            <Button
+              onClick={startGame}
+              className="w-full h-11 font-black text-base bg-yellow-400 hover:bg-yellow-300 text-black"
+              disabled={displayBalance < betAmount}
+            >
+              {gameState === "idle" ? (
+                <>
+                  <Play className="h-5 w-5 mr-2" /> START GAME
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="h-5 w-5 mr-2" /> PLAY AGAIN
+                </>
+              )}
+            </Button>
+          )}
+
+          {/* Result Display */}
+          {gameState === "won" && (
+            <div className="rounded-xl border-2 border-yellow-400/60 bg-yellow-400/10 p-3 text-center mines-win-banner">
+              <Trophy className="h-7 w-7 text-yellow-400 mx-auto mb-1" />
+              <div className="text-xs text-muted-foreground uppercase">
+                You Won!
+              </div>
+              <div className="text-xl font-black text-yellow-400">
+                {formatCoins(lastPayout)}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                at {currentMultiplier}x
+              </div>
+            </div>
+          )}
+          {gameState === "lost" && (
+            <div className="rounded-xl border-2 border-red-400/40 bg-red-400/10 p-3 text-center">
+              <Bomb className="h-7 w-7 text-red-400 mx-auto mb-1" />
+              <div className="text-xs text-muted-foreground uppercase">
+                Game Over
+              </div>
+              <div className="text-xl font-black text-red-400">
+                -{formatCoins(betAmount)}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {gemsRevealed} gem{gemsRevealed !== 1 ? "s" : ""} found
+              </div>
+            </div>
+          )}
+
+          {/* Session Stats */}
+          <div className="rounded-xl border border-border/50 bg-card/60 p-3 space-y-1.5">
+            <div className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">
+              Session Stats
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div>
+                <div className="text-xs text-muted-foreground">Rounds</div>
+                <div className="text-sm font-bold">{sessionRounds}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">Profit</div>
+                <div
+                  className={`text-sm font-bold font-mono ${sessionProfit >= 0 ? "text-green-400" : "text-red-400"}`}
+                >
+                  {sessionProfit >= 0 ? "+" : ""}
+                  {formatCoins(sessionProfit)}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">Best</div>
+                <div className="text-sm font-bold text-yellow-400">
+                  {bestMultiplier > 0 ? `${bestMultiplier}x` : "\u2014"}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* == Game Board (Center) == */}
+        <div className="flex-1 min-w-0">
+          <div
+            className={`rounded-2xl border border-border/50 bg-card/80 p-2.5 lg:p-4 relative overflow-hidden ${
+              shakeBoard ? "mines-board-shake" : ""
+            } ${gameState === "won" ? "mines-win-glow" : ""}`}
+          >
+            {/* Title bar */}
+            <div className="flex items-center justify-between mb-2 lg:mb-4">
+              <div className="flex items-center gap-2">
+                <div className="h-6 w-6 lg:h-8 lg:w-8 rounded-lg bg-yellow-400/10 border border-yellow-400/30 flex items-center justify-center">
+                  <Bomb className="h-3 w-3 lg:h-4 lg:w-4 text-yellow-400" />
+                </div>
+                <div>
+                  <h3 className="font-black text-xs lg:text-sm tracking-tight">
+                    MINES
+                  </h3>
+                  <p className="text-[9px] lg:text-[10px] text-muted-foreground">
+                    Reveal gems, avoid the bombs
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 text-[10px] lg:text-xs">
+                <span className="font-semibold text-yellow-400">
+                  {mineCount} mine{mineCount > 1 ? "s" : ""}
+                </span>
+                <span className="text-muted-foreground">&middot;</span>
+                <span className="text-muted-foreground">
+                  {gemsRevealed}/{25 - mineCount} gems
+                </span>
+              </div>
+            </div>
+
+            {/* 5x5 Grid */}
+            <div
+              className="grid gap-1.5 lg:gap-2 mx-auto"
+              style={{
+                gridTemplateColumns: "repeat(5, 1fr)",
+                maxWidth: "320px",
+              }}
+            >
+              {tiles.map((tileState, idx) => {
+                const isClickable =
+                  gameState === "playing" &&
+                  tileState === "hidden" &&
+                  !isProcessing;
+                const isGem = tileState === "gem";
+                const isBomb = tileState === "bomb";
+                const isHitBomb =
+                  isBomb &&
+                  gameState === "lost" &&
+                  minePositions.includes(idx);
+                const isRevealedBomb =
+                  isBomb && gameState === "lost" && !isHitBomb;
+
+                return (
+                  <button
+                    key={`mine-tile-${idx}`}
+                    onClick={() => isClickable && handleTileClick(idx)}
+                    disabled={!isClickable}
+                    className={`
+                      relative flex items-center justify-center
+                      aspect-square rounded-lg lg:rounded-xl
+                      text-base lg:text-lg font-bold transition-all duration-200
+                      border-2
+                      ${
+                        isClickable
+                          ? "bg-yellow-400/8 border-yellow-400/25 hover:bg-yellow-400/15 hover:border-yellow-400/50 hover:shadow-[0_0_16px_rgba(234,179,8,0.25)] cursor-pointer mines-tile-active"
+                          : isGem
+                            ? "bg-yellow-400/15 border-yellow-400/40 mines-tile-reveal"
+                            : isHitBomb
+                              ? "bg-red-500/30 border-red-400/60 mines-bomb-explode"
+                              : isRevealedBomb
+                                ? "bg-red-400/10 border-red-400/25 mines-tile-reveal"
+                                : tileState === "hidden"
+                                  ? "bg-muted/10 border-border/20 opacity-40"
+                                  : "bg-muted/10 border-border/20"
+                      }
+                    `}
+                  >
+                    {tileState === "hidden" && isClickable && (
+                      <Sparkles className="h-4 w-4 lg:h-5 lg:w-5 text-yellow-400/30" />
+                    )}
+                    {isGem && (
+                      <Gem
+                        className={`h-5 w-5 lg:h-6 lg:w-6 text-yellow-400 ${
+                          gameState === "playing" ? "mines-gem-pulse" : ""
+                        }`}
+                      />
+                    )}
+                    {isHitBomb && (
+                      <Bomb className="h-5 w-5 lg:h-6 lg:w-6 text-red-400" />
+                    )}
+                    {isRevealedBomb && (
+                      <Bomb className="h-4 w-4 lg:h-5 lg:w-5 text-red-400/60" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Idle state overlay */}
+            {gameState === "idle" && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm rounded-2xl">
+                <div className="text-center space-y-2">
+                  <div className="flex items-center justify-center gap-2">
+                    <Bomb className="h-8 w-8 lg:h-10 lg:w-10 text-yellow-400/80" />
+                  </div>
+                  <p className="text-xs lg:text-sm font-semibold text-muted-foreground">
+                    Set your bet and start the game
+                  </p>
+                  <p className="text-[10px] lg:text-xs text-muted-foreground/60">
+                    Reveal gems to increase your multiplier. Cash out
+                    anytime!
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Session stats - mobile only (compact inline) */}
+          <div className="lg:hidden mt-2 rounded-xl border border-border/50 bg-card/60 p-2">
+            <div className="flex items-center justify-around text-center">
+              <div>
+                <div className="text-[10px] text-muted-foreground">Rounds</div>
+                <div className="text-xs font-bold">{sessionRounds}</div>
+              </div>
+              <div className="w-px h-6 bg-border/30" />
+              <div>
+                <div className="text-[10px] text-muted-foreground">Profit</div>
+                <div className={`text-xs font-bold font-mono ${sessionProfit >= 0 ? "text-green-400" : "text-red-400"}`}>
+                  {sessionProfit >= 0 ? "+" : ""}{formatCoins(sessionProfit)}
+                </div>
+              </div>
+              <div className="w-px h-6 bg-border/30" />
+              <div>
+                <div className="text-[10px] text-muted-foreground">Best</div>
+                <div className="text-xs font-bold text-yellow-400">{bestMultiplier > 0 ? `${bestMultiplier}x` : "—"}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Multiplier table */}
+          <details className="mt-2 lg:mt-3 text-xs">
+            <summary className="text-muted-foreground/60 cursor-pointer hover:text-muted-foreground transition-colors">
+              View multiplier table
+            </summary>
+            <div className="mt-2 rounded-xl border border-border/30 bg-card/40 p-3">
+              <div className="grid grid-cols-6 gap-1 text-center text-[10px] font-semibold">
+                <div className="text-muted-foreground">Gems</div>
+                {[1, 3, 5, 10, 24].map((mc) => (
+                  <div
+                    key={mc}
+                    className={
+                      mc === mineCount
+                        ? "text-yellow-400"
+                        : "text-muted-foreground/60"
+                    }
+                  >
+                    {mc}m
+                  </div>
+                ))}
+                {Array.from({ length: Math.min(10, 25 - mineCount) }).map(
+                  (_, i) => {
+                    const gems = i + 1;
+                    return (
+                      <div key={`table-${i}`} className="contents">
+                        <div className="text-muted-foreground">{gems}</div>
+                        {[1, 3, 5, 10, 24].map((mc) => {
+                          const safe = 25 - mc;
+                          if (gems > safe) {
+                            return (
+                              <div
+                                key={mc}
+                                className="text-muted-foreground/30"
+                              >
+                                -
+                              </div>
+                            );
+                          }
+                          const m = getMinesMultiplier(mc, gems);
+                          return (
+                            <div
+                              key={mc}
+                              className={`font-mono ${
+                                mc === mineCount
+                                  ? m >= 100
+                                    ? "text-yellow-300"
+                                    : m >= 10
+                                      ? "text-yellow-400"
+                                      : m >= 3
+                                        ? "text-amber-400"
+                                        : "text-yellow-400/70"
+                                  : "text-muted-foreground/50"
+                              }`}
+                            >
+                              {m >= 1000
+                                ? `${(m / 1000).toFixed(1)}K`
+                                : m.toFixed(2)}
+                              x
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  }
+                )}
+              </div>
+              <p className="text-[10px] text-muted-foreground/50 mt-2 text-center">
+                More mines = higher risk, bigger multipliers. 3% house
+                edge.
+              </p>
+            </div>
+          </details>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type Tab = "markets" | "my-bets" | "leaderboard" | "slots" | "plinko" | "crossy" | "mines";
 
 export default function BettingPage() {
   const [activeTab, setActiveTab] = useState<Tab>("markets");
@@ -3896,6 +4889,7 @@ export default function BettingPage() {
     { id: "slots",       label: "Slots",       icon: Dices },
     { id: "plinko",      label: "Plinko",      icon: Circle },
     { id: "crossy",      label: "Crossy",      icon: Bird },
+    { id: "mines",       label: "Mines",       icon: Bomb },
     { id: "my-bets",     label: "My Bets",     icon: Coins },
     { id: "leaderboard", label: "Leaderboard", icon: Trophy },
   ];
@@ -3954,6 +4948,9 @@ export default function BettingPage() {
       )}
       {activeTab === "crossy" && (
         <CrossyRoadGame eventKey={eventKey} myBalance={myBalance} onBalanceOverride={setBalanceOverride} />
+      )}
+      {activeTab === "mines" && (
+        <MinesGame eventKey={eventKey} myBalance={myBalance} onBalanceOverride={setBalanceOverride} />
       )}
       {activeTab === "my-bets" && <MyBetsTab eventKey={eventKey} />}
       {activeTab === "leaderboard" && <LeaderboardTab eventKey={eventKey} />}

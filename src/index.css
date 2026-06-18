@@ -482,3 +482,109 @@
   animation: slot-coin-shower 2s ease-in forwards;
   pointer-events: none;
 }
+
+/* ── Mines Game ──────────────────────────────────────────────────────────── */
+
+@keyframes mines-tile-reveal {
+  0% { transform: scale(0.5) rotateY(90deg); opacity: 0; }
+  50% { transform: scale(1.15) rotateY(0deg); opacity: 1; }
+  100% { transform: scale(1) rotateY(0deg); opacity: 1; }
+}
+
+@keyframes mines-bomb-explode {
+  0% { transform: scale(0.5); opacity: 0; background: rgba(239, 68, 68, 0); }
+  30% { transform: scale(1.3); opacity: 1; background: rgba(239, 68, 68, 0.3); }
+  60% { transform: scale(0.95); background: rgba(239, 68, 68, 0.15); }
+  100% { transform: scale(1); opacity: 1; background: rgba(239, 68, 68, 0.1); }
+}
+
+@keyframes mines-gem-pulse {
+  0%, 100% { filter: brightness(1) drop-shadow(0 0 4px rgba(245, 166, 35, 0.3)); }
+  50% { filter: brightness(1.3) drop-shadow(0 0 12px rgba(245, 166, 35, 0.6)); }
+}
+
+@keyframes mines-board-shake {
+  0%, 100% { transform: translateX(0); }
+  10% { transform: translateX(-6px) rotate(-0.5deg); }
+  20% { transform: translateX(6px) rotate(0.5deg); }
+  30% { transform: translateX(-5px) rotate(-0.3deg); }
+  40% { transform: translateX(5px) rotate(0.3deg); }
+  50% { transform: translateX(-3px); }
+  60% { transform: translateX(3px); }
+  70% { transform: translateX(-2px); }
+  80% { transform: translateX(2px); }
+  90% { transform: translateX(-1px); }
+}
+
+@keyframes mines-cashout-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(250, 204, 21, 0.4); }
+  50% { box-shadow: 0 0 20px 4px rgba(250, 204, 21, 0.2); }
+}
+
+@keyframes mines-coin-fall {
+  0% { transform: translateY(0) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+}
+
+@keyframes mines-multiplier-pop {
+  0% { transform: scale(0.8); opacity: 0.5; }
+  50% { transform: scale(1.15); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes mines-tile-hover-glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(250, 204, 21, 0.15); }
+  50% { box-shadow: 0 0 16px rgba(250, 204, 21, 0.3); }
+}
+
+@keyframes mines-win-banner {
+  0% { transform: scale(0.8) translateY(10px); opacity: 0; }
+  60% { transform: scale(1.05) translateY(-2px); }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+
+.mines-tile-reveal {
+  animation: mines-tile-reveal 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.mines-bomb-explode {
+  animation: mines-bomb-explode 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
+.mines-gem-pulse {
+  animation: mines-gem-pulse 2s ease-in-out infinite;
+}
+
+.mines-board-shake {
+  animation: mines-board-shake 0.5s ease-in-out;
+}
+
+.mines-cashout-pulse {
+  animation: mines-cashout-pulse 1.5s ease-in-out infinite;
+}
+
+.mines-coin {
+  animation: mines-coin-fall 2s ease-in forwards;
+  pointer-events: none;
+}
+
+.mines-multiplier-pop {
+  animation: mines-multiplier-pop 0.3s ease-out;
+}
+
+.mines-win-banner {
+  animation: mines-win-banner 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.mines-tile-active {
+  transition: all 0.15s ease;
+}
+
+.mines-tile-active:hover {
+  transform: translateY(-2px);
+  animation: mines-tile-hover-glow 1.5s ease-in-out infinite;
+}
+
+.mines-win-glow {
+  box-shadow: 0 0 30px rgba(250, 204, 21, 0.15), inset 0 0 30px rgba(250, 204, 21, 0.05);
+}
