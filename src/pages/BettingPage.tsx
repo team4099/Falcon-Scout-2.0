@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
@@ -14,7 +14,8 @@ import {
   Coins, TrendingUp, TrendingDown, Trophy, ChevronDown, ChevronUp,
   Plus, Zap, Lock, CheckCircle2, XCircle, RefreshCw,
   HandCoins, Swords, BarChart3, Target, ListFilter,
-  BadgeCheck, AlertCircle, Timer, Users, X, Medal,
+  BadgeCheck, AlertCircle, Timer, Users, X, Medal, Dices,
+  Volume2, VolumeX, Flame, Square, Play,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -143,6 +144,38 @@ const TYPE_ICONS: Record<MarketType, React.ElementType> = {
   multi_match_count:   ListFilter,
 };
 
+// ── Emoji stripping helper ──────────────────────────────────────────────────────
+
+/** Strip common circle/arrow emojis that were baked into old DB records. */
+function stripEmojis(text: string): string {
+  return text.replace(/[\u{1F534}\u{1F535}\u{2B06}\u{2B07}\u{26AA}\u{2B55}\u{1F7E0}\u{1F7E1}\u{1F7E2}\u{1F7E3}\u{1F7E4}\u{2764}\u{1F499}\u{1F534}\u{1F535}⬆⬇]/gu, "").replace(/\s{2,}/g, " ").trim();
+}
+
+// ── Alliance Label ──────────────────────────────────────────────────────────────
+
+function AllianceLabel({ label }: { label: string }) {
+  const cleaned = stripEmojis(label);
+  if (cleaned.toLowerCase().includes("red")) return <span className="text-red-500">{cleaned}</span>;
+  if (cleaned.toLowerCase().includes("blue")) return <span className="text-blue-500">{cleaned}</span>;
+  return <span>{cleaned}</span>;
+}
+
+/** Render a market description with emojis stripped and Red/Blue words colorized. */
+function ColorizedDescription({ text }: { text: string }) {
+  const cleaned = stripEmojis(text);
+  // Split on "Red" and "Blue" (case-insensitive) to wrap them in colored spans
+  const parts = cleaned.split(/(\bRed\b|\bBlue\b)/gi);
+  return (
+    <>
+      {parts.map((part, i) => {
+        if (part.toLowerCase() === "red") return <span key={i} className="text-red-500 font-semibold">{part}</span>;
+        if (part.toLowerCase() === "blue") return <span key={i} className="text-blue-500 font-semibold">{part}</span>;
+        return <span key={i}>{part}</span>;
+      })}
+    </>
+  );
+}
+
 // ── Probability Bar ───────────────────────────────────────────────────────────
 
 function ProbBar({
@@ -156,11 +189,11 @@ function ProbBar({
 }) {
   const pcts = options.map((o) => impliedPct(o, realBets, options));
   const colors = [
-    "from-amber-500 to-yellow-400",
-    "from-yellow-500 to-amber-300",
-    "from-amber-600 to-yellow-500",
-    "from-yellow-400 to-amber-200",
-    "from-amber-400 to-yellow-300",
+    "bg-yellow-400",
+    "bg-yellow-400",
+    "bg-yellow-400",
+    "bg-yellow-400",
+    "bg-yellow-400",
   ];
   return (
     <div className="space-y-2">
@@ -173,7 +206,7 @@ function ProbBar({
             <div className="flex items-center justify-between text-xs">
               <span className={`font-medium ${isLoser ? "opacity-40" : isWinner ? "text-amber-400" : "text-foreground"}`}>
                 {isWinner && <CheckCircle2 className="inline h-3 w-3 mr-1" />}
-                {opt.label}
+                <AllianceLabel label={opt.label} />
               </span>
               <span className="font-mono text-muted-foreground">
                 {(pct * 100).toFixed(1)}%
@@ -181,7 +214,7 @@ function ProbBar({
             </div>
             <div className="h-2 rounded-full bg-muted overflow-hidden">
               <div
-                className={`h-full rounded-full bg-gradient-to-r transition-all duration-700 ${colors[i % colors.length]} ${isLoser ? "opacity-30" : ""}`}
+                className={`h-full rounded-full transition-all duration-700 ${colors[i % colors.length]} ${isLoser ? "opacity-30" : ""}`}
                 style={{ width: `${Math.max(pct * 100, 2)}%` }}
               />
             </div>
@@ -248,7 +281,7 @@ function BetPanel({
                 : "border-border bg-card hover:border-primary/40 hover:bg-primary/5 text-muted-foreground"
             }`}
           >
-            <span>{opt.label}</span>
+            <AllianceLabel label={opt.label} />
             <span className="text-xs opacity-70">
               {((impliedPct(opt, realBets, market.options)) * 100).toFixed(1)}%
             </span>
@@ -299,7 +332,7 @@ function BetPanel({
       <Button
         onClick={handleBet}
         disabled={placing || amount < 10 || amount > myBalance || !selectedOption}
-        className="w-full font-bold bg-gradient-to-r from-amber-500 to-yellow-400 hover:from-amber-600 hover:to-yellow-500 text-black border-0"
+        className="w-full font-bold bg-yellow-400 hover:bg-yellow-500 text-black border-0"
       >
         {placing ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <Coins className="h-4 w-4 mr-2" />}
         {placing ? "Placing…" : `Bet ${amount} coins`}
@@ -377,7 +410,9 @@ function MarketCard({
               </span>
             </div>
             {market.description && (
-              <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{market.description}</p>
+              <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
+                <ColorizedDescription text={market.description} />
+              </p>
             )}
             <div className="flex items-center gap-3 mt-1.5 text-[10px] text-muted-foreground flex-wrap">
               {totalRealBets > 0 && (
@@ -409,13 +444,7 @@ function MarketCard({
           </div>
         </button>
 
-        {/* No-bet penalty warning — shown on open markets where user hasn't placed a bet */}
-        {market.status === "open" && !hasBet && (
-          <div className="mx-4 mb-3 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-400 text-[11px] font-semibold">
-            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-            No bet placed — <span className="font-black">10% penalty</span> on your balance if you skip this market
-          </div>
-        )}
+
 
         {/* Collapsed prob bar preview */}
         {!expanded && (
@@ -433,7 +462,7 @@ function MarketCard({
             <div className="grid grid-cols-2 gap-2">
               {market.options.map((opt) => (
                 <div key={opt.id} className="rounded-xl bg-muted/60 p-3 space-y-1">
-                  <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">{opt.label}</p>
+                  <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider"><AllianceLabel label={opt.label} /></p>
                   <p className="text-sm font-mono font-bold flex items-center gap-1">
                     {formatCoins(opt.seedPool + (realBets[opt.id] ?? 0))} <Coins className="h-3 w-3 text-amber-400" />
                   </p>
@@ -478,7 +507,7 @@ function MarketCard({
                     <Zap className="h-3 w-3 mr-1" /> Unlock
                   </Button>
                 )}
-                <Button size="sm" className="h-7 text-xs bg-amber-500 hover:bg-amber-600 text-black border-0"
+                <Button size="sm" className="h-7 text-xs bg-yellow-400 hover:bg-yellow-500 text-black border-0"
                   onClick={() => setResolveOpen(true)}>
                   <CheckCircle2 className="h-3 w-3 mr-1" /> Resolve
                 </Button>
@@ -512,7 +541,7 @@ function MarketCard({
             ))}
           </div>
           <Button
-            className="w-full bg-amber-500 hover:bg-amber-600 text-black border-0 font-bold"
+            className="w-full bg-yellow-400 hover:bg-yellow-500 text-black border-0 font-bold"
             onClick={handleResolve}
           >
             Confirm Resolution
@@ -1045,7 +1074,7 @@ function CreateMarketPanel({
 
             {/* Warning if no teams appear in all selected matches */}
             {isMultiMatch && targetScope === "team" && selectedMatchKeys.size >= 2 && multiMatchTeams.length === 0 && (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-400 text-xs font-medium ml-[calc(6rem+0.75rem)]">
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-xs font-medium ml-[calc(6rem+0.75rem)]">
                 <AlertCircle className="h-3.5 w-3.5 shrink-0" />
                 No team appears in all selected matches. Try different matches or use Alliance/Anyone scope.
               </div>
@@ -1143,7 +1172,7 @@ function CreateMarketPanel({
                   </div>
                 )}
                 {selectedTemplateId && bettableFields && bettableFields.length === 0 && (
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-400 text-xs font-medium">
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-xs font-medium">
                     <AlertCircle className="h-3.5 w-3.5 shrink-0" />
                     This form has no compatible {allowedFieldTypes.join("/")} fields for this market type.
                   </div>
@@ -1602,7 +1631,7 @@ function MyBetsTab({ eventKey }: { eventKey: string }) {
   return (
     <div className="space-y-6">
       {/* Balance card */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-amber-500/20 via-yellow-500/10 to-orange-500/10 border border-amber-500/30 p-6">
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-yellow-500/15 via-amber-500/10 to-yellow-400/5 border border-yellow-500/30 p-6">
         <div className="absolute top-0 right-0 h-32 w-32 rounded-full bg-amber-500/10 blur-2xl -translate-y-8 translate-x-8" />
         <div className="relative">
           <p className="text-sm text-amber-400/80 font-medium uppercase tracking-wider">Your Balance</p>
@@ -1842,9 +1871,656 @@ function LeaderboardTab({ eventKey }: { eventKey: string }) {
   );
 }
 
-// ── Main Page ─────────────────────────────────────────────────────────────────
+// ── Slot Machine ──────────────────────────────────────────────────────────────
 
-type Tab = "markets" | "my-bets" | "leaderboard";
+const SLOT_SYMBOLS_UI = [
+  { id: "lemon",  emoji: "🍋", label: "Lemon",   color: "text-yellow-300" },
+  { id: "cherry", emoji: "🍒", label: "Cherry",  color: "text-red-400" },
+  { id: "bell",   emoji: "🔔", label: "Bell",    color: "text-amber-400" },
+  { id: "star",   emoji: "⭐", label: "Star",    color: "text-yellow-400" },
+  { id: "seven",  emoji: "7️⃣",  label: "Seven",   color: "text-yellow-500" },
+  { id: "money",  emoji: "💰", label: "Jackpot", color: "text-yellow-400" },
+] as const;
+
+const SLOT_PAYOUTS_UI: { symbol: string; emoji: string; x5: number; x4: number; x3: number }[] = [
+  { symbol: "money",  emoji: "💰", x5: 500, x4: 50, x3: 10 },
+  { symbol: "seven",  emoji: "7️⃣",  x5: 100, x4: 20, x3: 5 },
+  { symbol: "star",   emoji: "⭐", x5: 50,  x4: 10, x3: 3 },
+  { symbol: "bell",   emoji: "🔔", x5: 20,  x4: 5,  x3: 1.5 },
+  { symbol: "cherry", emoji: "🍒", x5: 10,  x4: 3,  x3: 1 },
+  { symbol: "lemon",  emoji: "🍋", x5: 5,   x4: 2,  x3: 0.5 },
+];
+
+function getSymbolEmoji(id: string): string {
+  return SLOT_SYMBOLS_UI.find((s) => s.id === id)?.emoji ?? "❓";
+}
+
+/** Coin particle for win animation */
+function CoinParticle({ index }: { index: number }) {
+  const left = Math.random() * 100;
+  const delay = Math.random() * 0.8;
+  const size = 16 + Math.random() * 16;
+  const rotation = Math.random() * 360;
+  return (
+    <div
+      className="slot-coin absolute text-yellow-400 z-50 pointer-events-none"
+      style={{
+        left: `${left}%`,
+        top: "-20px",
+        fontSize: `${size}px`,
+        animationDelay: `${delay}s`,
+        animationDuration: `${1.5 + Math.random() * 1}s`,
+        transform: `rotate(${rotation}deg)`,
+      }}
+    >
+      🪙
+    </div>
+  );
+}
+
+/** Generate a random symbol ID */
+function randomSymbolId(): string {
+  return SLOT_SYMBOLS_UI[Math.floor(Math.random() * SLOT_SYMBOLS_UI.length)].id;
+}
+
+/**
+ * Generate near-miss adjacent rows. On losing spins, bias toward placing the
+ * pay-line's most-common symbol in above/below slots so it *looks* like you
+ * almost hit a big match.
+ */
+function generateAdjacentRow(centerReels: string[]): string[] {
+  // Find the most common symbol on the center pay line
+  const counts: Record<string, number> = {};
+  for (const s of centerReels) counts[s] = (counts[s] ?? 0) + 1;
+  const best = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+  const bestSym = best?.[0] ?? "lemon";
+  const bestCnt = best?.[1] ?? 0;
+
+  // High-value symbols that feel painful to "almost" match
+  const highValue = ["money", "seven", "star"];
+
+  return centerReels.map((centerSym) => {
+    // 35% chance: place the best pay-line symbol here (near-miss tease)
+    if (bestCnt >= 2 && Math.random() < 0.35) return bestSym;
+    // 25% chance: place a high-value symbol to tease jackpot
+    if (Math.random() < 0.25) return highValue[Math.floor(Math.random() * highValue.length)];
+    // Otherwise random
+    return randomSymbolId();
+  });
+}
+
+function SlotMachine({ eventKey, myBalance }: { eventKey: string; myBalance: number }) {
+  // Reel results (center pay line)
+  const [reels, setReels] = useState<string[]>(["star", "cherry", "bell", "seven", "lemon"]);
+  const [displayReels, setDisplayReels] = useState<string[]>(["star", "cherry", "bell", "seven", "lemon"]);
+  // Above & below rows (cosmetic only — near-miss tease)
+  const [displayAbove, setDisplayAbove] = useState<string[]>(["money", "seven", "star", "cherry", "bell"]);
+  const [displayBelow, setDisplayBelow] = useState<string[]>(["bell", "lemon", "money", "star", "seven"]);
+  const [reelStopped, setReelStopped] = useState<boolean[]>([true, true, true, true, true]);
+  const [isSpinning, setIsSpinning] = useState(false);
+
+  // Bet controls
+  const [betAmount, setBetAmount] = useState(50);
+  const [multiSpins, setMultiSpins] = useState(1);
+  const [spinsLeft, setSpinsLeft] = useState(0);
+  const [multiSpinTotal, setMultiSpinTotal] = useState(0);
+  const [multiSpinWins, setMultiSpinWins] = useState(0);
+
+  // Win state
+  const [lastWin, setLastWin] = useState(0);
+  const [showWin, setShowWin] = useState(false);
+  const [winStreak, setWinStreak] = useState(0);
+  const [showPayouts, setShowPayouts] = useState(false);
+  const [totalSpins, setTotalSpins] = useState(0);
+  const [sessionWins, setSessionWins] = useState(0);
+  const [sessionLosses, setSessionLosses] = useState(0);
+
+  // Refs
+  const isAutoRef = useRef(false);
+  const spinTimerRef = useRef<ReturnType<typeof setInterval>[]>([]);
+
+  const spinSlot = useMutation(api.betting.spinSlot);
+
+  // Clean up spin timers on unmount
+  useEffect(() => {
+    return () => {
+      spinTimerRef.current.forEach(clearInterval);
+    };
+  }, []);
+
+  /** Single spin with animation */
+  const doSpin = useCallback(async (isSingleSpin = false): Promise<{ payout: number } | null> => {
+    if (myBalance < betAmount) {
+      toast.error("Not enough coins!");
+      return null;
+    }
+
+    setIsSpinning(true);
+    setShowWin(false);
+    setReelStopped([false, false, false, false, false]);
+
+    // Start rapid symbol cycling on all 3 rows
+    const intervals: ReturnType<typeof setInterval>[] = [];
+    for (let i = 0; i < 5; i++) {
+      const interval = setInterval(() => {
+        setDisplayReels((prev) => { const n = [...prev]; n[i] = randomSymbolId(); return n; });
+        setDisplayAbove((prev) => { const n = [...prev]; n[i] = randomSymbolId(); return n; });
+        setDisplayBelow((prev) => { const n = [...prev]; n[i] = randomSymbolId(); return n; });
+      }, 60 + i * 15);
+      intervals.push(interval);
+    }
+    spinTimerRef.current = intervals;
+
+    try {
+      const result = await spinSlot({ eventKey, betAmount });
+
+      // For single spins, add a deceleration effect before each reel stops
+      if (isSingleSpin) {
+        // Gradually slow down each reel before stopping it
+        for (let i = 0; i < 5; i++) {
+          // Deceleration: 7 fine-grained steps for a smooth slowdown curve
+          const decelSteps = [75, 100, 130, 170, 220, 285, 370];
+          for (const speed of decelSteps) {
+            clearInterval(intervals[i]);
+            const slowInterval = setInterval(() => {
+              setDisplayReels((prev) => { const n = [...prev]; n[i] = randomSymbolId(); return n; });
+              setDisplayAbove((prev) => { const n = [...prev]; n[i] = randomSymbolId(); return n; });
+              setDisplayBelow((prev) => { const n = [...prev]; n[i] = randomSymbolId(); return n; });
+            }, speed);
+            intervals[i] = slowInterval;
+            await new Promise((r) => setTimeout(r, speed * 1.3));
+          }
+
+          // Now stop this reel
+          clearInterval(intervals[i]);
+          setDisplayReels((prev) => {
+            const next = [...prev];
+            next[i] = result.reels[i];
+            return next;
+          });
+          setDisplayAbove((prev) => {
+            const next = [...prev];
+            const adj = generateAdjacentRow(result.reels);
+            next[i] = adj[i];
+            return next;
+          });
+          setDisplayBelow((prev) => {
+            const next = [...prev];
+            const adj = generateAdjacentRow(result.reels);
+            next[i] = adj[i];
+            return next;
+          });
+          setReelStopped((prev) => {
+            const next = [...prev];
+            next[i] = true;
+            return next;
+          });
+
+          // Pause between reels stopping (builds anticipation for later reels)
+          if (i < 4) {
+            await new Promise((r) => setTimeout(r, 200 + i * 120));
+          }
+        }
+      } else {
+        // Multi-spin: fast stagger-stop (original behavior)
+        for (let i = 0; i < 5; i++) {
+          await new Promise<void>((resolve) =>
+            setTimeout(() => {
+              clearInterval(intervals[i]);
+              setDisplayReels((prev) => {
+                const next = [...prev];
+                next[i] = result.reels[i];
+                return next;
+              });
+              setDisplayAbove((prev) => {
+                const next = [...prev];
+                const adj = generateAdjacentRow(result.reels);
+                next[i] = adj[i];
+                return next;
+              });
+              setDisplayBelow((prev) => {
+                const next = [...prev];
+                const adj = generateAdjacentRow(result.reels);
+                next[i] = adj[i];
+                return next;
+              });
+              setReelStopped((prev) => {
+                const next = [...prev];
+                next[i] = true;
+                return next;
+              });
+              resolve();
+            }, 80 + i * 60)
+          );
+        }
+      }
+
+      // Wait for the last reel to finish its landing animation
+      await new Promise((r) => setTimeout(r, isSingleSpin ? 450 : 100));
+
+      setReels(result.reels);
+      setTotalSpins((s) => s + 1);
+
+      if (result.payout > 0) {
+        setLastWin(result.payout);
+        setShowWin(true);
+        setWinStreak((s) => s + 1);
+        setSessionWins((s) => s + result.payout);
+        setTimeout(() => setShowWin(false), 3500);
+      } else {
+        setLastWin(0);
+        setWinStreak(0);
+        setSessionLosses((s) => s + betAmount);
+      }
+
+      setIsSpinning(false);
+      return { payout: result.payout };
+    } catch (e: unknown) {
+      toast.error((e as Error).message ?? "Spin failed!");
+      intervals.forEach(clearInterval);
+      setIsSpinning(false);
+      setReelStopped([true, true, true, true, true]);
+      return null;
+    }
+  }, [betAmount, eventKey, myBalance, spinSlot]);
+
+  /** Multi-spin handler */
+  const handleMultiSpin = useCallback(async () => {
+    const count = multiSpins;
+    isAutoRef.current = true;
+    setSpinsLeft(count);
+    setMultiSpinTotal(0);
+    setMultiSpinWins(0);
+
+    for (let i = 0; i < count; i++) {
+      if (!isAutoRef.current) break;
+      setSpinsLeft(count - i);
+      const result = await doSpin();
+      if (!result) break;
+      setMultiSpinTotal((t) => t + betAmount);
+      if (result.payout > 0) {
+        setMultiSpinWins((w) => w + result.payout);
+      }
+      if (i < count - 1 && isAutoRef.current) {
+        await new Promise((r) => setTimeout(r, 150));
+      }
+    }
+
+    isAutoRef.current = false;
+    setSpinsLeft(0);
+  }, [multiSpins, doSpin, betAmount]);
+
+  const cancelMultiSpin = useCallback(() => {
+    isAutoRef.current = false;
+  }, []);
+
+  const quickBets = [10, 25, 50, 100, 250];
+  const multiSpinOptions = [1, 5, 10, 25, 50];
+  const isMultiSpinning = spinsLeft > 0;
+
+  // Count matching symbols for highlight
+  const matchCounts: Record<string, number> = {};
+  for (const s of reels) matchCounts[s] = (matchCounts[s] ?? 0) + 1;
+  const bestMatchCount = Math.max(...Object.values(matchCounts));
+  const bestMatchSymbol = Object.entries(matchCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+
+  return (
+    <div className="space-y-4">
+      {/* Slot Machine Frame */}
+      <div
+        className={`relative rounded-2xl border-2 overflow-hidden transition-all duration-300 ${
+          showWin
+            ? "slot-win-container border-yellow-400"
+            : "border-yellow-400/20 hover:border-yellow-400/40"
+        }`}
+        style={{
+          background: "linear-gradient(180deg, #0a0a0a 0%, #111111 50%, #0a0a0a 100%)",
+        }}
+      >
+        {/* Coin shower on win */}
+        {showWin && (
+          <div className="absolute inset-0 overflow-hidden pointer-events-none z-40">
+            {Array.from({ length: 20 }).map((_, i) => (
+              <CoinParticle key={i} index={i} />
+            ))}
+          </div>
+        )}
+
+        {/* Header */}
+        <div className="text-center pt-5 pb-3 relative">
+          <div
+            className="inline-block px-6 py-1.5 rounded-full text-sm font-black tracking-widest"
+            style={{
+              background: "linear-gradient(90deg, #b8860b, #ffd700, #b8860b)",
+              color: "#000",
+              backgroundSize: "200% 100%",
+              animation: "slot-jackpot-flash 3s ease-in-out infinite",
+            }}
+          >
+            FALCON SLOTS
+          </div>
+          {winStreak >= 3 && (
+            <div className="absolute top-3 right-4 flex items-center gap-1 px-2 py-1 rounded-full bg-red-500/20 border border-red-500/40">
+              <Flame className="h-3.5 w-3.5 text-red-400 slot-streak" />
+              <span className="text-xs font-black text-red-400 slot-streak">
+                {winStreak}× STREAK
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* 3×5 Reel Grid */}
+        <div className="relative px-4 py-3">
+          {/* Pay line indicator — wraps only the emoji columns */}
+          <div className="flex justify-center pointer-events-none absolute inset-0 z-20 items-center">
+            <div className="flex items-center">
+              <div className="text-[10px] font-black text-yellow-400/70 select-none mr-1">▶</div>
+              <div
+                className="rounded-xl border-2 border-yellow-400/40"
+                style={{
+                  width: "calc(5 * clamp(52px, 16vw, 76px) + 4 * 6px + 8px)",
+                  height: "calc(clamp(44px, 13vw, 64px) + 8px)",
+                  boxShadow: "0 0 12px rgba(234,179,8,0.15), inset 0 0 12px rgba(234,179,8,0.05)",
+                }}
+              />
+              <div className="text-[10px] font-black text-yellow-400/70 select-none ml-1">◀</div>
+            </div>
+          </div>
+
+          {/* Grid: 3 rows × 5 columns */}
+          <div className="flex justify-center gap-1.5 sm:gap-2">
+            {[0, 1, 2, 3, 4].map((col) => {
+              const centerSym = displayReels[col];
+              const aboveSym = displayAbove[col];
+              const belowSym = displayBelow[col];
+              const stopped = reelStopped[col];
+              const isMatch = stopped && !isSpinning && bestMatchCount >= 3 && centerSym === bestMatchSymbol;
+
+              const rows = [
+                { sym: aboveSym, row: "above" as const },
+                { sym: centerSym, row: "center" as const },
+                { sym: belowSym, row: "below" as const },
+              ];
+
+              return (
+                <div
+                  key={col}
+                  className={`rounded-xl border transition-all duration-300 overflow-hidden ${
+                    isMatch && showWin
+                      ? "border-yellow-400/60"
+                      : "border-yellow-400/10"
+                  }`}
+                  style={{
+                    width: "clamp(52px, 16vw, 76px)",
+                    background: "rgba(0,0,0,0.5)",
+                    boxShadow: isMatch && showWin
+                      ? "0 0 20px rgba(234, 179, 8, 0.3)"
+                      : "inset 0 2px 8px rgba(0,0,0,0.6)",
+                  }}
+                >
+                  {rows.map(({ sym, row }) => {
+                    const isCenter = row === "center";
+                    const isCenterMatch = isCenter && isMatch;
+
+                    return (
+                      <div
+                        key={row}
+                        className={`flex items-center justify-center transition-all ${
+                          isCenter
+                            ? "bg-black/30"
+                            : "bg-black/60"
+                        } ${
+                          isCenterMatch && showWin ? "bg-yellow-400/10" : ""
+                        }`}
+                        style={{
+                          height: "clamp(44px, 13vw, 64px)",
+                        }}
+                      >
+                        <span
+                          className={`select-none transition-all ${
+                            isCenter ? "text-2xl sm:text-3xl" : "text-lg sm:text-xl"
+                          } ${
+                            !isCenter ? "opacity-40 grayscale-[30%]" : ""
+                          } ${
+                            !stopped ? "slot-spinning opacity-60" : ""
+                          } ${
+                            stopped && !isSpinning && isCenter ? "slot-landed" : ""
+                          } ${
+                            isCenterMatch && showWin ? "slot-match-symbol opacity-100" : ""
+                          }`}
+                          style={{ lineHeight: 1 }}
+                        >
+                          {getSymbolEmoji(sym)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Win Display */}
+        <div className="h-12 flex items-center justify-center relative">
+          {showWin && lastWin > 0 ? (
+            <div className="slot-win-text flex items-center gap-2">
+              <span
+                className="text-lg sm:text-xl font-black tracking-wide"
+                style={{
+                  background: "linear-gradient(90deg, #ffd700, #ffed4a, #ffd700)",
+                  WebkitBackgroundClip: "text",
+                  WebkitTextFillColor: "transparent",
+                  backgroundSize: "200% 100%",
+                  animation: "slot-jackpot-flash 1s ease-in-out infinite",
+                }}
+              >
+                🎉 WIN {formatCoins(lastWin)} COINS! 🎉
+              </span>
+            </div>
+          ) : isSpinning ? (
+            <span className="text-xs text-yellow-400/50 font-mono animate-pulse">
+              SPINNING...
+            </span>
+          ) : lastWin === 0 && totalSpins > 0 ? (
+            <span className="text-xs text-muted-foreground/50">
+              Try again...
+            </span>
+          ) : null}
+        </div>
+
+        {/* Multi-spin progress */}
+        {isMultiSpinning && (
+          <div className="px-4 pb-2">
+            <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-yellow-400/5 border border-yellow-400/20">
+              <div className="flex-1">
+                <div className="flex items-center justify-between text-xs mb-1">
+                  <span className="text-yellow-400/70 font-medium">
+                    Auto-Spin: {spinsLeft} left
+                  </span>
+                  <span className="text-muted-foreground font-mono">
+                    Net: <span className={multiSpinWins - multiSpinTotal >= 0 ? "text-green-400" : "text-red-400"}>
+                      {multiSpinWins - multiSpinTotal >= 0 ? "+" : ""}{multiSpinWins - multiSpinTotal}
+                    </span>
+                  </span>
+                </div>
+                <div className="h-1.5 rounded-full bg-black/40 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-yellow-400 transition-all duration-300"
+                    style={{
+                      width: `${((multiSpins - spinsLeft) / multiSpins) * 100}%`,
+                    }}
+                  />
+                </div>
+              </div>
+              <button
+                onClick={cancelMultiSpin}
+                className="p-1.5 rounded-lg bg-red-500/20 border border-red-500/30 text-red-400 hover:bg-red-500/30 transition-colors"
+              >
+                <Square className="h-3 w-3" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Controls */}
+        <div className="px-4 pb-4 space-y-3">
+          {/* Bet amount */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-semibold text-yellow-400/60 uppercase tracking-wider">Bet Amount</span>
+              <span className="text-[10px] text-muted-foreground/60 font-mono">
+                Balance: <span className="text-yellow-400">{formatCoins(myBalance)}</span>
+              </span>
+            </div>
+            <div className="flex gap-1.5 flex-wrap">
+              {quickBets.map((q) => (
+                <button
+                  key={q}
+                  onClick={() => setBetAmount(q)}
+                  disabled={isSpinning || isMultiSpinning}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all border ${
+                    betAmount === q
+                      ? "bg-yellow-400 text-black border-yellow-400 shadow-lg shadow-yellow-400/20"
+                      : "border-yellow-400/20 text-yellow-400/70 hover:border-yellow-400/50 hover:bg-yellow-400/5 bg-black/30"
+                  }`}
+                >
+                  {q}
+                </button>
+              ))}
+              <button
+                onClick={() => setBetAmount(myBalance)}
+                disabled={isSpinning || isMultiSpinning}
+                className={`px-3 py-1.5 rounded-lg text-xs font-black tracking-wide transition-all border ${
+                  betAmount === myBalance
+                    ? "bg-red-500 text-white border-red-500 shadow-lg shadow-red-500/20"
+                    : "border-red-500/30 text-red-400/70 hover:border-red-500/50 hover:bg-red-500/5 bg-black/30"
+                }`}
+              >
+                ALL IN
+              </button>
+            </div>
+          </div>
+
+          {/* Multi-spin selector */}
+          <div className="space-y-1.5">
+            <span className="text-[10px] font-semibold text-yellow-400/60 uppercase tracking-wider">Spins</span>
+            <div className="flex gap-1.5 flex-wrap">
+              {multiSpinOptions.map((n) => (
+                <button
+                  key={n}
+                  onClick={() => setMultiSpins(n)}
+                  disabled={isSpinning || isMultiSpinning}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all border ${
+                    multiSpins === n
+                      ? "bg-yellow-400/20 text-yellow-400 border-yellow-400/50"
+                      : "border-yellow-400/10 text-yellow-400/40 hover:border-yellow-400/30 hover:text-yellow-400/60 bg-black/30"
+                  }`}
+                >
+                  {n === 1 ? "1×" : `${n}×`}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Spin button */}
+          <button
+            onClick={multiSpins > 1 ? handleMultiSpin : () => doSpin(true)}
+            disabled={isSpinning || isMultiSpinning || myBalance < betAmount}
+            className={`w-full py-3.5 rounded-xl font-black text-base tracking-wide transition-all border-2 relative overflow-hidden ${
+              isSpinning || isMultiSpinning || myBalance < betAmount
+                ? "bg-yellow-400/10 text-yellow-400/30 border-yellow-400/10 cursor-not-allowed"
+                : "bg-yellow-400 text-black border-yellow-500 hover:bg-yellow-300 hover:shadow-xl hover:shadow-yellow-400/30 active:scale-[0.98]"
+            }`}
+          >
+            {isSpinning ? (
+              <span className="flex items-center justify-center gap-2">
+                <RefreshCw className="h-5 w-5 animate-spin" />
+                SPINNING...
+              </span>
+            ) : isMultiSpinning ? (
+              <span className="flex items-center justify-center gap-2">
+                <RefreshCw className="h-5 w-5 animate-spin" />
+                AUTO-SPINNING ({spinsLeft} left)
+              </span>
+            ) : (
+              <span className="flex items-center justify-center gap-2">
+                <Play className="h-5 w-5" />
+                {multiSpins > 1
+                  ? `SPIN ${multiSpins}× (${formatCoins(betAmount * multiSpins)} total)`
+                  : `SPIN — ${formatCoins(betAmount)} coins`}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Session stats */}
+        <div className="px-4 pb-4">
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded-lg bg-black/40 border border-yellow-400/10 p-2 text-center">
+              <div className="text-[9px] text-yellow-400/40 uppercase font-semibold">Spins</div>
+              <div className="text-sm font-mono font-bold text-yellow-400/80">{totalSpins}</div>
+            </div>
+            <div className="rounded-lg bg-black/40 border border-green-400/10 p-2 text-center">
+              <div className="text-[9px] text-green-400/40 uppercase font-semibold">Won</div>
+              <div className="text-sm font-mono font-bold text-green-400/80">{formatCoins(sessionWins)}</div>
+            </div>
+            <div className="rounded-lg bg-black/40 border border-red-400/10 p-2 text-center">
+              <div className="text-[9px] text-red-400/40 uppercase font-semibold">Lost</div>
+              <div className="text-sm font-mono font-bold text-red-400/80">{formatCoins(sessionLosses)}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Payout Table Toggle */}
+      <button
+        onClick={() => setShowPayouts(!showPayouts)}
+        className="w-full flex items-center justify-between px-4 py-2.5 rounded-xl border border-yellow-400/20 bg-black/30 hover:border-yellow-400/40 transition-all group"
+      >
+        <span className="text-xs font-semibold text-yellow-400/60 uppercase tracking-wider flex items-center gap-2">
+          <Coins className="h-3.5 w-3.5" />
+          Payout Table
+        </span>
+        {showPayouts ? (
+          <ChevronUp className="h-4 w-4 text-yellow-400/40 group-hover:text-yellow-400/60 transition-colors" />
+        ) : (
+          <ChevronDown className="h-4 w-4 text-yellow-400/40 group-hover:text-yellow-400/60 transition-colors" />
+        )}
+      </button>
+
+      {showPayouts && (
+        <div className="rounded-xl border border-yellow-400/20 overflow-hidden" style={{ background: "#0a0a0a" }}>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-yellow-400/10">
+                <th className="text-left px-3 py-2 text-yellow-400/50 font-semibold">Symbol</th>
+                <th className="text-center px-2 py-2 text-yellow-400/50 font-semibold">5×</th>
+                <th className="text-center px-2 py-2 text-yellow-400/50 font-semibold">4×</th>
+                <th className="text-center px-2 py-2 text-yellow-400/50 font-semibold">3×</th>
+              </tr>
+            </thead>
+            <tbody>
+              {SLOT_PAYOUTS_UI.map((row) => (
+                <tr key={row.symbol} className="border-b border-yellow-400/5 hover:bg-yellow-400/5 transition-colors">
+                  <td className="px-3 py-2 font-medium">
+                    <span className="mr-2">{row.emoji}</span>
+                    <span className="text-muted-foreground/70 capitalize">{row.symbol}</span>
+                  </td>
+                  <td className="text-center px-2 py-2 font-mono font-bold text-yellow-400">{row.x5}×</td>
+                  <td className="text-center px-2 py-2 font-mono font-bold text-yellow-400/70">{row.x4}×</td>
+                  <td className="text-center px-2 py-2 font-mono font-bold text-yellow-400/50">{row.x3}×</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type Tab = "markets" | "my-bets" | "leaderboard" | "slots";
 
 export default function BettingPage() {
   const [activeTab, setActiveTab] = useState<Tab>("markets");
@@ -1882,6 +2558,7 @@ export default function BettingPage() {
 
   const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
     { id: "markets",     label: "Markets",     icon: Swords },
+    { id: "slots",       label: "Slots",       icon: Dices },
     { id: "my-bets",     label: "My Bets",     icon: Coins },
     { id: "leaderboard", label: "Leaderboard", icon: Trophy },
   ];
@@ -1892,7 +2569,7 @@ export default function BettingPage() {
       <div className="flex items-start justify-between">
         <div>
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-amber-500 to-yellow-400 flex items-center justify-center shadow-lg shadow-amber-500/20">
+            <div className="h-10 w-10 rounded-xl bg-yellow-400 flex items-center justify-center shadow-lg shadow-yellow-400/20">
               <Coins className="h-5 w-5 text-black" />
             </div>
             <div>
@@ -1903,9 +2580,9 @@ export default function BettingPage() {
         </div>
         {/* Balance pill */}
         {balanceLive && (
-          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/30">
-            <span className="text-amber-400 font-black font-mono text-lg">{formatCoins(myBalance)}</span>
-            <Coins className="h-5 w-5 text-amber-400" />
+          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-muted/40 border border-border/50">
+            <span className="text-yellow-400 font-black font-mono text-lg">{formatCoins(myBalance)}</span>
+            <Coins className="h-5 w-5 text-yellow-400" />
           </div>
         )}
       </div>
@@ -1931,6 +2608,9 @@ export default function BettingPage() {
       {/* Tab content */}
       {activeTab === "markets" && (
         <MarketsTab eventKey={eventKey} myBalance={myBalance} isAdmin={isAdminMode} />
+      )}
+      {activeTab === "slots" && (
+        <SlotMachine eventKey={eventKey} myBalance={myBalance} />
       )}
       {activeTab === "my-bets" && <MyBetsTab eventKey={eventKey} />}
       {activeTab === "leaderboard" && <LeaderboardTab eventKey={eventKey} />}

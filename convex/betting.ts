@@ -222,12 +222,12 @@ export const batchCreateRandomMarkets = mutation({
         await ctx.db.insert("bettingMarkets", {
           eventKey,
           title:       `${m.matchLabel} — Match Winner`,
-          description: `Statbotics predicted win probability: 🔴 ${m.seedRed}% · 🔵 ${m.seedBlue}%`,
+          description: `Statbotics predicted win probability: Red ${m.seedRed}% · Blue ${m.seedBlue}%`,
           type:        "match_winner",
           matchNumber: m.matchNumber,
           options: [
-            { id: "red",  label: "🔴 Red Alliance",  seedPool: m.seedRed  },
-            { id: "blue", label: "🔵 Blue Alliance", seedPool: m.seedBlue },
+            { id: "red",  label: "Red Alliance",  seedPool: m.seedRed  },
+            { id: "blue", label: "Blue Alliance", seedPool: m.seedBlue },
           ],
           status:    "open",
           createdAt: Date.now(),
@@ -303,8 +303,8 @@ export const batchCreateMatchMarkets = mutation({
         type:        "match_winner",
         matchNumber: m.matchNumber,
         options: [
-          { id: "red",  label: "🔴 Red Alliance",  seedPool: m.seedRed  },
-          { id: "blue", label: "🔵 Blue Alliance", seedPool: m.seedBlue },
+          { id: "red",  label: "Red Alliance",  seedPool: m.seedRed  },
+          { id: "blue", label: "Blue Alliance", seedPool: m.seedBlue },
         ],
         status:    "open",
         createdAt: Date.now(),
@@ -403,23 +403,6 @@ export const resolveMarket = mutation({
           });
         }
       }
-    }
-
-    // ── Penalty: deduct coins from users who skipped this market ──────────────
-    const bettedUserIds = new Set(allBets.map((b) => b.userId));
-
-    const allBalances = await ctx.db.query("userBalances").collect();
-    const eventBalances = allBalances.filter((b) => b.eventKey === market.eventKey);
-
-    for (const bal of eventBalances) {
-      if (bettedUserIds.has(bal.userId)) continue; // they bet — no penalty
-      const penalty = Math.round(bal.balance * 0.10); // 10% of current balance
-      if (penalty <= 0) continue;
-      await ctx.db.patch(bal._id, {
-        balance:        bal.balance - penalty,
-        totalLost:      bal.totalLost + penalty,
-        totalPenalties: (bal.totalPenalties ?? 0) + penalty,
-      });
     }
 
     // Mark market resolved
@@ -631,6 +614,126 @@ export const clearAllMarkets = mutation({
       marketsDeleted: markets.length,
       betsDeleted:    eventBets.length,
       balancesReset:  eventBalances.length,
+    };
+  },
+});
+
+// ── Slot Machine ──────────────────────────────────────────────────────────────
+
+const SLOT_SYMBOLS = ["lemon", "cherry", "bell", "star", "seven", "money"] as const;
+const SLOT_WEIGHTS = [30, 25, 20, 12, 8, 5]; // total = 100
+const SLOT_PAYOUTS: Record<string, Record<number, number>> = {
+  money:  { 5: 500, 4: 50, 3: 10 },
+  seven:  { 5: 100, 4: 20, 3: 5 },
+  star:   { 5: 50,  4: 10, 3: 3 },
+  bell:   { 5: 20,  4: 5,  3: 1.5 },
+  cherry: { 5: 10,  4: 3,  3: 1 },
+  lemon:  { 5: 5,   4: 2,  3: 0.5 },
+};
+
+function weightedSlotSymbol(): string {
+  const r = Math.random() * 100;
+  let cum = 0;
+  for (let i = 0; i < SLOT_SYMBOLS.length; i++) {
+    cum += SLOT_WEIGHTS[i];
+    if (r < cum) return SLOT_SYMBOLS[i];
+  }
+  return SLOT_SYMBOLS[0];
+}
+
+/**
+ * Spin the slot machine. Deducts betAmount, generates 5 weighted-random reels,
+ * computes payout from the best N-of-a-kind, and credits winnings.
+ * Returns the reel results, payout, and updated balance.
+ */
+export const spinSlot = mutation({
+  args: {
+    eventKey:  v.string(),
+    betAmount: v.number(),
+  },
+  handler: async (ctx, { eventKey, betAmount }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    if (betAmount < 10) throw new Error("Minimum bet is 10 coins");
+
+    // Get or create balance
+    let bal = await ctx.db
+      .query("userBalances")
+      .withIndex("by_user_event", (q) =>
+        q.eq("userId", userId).eq("eventKey", eventKey)
+      )
+      .first();
+
+    if (!bal) {
+      const id = await ctx.db.insert("userBalances", {
+        userId,
+        eventKey,
+        balance:   STARTING_BALANCE,
+        totalWon:  0,
+        totalLost: 0,
+        totalBet:  0,
+        totalBegs: 0,
+      });
+      bal = (await ctx.db.get(id))!;
+    }
+
+    if (bal.balance < betAmount) throw new Error("Insufficient balance");
+
+    // Deduct bet immediately
+    await ctx.db.patch(bal._id, {
+      balance:  bal.balance - betAmount,
+      totalBet: bal.totalBet + betAmount,
+    });
+
+    // Generate 5 reels
+    const reels: string[] = [];
+    for (let i = 0; i < 5; i++) reels.push(weightedSlotSymbol());
+
+    // Count occurrences of each symbol
+    const counts: Record<string, number> = {};
+    for (const s of reels) counts[s] = (counts[s] ?? 0) + 1;
+
+    // Find best payout: check each symbol's count against the payout table
+    let payout = 0;
+    let winSymbol = "";
+    let winCount = 0;
+    for (const [sym, cnt] of Object.entries(counts)) {
+      const table = SLOT_PAYOUTS[sym];
+      if (!table) continue;
+      // Check 5, then 4, then 3
+      for (const n of [5, 4, 3] as const) {
+        if (cnt >= n && table[n]) {
+          const p = Math.floor(betAmount * table[n]);
+          if (p > payout) {
+            payout = p;
+            winSymbol = sym;
+            winCount = n;
+          }
+          break; // take best match count for this symbol
+        }
+      }
+    }
+
+    // Credit winnings
+    const updated = (await ctx.db.get(bal._id))!;
+    if (payout > 0) {
+      await ctx.db.patch(bal._id, {
+        balance:  updated.balance + payout,
+        totalWon: updated.totalWon + payout,
+      });
+    } else {
+      await ctx.db.patch(bal._id, {
+        totalLost: updated.totalLost + betAmount,
+      });
+    }
+
+    const final = (await ctx.db.get(bal._id))!;
+    return {
+      reels,
+      payout,
+      winSymbol,
+      winCount,
+      newBalance: final.balance,
     };
   },
 });
