@@ -21,6 +21,7 @@ export default defineConfig({
       workbox: {
         // Cache ALL static build output
         globPatterns: ['**/*.{js,ts,css,html,ico,png,jpg,jpeg,gif,svg,woff,woff2,ttf,eot,webp,json}'],
+        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024, // 4 MiB (default is 2 MiB)
 
         // SPA navigation fallback — any document request that misses the cache
         // is served the cached index.html so routes work offline.
