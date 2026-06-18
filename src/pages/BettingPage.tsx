@@ -1881,13 +1881,13 @@ const SLOT_SYMBOLS_UI = [
   { id: "money",  emoji: "💰", label: "Jackpot", color: "text-yellow-400" },
 ] as const;
 
-const SLOT_PAYOUTS_UI: { symbol: string; emoji: string; x5: number; x4: number; x3: number }[] = [
-  { symbol: "money",  emoji: "💰", x5: 500, x4: 50, x3: 10 },
-  { symbol: "seven",  emoji: "7️⃣",  x5: 100, x4: 20, x3: 5 },
-  { symbol: "star",   emoji: "⭐", x5: 50,  x4: 10, x3: 3 },
-  { symbol: "bell",   emoji: "🔔", x5: 20,  x4: 5,  x3: 1.5 },
-  { symbol: "cherry", emoji: "🍒", x5: 10,  x4: 3,  x3: 1 },
-  { symbol: "lemon",  emoji: "🍋", x5: 5,   x4: 2,  x3: 0.5 },
+const SLOT_PAYOUTS_UI: { symbol: string; emoji: string; x5: number; x4: number; x3: number; x2: number }[] = [
+  { symbol: "money",  emoji: "💰", x5: 500, x4: 75, x3: 15,  x2: 0.5  },
+  { symbol: "seven",  emoji: "7️⃣",  x5: 150, x4: 30, x3: 8,   x2: 0.4  },
+  { symbol: "star",   emoji: "⭐", x5: 75,  x4: 15, x3: 4,   x2: 0.3  },
+  { symbol: "bell",   emoji: "🔔", x5: 30,  x4: 8,  x3: 2,   x2: 0.2  },
+  { symbol: "cherry", emoji: "🍒", x5: 15,  x4: 5,  x3: 1.5, x2: 0.15 },
+  { symbol: "lemon",  emoji: "🍋", x5: 8,   x4: 3,  x3: 1,   x2: 0.1  },
 ];
 
 function getSymbolEmoji(id: string): string {
@@ -2198,7 +2198,7 @@ function SlotMachine({ eventKey, myBalance }: { eventKey: string; myBalance: num
           >
             FALCON SLOTS
           </div>
-          {winStreak >= 3 && (
+          {winStreak >= 3 && winStreak <= 10 && (
             <div className="absolute top-3 right-4 flex items-center gap-1 px-2 py-1 rounded-full bg-red-500/20 border border-red-500/40">
               <Flame className="h-3.5 w-3.5 text-red-400 slot-streak" />
               <span className="text-xs font-black text-red-400 slot-streak">
@@ -2497,6 +2497,7 @@ function SlotMachine({ eventKey, myBalance }: { eventKey: string; myBalance: num
                 <th className="text-center px-2 py-2 text-yellow-400/50 font-semibold">5×</th>
                 <th className="text-center px-2 py-2 text-yellow-400/50 font-semibold">4×</th>
                 <th className="text-center px-2 py-2 text-yellow-400/50 font-semibold">3×</th>
+                <th className="text-center px-2 py-2 text-yellow-400/50 font-semibold">2×</th>
               </tr>
             </thead>
             <tbody>
@@ -2509,6 +2510,7 @@ function SlotMachine({ eventKey, myBalance }: { eventKey: string; myBalance: num
                   <td className="text-center px-2 py-2 font-mono font-bold text-yellow-400">{row.x5}×</td>
                   <td className="text-center px-2 py-2 font-mono font-bold text-yellow-400/70">{row.x4}×</td>
                   <td className="text-center px-2 py-2 font-mono font-bold text-yellow-400/50">{row.x3}×</td>
+                  <td className="text-center px-2 py-2 font-mono font-bold text-yellow-400/30">{row.x2}×</td>
                 </tr>
               ))}
             </tbody>

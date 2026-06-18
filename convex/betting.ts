@@ -621,14 +621,16 @@ export const clearAllMarkets = mutation({
 // ── Slot Machine ──────────────────────────────────────────────────────────────
 
 const SLOT_SYMBOLS = ["lemon", "cherry", "bell", "star", "seven", "money"] as const;
-const SLOT_WEIGHTS = [30, 25, 20, 12, 8, 5]; // total = 100
+// Flatter distribution → more high-value symbols land, more matches overall
+const SLOT_WEIGHTS = [22, 22, 20, 16, 12, 8]; // total = 100
 const SLOT_PAYOUTS: Record<string, Record<number, number>> = {
-  money:  { 5: 500, 4: 50, 3: 10 },
-  seven:  { 5: 100, 4: 20, 3: 5 },
-  star:   { 5: 50,  4: 10, 3: 3 },
-  bell:   { 5: 20,  4: 5,  3: 1.5 },
-  cherry: { 5: 10,  4: 3,  3: 1 },
-  lemon:  { 5: 5,   4: 2,  3: 0.5 },
+  //                5-kind  4-kind  3-kind  2-kind (tiny consolation)
+  money:  { 5: 500, 4: 75,  3: 15,  2: 0.5  },
+  seven:  { 5: 150, 4: 30,  3: 8,   2: 0.4  },
+  star:   { 5: 75,  4: 15,  3: 4,   2: 0.3  },
+  bell:   { 5: 30,  4: 8,   3: 2,   2: 0.2  },
+  cherry: { 5: 15,  4: 5,   3: 1.5, 2: 0.15 },
+  lemon:  { 5: 8,   4: 3,   3: 1,   2: 0.1  },
 };
 
 function weightedSlotSymbol(): string {
@@ -700,8 +702,8 @@ export const spinSlot = mutation({
     for (const [sym, cnt] of Object.entries(counts)) {
       const table = SLOT_PAYOUTS[sym];
       if (!table) continue;
-      // Check 5, then 4, then 3
-      for (const n of [5, 4, 3] as const) {
+      // Check 5, then 4, then 3, then 2
+      for (const n of [5, 4, 3, 2] as const) {
         if (cnt >= n && table[n]) {
           const p = Math.floor(betAmount * table[n]);
           if (p > payout) {
