@@ -15,7 +15,7 @@ import {
   Plus, Zap, Lock, CheckCircle2, XCircle, RefreshCw,
   HandCoins, Swords, BarChart3, Target, ListFilter,
   BadgeCheck, AlertCircle, Timer, Users, X, Medal, Dices,
-  Flame, Square, Play,
+  Flame, Square, Play, Circle, ArrowDown, Bird,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,7 +34,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// -- Types ---------------------------------------------------------------------
 
 type MarketStatus = "open" | "locked" | "resolved" | "cancelled";
 type MarketType =
@@ -82,7 +82,7 @@ interface FormField {
   section?: string;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// -- Helpers -------------------------------------------------------------------
 
 function matchLabel(m: TBAMatch): string {
   const lvl: Record<string, string> = { qm: "Q", ef: "EF", qf: "QF", sf: "SF", f: "F" };
@@ -144,14 +144,14 @@ const TYPE_ICONS: Record<MarketType, React.ElementType> = {
   multi_match_count:   ListFilter,
 };
 
-// ── Emoji stripping helper ──────────────────────────────────────────────────────
+// -- Emoji stripping helper ------------------------------------------------------
 
 /** Strip common circle/arrow emojis that were baked into old DB records. */
 function stripEmojis(text: string): string {
-  return text.replace(/[\u{1F534}\u{1F535}\u{2B06}\u{2B07}\u{26AA}\u{2B55}\u{1F7E0}\u{1F7E1}\u{1F7E2}\u{1F7E3}\u{1F7E4}\u{2764}\u{1F499}\u{1F534}\u{1F535}⬆⬇]/gu, "").replace(/\s{2,}/g, " ").trim();
+  return text.replace(/[\u{1F534}\u{1F535}\u{2B06}\u{2B07}\u{26AA}\u{2B55}\u{1F7E0}\u{1F7E1}\u{1F7E2}\u{1F7E3}\u{1F7E4}\u{2764}\u{1F499}\u{1F534}\u{1F535}UPDOWN]/gu, "").replace(/\s{2,}/g, " ").trim();
 }
 
-// ── Alliance Label ──────────────────────────────────────────────────────────────
+// -- Alliance Label --------------------------------------------------------------
 
 function AllianceLabel({ label }: { label: string }) {
   const cleaned = stripEmojis(label);
@@ -176,7 +176,7 @@ function ColorizedDescription({ text }: { text: string }) {
   );
 }
 
-// ── Probability Bar ───────────────────────────────────────────────────────────
+// -- Probability Bar -----------------------------------------------------------
 
 function ProbBar({
   options,
@@ -225,7 +225,7 @@ function ProbBar({
   );
 }
 
-// ── Bet Placement Panel ───────────────────────────────────────────────────────
+// -- Bet Placement Panel -------------------------------------------------------
 
 function BetPanel({
   market,
@@ -335,13 +335,13 @@ function BetPanel({
         className="w-full font-bold bg-yellow-400 hover:bg-yellow-500 text-black border-0"
       >
         {placing ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <Coins className="h-4 w-4 mr-2" />}
-        {placing ? "Placing…" : `Bet ${amount} coins`}
+        {placing ? "Placing..." : `Bet ${amount} coins`}
       </Button>
     </div>
   );
 }
 
-// ── Market Card ───────────────────────────────────────────────────────────────
+// -- Market Card ---------------------------------------------------------------
 
 function MarketCard({
   market,
@@ -466,7 +466,7 @@ function MarketCard({
                     {formatCoins(opt.seedPool + (realBets[opt.id] ?? 0))} <Coins className="h-3 w-3 text-amber-400" />
                   </p>
                   <p className="text-[10px] text-muted-foreground">
-                    {formatCoins(realBets[opt.id] ?? 0)} real · {formatCoins(opt.seedPool)} seed
+                    {formatCoins(realBets[opt.id] ?? 0)} real  -  {formatCoins(opt.seedPool)} seed
                   </p>
                 </div>
               ))}
@@ -551,7 +551,7 @@ function MarketCard({
   );
 }
 
-// ── Create Market Panel ───────────────────────────────────────────────────────
+// -- Create Market Panel -------------------------------------------------------
 
 
 /** Custom multi-select dropdown for picking matches (checkboxes). */
@@ -582,7 +582,7 @@ function MatchMultiSelect({
       >
         <span className="truncate text-left">
           {selected.size === 0
-            ? "Select matches…"
+            ? "Select matches..."
             : `${selected.size} match${selected.size !== 1 ? "es" : ""} selected`}
         </span>
         <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
@@ -666,7 +666,7 @@ function CreateMarketPanel({
 
   const isMultiMatch = type === "multi_match_numeric" || type === "multi_match_count";
 
-  // Match options from TBA — show all matches, marking played ones
+  // Match options from TBA  -  show all matches, marking played ones
   const sortedMatches = [...tbaMatches].sort((a, b) => {
     const levelOrder: Record<string, number> = { qm: 0, ef: 1, qf: 2, sf: 3, f: 4 };
     const la = levelOrder[a.comp_level] ?? 5;
@@ -714,7 +714,7 @@ function CreateMarketPanel({
   const multiMatchNumbers = selectedMultiMatches.map((m) => m.match_number);
 
 
-  // Selected template's bettable fields — filtered by the current market type
+  // Selected template's bettable fields  -  filtered by the current market type
   const selectedTemplate = templates?.find((t) => t._id === selectedTemplateId);
   const allowedFieldTypes: string[] =
     type === "team_field_bool"       ? ["checkbox"] :
@@ -755,16 +755,16 @@ function CreateMarketPanel({
       ? (selectedTbaStat?.label ?? "TBA Stat")
       : (selectedField?.label ?? "Field");
     switch (type) {
-      case "match_winner":       return `${mStr} — Match Winner`;
+      case "match_winner":       return `${mStr}  -  Match Winner`;
       case "alliance_score_ou":  return `${mStr} ${alliance.toUpperCase()} Score ${threshold ? `Over/Under ${threshold}` : "O/U"}`;
       case "point_differential": return `${mStr} Point Diff ${threshold ? `Over/Under ${threshold}` : "O/U"}`;
-      case "team_field_bool":    return `${mStr} Team ${teamNum} — ${fieldStr} Yes/No`;
-      case "team_field_numeric": return `${mStr} Team ${teamNum} — ${fieldStr} Over/Under ${threshold ?? "?"}`;
-      case "team_field_select":  return `${mStr} Team ${teamNum} — ${fieldStr} = "${targetValue}"`;
+      case "team_field_bool":    return `${mStr} Team ${teamNum}  -  ${fieldStr} Yes/No`;
+      case "team_field_numeric": return `${mStr} Team ${teamNum}  -  ${fieldStr} Over/Under ${threshold ?? "?"}`;
+      case "team_field_select":  return `${mStr} Team ${teamNum}  -  ${fieldStr} = "${targetValue}"`;
       case "multi_match_numeric":
-        return `${scopeStr} — Total ${fieldStr} O/U ${threshold ?? "?"} across ${multiMatchLabels || "?"}`;
+        return `${scopeStr}  -  Total ${fieldStr} O/U ${threshold ?? "?"} across ${multiMatchLabels || "?"}`;
       case "multi_match_count":
-        return `${scopeStr} — ${fieldStr} in ≥${minCount || "?"} of ${multiMatchLabels || "?"}`;
+        return `${scopeStr}  -  ${fieldStr} in >=${minCount || "?"} of ${multiMatchLabels || "?"}`;
       default: return "Custom Market";
     }
   }
@@ -881,7 +881,7 @@ function CreateMarketPanel({
 
           <div className="space-y-3 py-1">
 
-            {/* Market Type — inline label + select side by side */}
+            {/* Market Type  -  inline label + select side by side */}
             <div className="flex items-center gap-3">
               <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Market Type</Label>
               <Select value={type} onValueChange={(v) => { setType(v as MarketType); setSelectedFieldId(""); setTeamNum(""); setSelectedMatchKeys(new Set()); setDataSource("scouting"); setTbaField(""); }}>
@@ -903,13 +903,13 @@ function CreateMarketPanel({
 
             <div className="border-t border-border/40" />
 
-            {/* Match (single) — for non-multi-match types */}
+            {/* Match (single)  -  for non-multi-match types */}
             {!isMultiMatch && (
               <div className="flex items-center gap-3">
                 <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Match</Label>
                 <Select value={matchNum} onValueChange={(v) => { setMatchNum(v ?? ""); setTeamNum(""); }}>
                   <SelectTrigger className="flex-1 h-8 text-sm [&>span]:truncate">
-                    <SelectValue placeholder="Select match…">
+                    <SelectValue placeholder="Select match...">
                       {selectedMatch ? (isPlayed(selectedMatch) ? `${matchLabel(selectedMatch)} (played)` : matchLabel(selectedMatch)) : undefined}
                     </SelectValue>
                   </SelectTrigger>
@@ -922,7 +922,7 @@ function CreateMarketPanel({
               </div>
             )}
 
-            {/* Multi-match selector — checkbox dropdown */}
+            {/* Multi-match selector  -  checkbox dropdown */}
             {isMultiMatch && (
               <div className="flex items-center gap-3">
                 <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Matches</Label>
@@ -956,7 +956,7 @@ function CreateMarketPanel({
               </div>
             )}
 
-            {/* Alliance toggle — for alliance_score_ou */}
+            {/* Alliance toggle  -  for alliance_score_ou */}
             {type === "alliance_score_ou" && (
               <div className="flex items-center gap-3">
                 <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Alliance</Label>
@@ -979,7 +979,7 @@ function CreateMarketPanel({
               </div>
             )}
 
-            {/* Target scope toggle — for multi-match types */}
+            {/* Target scope toggle  -  for multi-match types */}
             {isMultiMatch && (
               <div className="flex items-center gap-3">
                 <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Scope</Label>
@@ -1002,7 +1002,7 @@ function CreateMarketPanel({
               </div>
             )}
 
-            {/* Alliance selector — shown for multi-match alliance scope */}
+            {/* Alliance selector  -  shown for multi-match alliance scope */}
             {isMultiMatch && targetScope === "alliance" && (
               <div className="flex items-center gap-3">
                 <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Alliance</Label>
@@ -1025,7 +1025,7 @@ function CreateMarketPanel({
               </div>
             )}
 
-            {/* Team dropdown — for single-match team types (uses match teams) */}
+            {/* Team dropdown  -  for single-match team types (uses match teams) */}
             {(type === "team_field_bool" || type === "team_field_numeric" || type === "team_field_select") && (
               <div className="flex items-center gap-3">
                 <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Team #</Label>
@@ -1035,7 +1035,7 @@ function CreateMarketPanel({
                   disabled={matchTeams.length === 0}
                 >
                   <SelectTrigger className="flex-1 h-8 text-sm [&>span]:truncate">
-                    <SelectValue placeholder={matchTeams.length === 0 ? "Select a match first…" : "Select team…"} />
+                    <SelectValue placeholder={matchTeams.length === 0 ? "Select a match first..." : "Select team..."} />
                   </SelectTrigger>
                   <SelectContent>
                     {matchTeams.map((t) => (
@@ -1046,7 +1046,7 @@ function CreateMarketPanel({
               </div>
             )}
 
-            {/* Team dropdown — for multi-match team scope (uses intersection of teams) */}
+            {/* Team dropdown  -  for multi-match team scope (uses intersection of teams) */}
             {isMultiMatch && targetScope === "team" && (
               <div className="flex items-center gap-3">
                 <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Team #</Label>
@@ -1057,9 +1057,9 @@ function CreateMarketPanel({
                 >
                   <SelectTrigger className="flex-1 h-8 text-sm [&>span]:truncate">
                     <SelectValue placeholder={
-                      selectedMatchKeys.size < 2 ? "Select ≥2 matches first…" :
+                      selectedMatchKeys.size < 2 ? "Select >=2 matches first..." :
                       multiMatchTeams.length === 0 ? "No teams in all matches" :
-                      "Select team…"
+                      "Select team..."
                     } />
                   </SelectTrigger>
                   <SelectContent>
@@ -1092,7 +1092,7 @@ function CreateMarketPanel({
               </div>
             )}
 
-            {/* Data source toggle — for multi_match_numeric */}
+            {/* Data source toggle  -  for multi_match_numeric */}
             {type === "multi_match_numeric" && (
               <div className="flex items-center gap-3">
                 <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Source</Label>
@@ -1115,13 +1115,13 @@ function CreateMarketPanel({
               </div>
             )}
 
-            {/* TBA stat picker — shown when multi_match_numeric + tba source */}
+            {/* TBA stat picker  -  shown when multi_match_numeric + tba source */}
             {useTbaSource && (
               <div className="flex items-center gap-3">
                 <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">TBA Stat</Label>
                 <Select value={tbaField} onValueChange={(v) => setTbaField(v ?? "")}>
                   <SelectTrigger className="flex-1 h-8 text-sm [&>span]:truncate">
-                    <SelectValue placeholder="Select stat…">
+                    <SelectValue placeholder="Select stat...">
                       {selectedTbaStat ? selectedTbaStat.label : undefined}
                     </SelectValue>
                   </SelectTrigger>
@@ -1141,7 +1141,7 @@ function CreateMarketPanel({
                   <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Form</Label>
                   <Select value={selectedTemplateId} onValueChange={(v) => { setSelectedTemplateId(v ?? ""); setSelectedFieldId(""); }}>
                     <SelectTrigger className="flex-1 h-8 text-sm [&>span]:truncate">
-                      <SelectValue placeholder="Select form…">
+                      <SelectValue placeholder="Select form...">
                         {selectedTemplate ? selectedTemplate.name : undefined}
                       </SelectValue>
                     </SelectTrigger>
@@ -1158,7 +1158,7 @@ function CreateMarketPanel({
                     <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Field</Label>
                     <Select value={selectedFieldId} onValueChange={(v) => setSelectedFieldId(v ?? "")}>
                       <SelectTrigger className="flex-1 h-8 text-sm [&>span]:truncate">
-                      <SelectValue placeholder="Select field…">
+                      <SelectValue placeholder="Select field...">
                         {selectedField ? `${selectedField.label} (${selectedField.type})` : undefined}
                       </SelectValue>
                       </SelectTrigger>
@@ -1185,7 +1185,7 @@ function CreateMarketPanel({
                 <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Target</Label>
                 <Select value={targetValue} onValueChange={(v) => setTargetValue(v ?? "")}>
                   <SelectTrigger className="flex-1 h-8 text-sm [&>span]:truncate">
-                    <SelectValue placeholder="Select value…" />
+                    <SelectValue placeholder="Select value..." />
                   </SelectTrigger>
                   <SelectContent>
                     {selectedField.options.map((o) => (
@@ -1196,7 +1196,7 @@ function CreateMarketPanel({
               </div>
             )}
 
-            {/* Min count — for multi_match_count */}
+            {/* Min count  -  for multi_match_count */}
             {type === "multi_match_count" && (
               <div className="flex items-center gap-3">
                 <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Threshold</Label>
@@ -1238,7 +1238,7 @@ function CreateMarketPanel({
                 <div className="flex gap-1.5 flex-wrap mt-1">
                   <span className="text-[10px] text-muted-foreground">
                     Scope: {targetScope === "team" ? `Team ${teamNum || "?"}` : targetScope === "alliance" ? `${alliance} alliance` : "Anyone"}
-                    {" · "}{selectedMatchKeys.size} matches
+                    {"  -  "}{selectedMatchKeys.size} matches
                   </span>
                 </div>
               )}
@@ -1250,7 +1250,7 @@ function CreateMarketPanel({
               className="w-full font-bold"
             >
               {creating ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
-              {creating ? "Creating…" : "Create Market"}
+              {creating ? "Creating..." : "Create Market"}
             </Button>
           </div>
         </DialogContent>
@@ -1259,7 +1259,7 @@ function CreateMarketPanel({
   );
 }
 
-// ── Markets Tab ───────────────────────────────────────────────────────────────
+// -- Markets Tab ---------------------------------------------------------------
 
 const TYPE_FILTER_LABELS: Record<string, string> = {
   all:                "All",
@@ -1322,7 +1322,7 @@ function MarketsTab({
       const redEpa  = redTeams.reduce((s, t) => s + (epaMap[t] ?? 30), 0);
       const blueEpa = blueTeams.reduce((s, t) => s + (epaMap[t] ?? 30), 0);
       const total   = redEpa + blueEpa || 1;
-      // Win probability seeds (1–99, summing to 100)
+      // Win probability seeds (1-99, summing to 100)
       const rawRedPct  = redEpa / total;
       const seedRed  = Math.max(1, Math.min(99, Math.round(rawRedPct * 100)));
       const seedBlue = 100 - seedRed;
@@ -1345,7 +1345,7 @@ function MarketsTab({
 
     // Use all matches (played or not) for initial seeding
     const all = tbaMatches.length > 0 ? tbaMatches : [];
-    if (all.length === 0) return; // no TBA data yet — wait
+    if (all.length === 0) return; // no TBA data yet  -  wait
 
     setDidAutoGenerate(true);
     setAutoGenerating(true);
@@ -1408,7 +1408,7 @@ function MarketsTab({
       if (created > 0) {
         toast.success(`Test: generated ${created} markets from all matches!`);
       } else {
-        toast.info("All matches already have markets — nothing new to create.");
+        toast.info("All matches already have markets  -  nothing new to create.");
       }
     } catch (e: unknown) {
       toast.error((e as Error).message ?? "Test generation failed");
@@ -1457,7 +1457,7 @@ function MarketsTab({
 
   return (
     <div className="space-y-4">
-      {/* Admin toolbar — only visible to admins */}
+      {/* Admin toolbar  -  only visible to admins */}
       {isAdmin && (
         <div className="flex flex-wrap gap-2 items-center p-3 rounded-xl bg-primary/5 border border-primary/20">
           <span className="text-xs font-semibold text-primary/70 uppercase tracking-wider flex items-center gap-1.5">
@@ -1474,7 +1474,7 @@ function MarketsTab({
               {autoGenerating
                 ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                 : <Zap className="h-3.5 w-3.5" />}
-              {autoGenerating ? "Generating…" : "Auto-Generate"}
+              {autoGenerating ? "Generating..." : "Auto-Generate"}
             </Button>
 
             <Button
@@ -1577,7 +1577,7 @@ function MarketsTab({
   );
 }
 
-// ── My Bets Tab ───────────────────────────────────────────────────────────────
+// -- My Bets Tab ---------------------------------------------------------------
 
 function MyBetsTab({ eventKey }: { eventKey: string }) {
   const balanceLive = useQuery(api.betting.getMyBalance, { eventKey });
@@ -1636,14 +1636,14 @@ function MyBetsTab({ eventKey }: { eventKey: string }) {
           <p className="text-sm text-amber-400/80 font-medium uppercase tracking-wider">Your Balance</p>
           <div className="flex items-end gap-3 mt-1">
             <span className="text-5xl font-black text-amber-400 font-mono tabular-nums">
-              {balance ? formatCoins(balance.balance) : "…"}
+              {balance ? formatCoins(balance.balance) : "..."}
             </span>
             <Coins className="h-7 w-7 text-amber-400/60 mb-1" />
           </div>
           <div className="flex gap-4 mt-3 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1"><TrendingUp className="h-3 w-3 text-amber-400" /> Won: <span className="text-amber-400 font-mono">{balance ? formatCoins(balance.totalWon) : "…"}</span></span>
-            <span className="flex items-center gap-1"><TrendingDown className="h-3 w-3 text-red-400" /> Lost: <span className="text-red-400 font-mono">{balance ? formatCoins(balance.totalLost) : "…"}</span></span>
-            <span className="flex items-center gap-1"><Coins className="h-3 w-3 text-amber-300" /> Bet: <span className="text-amber-300 font-mono">{balance ? formatCoins(balance.totalBet) : "…"}</span></span>
+            <span className="flex items-center gap-1"><TrendingUp className="h-3 w-3 text-amber-400" /> Won: <span className="text-amber-400 font-mono">{balance ? formatCoins(balance.totalWon) : "..."}</span></span>
+            <span className="flex items-center gap-1"><TrendingDown className="h-3 w-3 text-red-400" /> Lost: <span className="text-red-400 font-mono">{balance ? formatCoins(balance.totalLost) : "..."}</span></span>
+            <span className="flex items-center gap-1"><Coins className="h-3 w-3 text-amber-300" /> Bet: <span className="text-amber-300 font-mono">{balance ? formatCoins(balance.totalBet) : "..."}</span></span>
           </div>
           {(balance?.totalBegs ?? 0) > 0 && (
             <p className="text-[10px] text-muted-foreground/60 mt-1 flex items-center gap-1">
@@ -1662,7 +1662,7 @@ function MyBetsTab({ eventKey }: { eventKey: string }) {
             className="border-amber-500/40 text-amber-400 hover:bg-amber-500/10 font-semibold gap-2 relative overflow-hidden"
           >
             <HandCoins className="h-4 w-4" />
-            {begging ? "begging…" : begCooldown > 0 ? `wait ${begCooldown}s…` : "pls beg"}
+            {begging ? "begging..." : begCooldown > 0 ? `wait ${begCooldown}s...` : "pls beg"}
             {lastBegResult !== null && (
               <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-amber-400 font-bold text-xs animate-bounce">
                 +10
@@ -1713,7 +1713,7 @@ function MyBetsTab({ eventKey }: { eventKey: string }) {
                 <div className="text-right shrink-0">
                   <p className="font-mono font-bold text-amber-400 flex items-center gap-1 justify-end">{bet.amount} <Coins className="h-3 w-3" /></p>
                   <span className={`text-[10px] border px-1.5 py-0.5 rounded-full ${STATUS_CONFIG[market?.status ?? "open"].color}`}>
-                    {market ? STATUS_CONFIG[market.status].label : "…"}
+                    {market ? STATUS_CONFIG[market.status].label : "..."}
                   </span>
                 </div>
               </div>
@@ -1769,7 +1769,7 @@ function MyBetsTab({ eventKey }: { eventKey: string }) {
   );
 }
 
-// ── Leaderboard Tab ───────────────────────────────────────────────────────────
+// -- Leaderboard Tab -----------------------------------------------------------
 
 function LeaderboardTab({ eventKey }: { eventKey: string }) {
   const leaderboard = useQuery(api.betting.getLeaderboard, { eventKey });
@@ -1870,28 +1870,28 @@ function LeaderboardTab({ eventKey }: { eventKey: string }) {
   );
 }
 
-// ── Slot Machine ──────────────────────────────────────────────────────────────
+// -- Slot Machine --------------------------------------------------------------
 
 const SLOT_SYMBOLS_UI = [
-  { id: "lemon",  emoji: "🍋", label: "Lemon",   color: "text-yellow-300" },
-  { id: "cherry", emoji: "🍒", label: "Cherry",  color: "text-red-400" },
-  { id: "bell",   emoji: "🔔", label: "Bell",    color: "text-amber-400" },
-  { id: "star",   emoji: "⭐", label: "Star",    color: "text-yellow-400" },
-  { id: "seven",  emoji: "7️⃣",  label: "Seven",   color: "text-yellow-500" },
-  { id: "money",  emoji: "💰", label: "Jackpot", color: "text-yellow-400" },
+  { id: "lemon",  emoji: "W", label: "Lemon",   color: "text-yellow-300" },
+  { id: "cherry", emoji: "T", label: "Cherry",  color: "text-red-400" },
+  { id: "bell",   emoji: "L", label: "Bell",    color: "text-amber-400" },
+  { id: "star",   emoji: "S", label: "Star",    color: "text-yellow-400" },
+  { id: "seven",  emoji: "7",  label: "Seven",   color: "text-yellow-500" },
+  { id: "money",  emoji: "$", label: "Jackpot", color: "text-yellow-400" },
 ] as const;
 
 const SLOT_PAYOUTS_UI: { symbol: string; emoji: string; x5: number; x4: number; x3: number; x2: number }[] = [
-  { symbol: "money",  emoji: "💰", x5: 500, x4: 75, x3: 15,  x2: 0.5  },
-  { symbol: "seven",  emoji: "7️⃣",  x5: 150, x4: 30, x3: 8,   x2: 0.4  },
-  { symbol: "star",   emoji: "⭐", x5: 75,  x4: 15, x3: 4,   x2: 0.3  },
-  { symbol: "bell",   emoji: "🔔", x5: 30,  x4: 8,  x3: 2,   x2: 0.2  },
-  { symbol: "cherry", emoji: "🍒", x5: 15,  x4: 5,  x3: 1.5, x2: 0.15 },
-  { symbol: "lemon",  emoji: "🍋", x5: 8,   x4: 3,  x3: 1,   x2: 0.1  },
+  { symbol: "money",  emoji: "$", x5: 500, x4: 75, x3: 15,  x2: 0.5  },
+  { symbol: "seven",  emoji: "7",  x5: 150, x4: 30, x3: 8,   x2: 0.4  },
+  { symbol: "star",   emoji: "S", x5: 75,  x4: 15, x3: 4,   x2: 0.3  },
+  { symbol: "bell",   emoji: "L", x5: 30,  x4: 8,  x3: 2,   x2: 0.2  },
+  { symbol: "cherry", emoji: "T", x5: 15,  x4: 5,  x3: 1.5, x2: 0.15 },
+  { symbol: "lemon",  emoji: "W", x5: 8,   x4: 3,  x3: 1,   x2: 0.1  },
 ];
 
 function getSymbolEmoji(id: string): string {
-  return SLOT_SYMBOLS_UI.find((s) => s.id === id)?.emoji ?? "❓";
+  return SLOT_SYMBOLS_UI.find((s) => s.id === id)?.emoji ?? "?";
 }
 
 /** Coin particle for win animation */
@@ -1912,7 +1912,7 @@ function CoinParticle({ index: _index }: { index: number }) {
         transform: `rotate(${rotation}deg)`,
       }}
     >
-      🪙
+      $
     </div>
   );
 }
@@ -1948,11 +1948,11 @@ function generateAdjacentRow(centerReels: string[]): string[] {
   });
 }
 
-function SlotMachine({ eventKey, myBalance }: { eventKey: string; myBalance: number }) {
+function SlotMachine({ eventKey, myBalance, onBalanceOverride }: { eventKey: string; myBalance: number; onBalanceOverride: (v: number | null) => void }) {
   // Reel results (center pay line)
   const [reels, setReels] = useState<string[]>(["star", "cherry", "bell", "seven", "lemon"]);
   const [displayReels, setDisplayReels] = useState<string[]>(["star", "cherry", "bell", "seven", "lemon"]);
-  // Above & below rows (cosmetic only — near-miss tease)
+  // Above & below rows (cosmetic only  -  near-miss tease)
   const [displayAbove, setDisplayAbove] = useState<string[]>(["money", "seven", "star", "cherry", "bell"]);
   const [displayBelow, setDisplayBelow] = useState<string[]>(["bell", "lemon", "money", "star", "seven"]);
   const [reelStopped, setReelStopped] = useState<boolean[]>([true, true, true, true, true]);
@@ -1974,6 +1974,23 @@ function SlotMachine({ eventKey, myBalance }: { eventKey: string; myBalance: num
   const [sessionWins, setSessionWins] = useState(0);
   const [sessionLosses, setSessionLosses] = useState(0);
 
+  // Local display balance: freezes during animation so Convex reactivity doesn't spoil the result
+  const [displayBalance, setDisplayBalance] = useState(myBalance);
+  const isAnimatingRef = useRef(false);
+
+  // Sync displayBalance with server balance ONLY when not animating
+  useEffect(() => {
+    if (!isAnimatingRef.current) {
+      setDisplayBalance(myBalance);
+      onBalanceOverride(null);
+    }
+  }, [myBalance, onBalanceOverride]);
+
+  // Clear override on unmount
+  useEffect(() => {
+    return () => { onBalanceOverride(null); };
+  }, [onBalanceOverride]);
+
   // Refs
   const isAutoRef = useRef(false);
   const spinTimerRef = useRef<ReturnType<typeof setInterval>[]>([]);
@@ -1989,10 +2006,18 @@ function SlotMachine({ eventKey, myBalance }: { eventKey: string; myBalance: num
 
   /** Single spin with animation */
   const doSpin = useCallback(async (isSingleSpin = false): Promise<{ payout: number } | null> => {
-    if (myBalance < betAmount) {
+    if (displayBalance < betAmount) {
       toast.error("Not enough coins!");
       return null;
     }
+
+    // Freeze the display balance: deduct bet locally before the server responds
+    isAnimatingRef.current = true;
+    setDisplayBalance(prev => {
+      const newBal = prev - betAmount;
+      onBalanceOverride(newBal);
+      return newBal;
+    });
 
     setIsSpinning(true);
     setShowWin(false);
@@ -2112,16 +2137,30 @@ function SlotMachine({ eventKey, myBalance }: { eventKey: string; myBalance: num
         setSessionLosses((s) => s + betAmount);
       }
 
+      // Animation finished: apply payout locally, then unfreeze to let server sync
+      setDisplayBalance(prev => {
+        const newBal = prev + result.payout;
+        onBalanceOverride(newBal);
+        return newBal;
+      });
+      // Allow a brief delay then unfreeze so the server value takes over
+      setTimeout(() => {
+        isAnimatingRef.current = false;
+      }, 300);
+
       setIsSpinning(false);
       return { payout: result.payout };
     } catch (e: unknown) {
       toast.error((e as Error).message ?? "Spin failed!");
       intervals.forEach(clearInterval);
+      // On error, unfreeze immediately so server balance resumes
+      isAnimatingRef.current = false;
+      onBalanceOverride(null);
       setIsSpinning(false);
       setReelStopped([true, true, true, true, true]);
       return null;
     }
-  }, [betAmount, eventKey, myBalance, spinSlot]);
+  }, [betAmount, eventKey, displayBalance, spinSlot, onBalanceOverride]);
 
   /** Multi-spin handler */
   const handleMultiSpin = useCallback(async () => {
@@ -2202,18 +2241,18 @@ function SlotMachine({ eventKey, myBalance }: { eventKey: string; myBalance: num
             <div className="absolute top-3 right-4 flex items-center gap-1 px-2 py-1 rounded-full bg-red-500/20 border border-red-500/40">
               <Flame className="h-3.5 w-3.5 text-red-400 slot-streak" />
               <span className="text-xs font-black text-red-400 slot-streak">
-                {winStreak}× STREAK
+                {winStreak}x STREAK
               </span>
             </div>
           )}
         </div>
 
-        {/* 3×5 Reel Grid */}
+        {/* 3x5 Reel Grid */}
         <div className="relative px-4 py-3">
-          {/* Pay line indicator — wraps only the emoji columns */}
+          {/* Pay line indicator  -  wraps only the emoji columns */}
           <div className="flex justify-center pointer-events-none absolute inset-0 z-20 items-center">
             <div className="flex items-center">
-              <div className="text-[10px] font-black text-yellow-400/70 select-none mr-1">▶</div>
+              <div className="text-[10px] font-black text-yellow-400/70 select-none mr-1">{"\u25B6"}</div>
               <div
                 className="rounded-xl border-2 border-yellow-400/40"
                 style={{
@@ -2222,11 +2261,11 @@ function SlotMachine({ eventKey, myBalance }: { eventKey: string; myBalance: num
                   boxShadow: "0 0 12px rgba(234,179,8,0.15), inset 0 0 12px rgba(234,179,8,0.05)",
                 }}
               />
-              <div className="text-[10px] font-black text-yellow-400/70 select-none ml-1">◀</div>
+              <div className="text-[10px] font-black text-yellow-400/70 select-none ml-1">{"\u25C0"}</div>
             </div>
           </div>
 
-          {/* Grid: 3 rows × 5 columns */}
+          {/* Grid: 3 rows x 5 columns */}
           <div className="flex justify-center gap-1.5 sm:gap-2">
             {[0, 1, 2, 3, 4].map((col) => {
               const centerSym = displayReels[col];
@@ -2314,7 +2353,7 @@ function SlotMachine({ eventKey, myBalance }: { eventKey: string; myBalance: num
                   animation: "slot-jackpot-flash 1s ease-in-out infinite",
                 }}
               >
-                🎉 WIN {formatCoins(lastWin)} COINS! 🎉
+                !! WIN {formatCoins(lastWin)} COINS! !!
               </span>
             </div>
           ) : isSpinning ? (
@@ -2369,7 +2408,7 @@ function SlotMachine({ eventKey, myBalance }: { eventKey: string; myBalance: num
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-semibold text-yellow-400/60 uppercase tracking-wider">Bet Amount</span>
               <span className="text-[10px] text-muted-foreground/60 font-mono">
-                Balance: <span className="text-yellow-400">{formatCoins(myBalance)}</span>
+                Balance: <span className="text-yellow-400">{formatCoins(displayBalance)}</span>
               </span>
             </div>
             <div className="flex gap-1.5 flex-wrap">
@@ -2388,10 +2427,10 @@ function SlotMachine({ eventKey, myBalance }: { eventKey: string; myBalance: num
                 </button>
               ))}
               <button
-                onClick={() => setBetAmount(myBalance)}
+                onClick={() => setBetAmount(displayBalance)}
                 disabled={isSpinning || isMultiSpinning}
                 className={`px-3 py-1.5 rounded-lg text-xs font-black tracking-wide transition-all border ${
-                  betAmount === myBalance
+                  betAmount === displayBalance
                     ? "bg-red-500 text-white border-red-500 shadow-lg shadow-red-500/20"
                     : "border-red-500/30 text-red-400/70 hover:border-red-500/50 hover:bg-red-500/5 bg-black/30"
                 }`}
@@ -2416,7 +2455,7 @@ function SlotMachine({ eventKey, myBalance }: { eventKey: string; myBalance: num
                       : "border-yellow-400/10 text-yellow-400/40 hover:border-yellow-400/30 hover:text-yellow-400/60 bg-black/30"
                   }`}
                 >
-                  {n === 1 ? "1×" : `${n}×`}
+                  {n === 1 ? "1x" : `${n}x`}
                 </button>
               ))}
             </div>
@@ -2425,9 +2464,9 @@ function SlotMachine({ eventKey, myBalance }: { eventKey: string; myBalance: num
           {/* Spin button */}
           <button
             onClick={multiSpins > 1 ? handleMultiSpin : () => doSpin(true)}
-            disabled={isSpinning || isMultiSpinning || myBalance < betAmount}
+            disabled={isSpinning || isMultiSpinning || displayBalance < betAmount}
             className={`w-full py-3.5 rounded-xl font-black text-base tracking-wide transition-all border-2 relative overflow-hidden ${
-              isSpinning || isMultiSpinning || myBalance < betAmount
+              isSpinning || isMultiSpinning || displayBalance < betAmount
                 ? "bg-yellow-400/10 text-yellow-400/30 border-yellow-400/10 cursor-not-allowed"
                 : "bg-yellow-400 text-black border-yellow-500 hover:bg-yellow-300 hover:shadow-xl hover:shadow-yellow-400/30 active:scale-[0.98]"
             }`}
@@ -2446,8 +2485,8 @@ function SlotMachine({ eventKey, myBalance }: { eventKey: string; myBalance: num
               <span className="flex items-center justify-center gap-2">
                 <Play className="h-5 w-5" />
                 {multiSpins > 1
-                  ? `SPIN ${multiSpins}× (${formatCoins(betAmount * multiSpins)} total)`
-                  : `SPIN — ${formatCoins(betAmount)} coins`}
+                  ? `SPIN ${multiSpins}x (${formatCoins(betAmount * multiSpins)} total)`
+                  : `SPIN  -  ${formatCoins(betAmount)} coins`}
               </span>
             )}
           </button>
@@ -2494,10 +2533,10 @@ function SlotMachine({ eventKey, myBalance }: { eventKey: string; myBalance: num
             <thead>
               <tr className="border-b border-yellow-400/10">
                 <th className="text-left px-3 py-2 text-yellow-400/50 font-semibold">Symbol</th>
-                <th className="text-center px-2 py-2 text-yellow-400/50 font-semibold">5×</th>
-                <th className="text-center px-2 py-2 text-yellow-400/50 font-semibold">4×</th>
-                <th className="text-center px-2 py-2 text-yellow-400/50 font-semibold">3×</th>
-                <th className="text-center px-2 py-2 text-yellow-400/50 font-semibold">2×</th>
+                <th className="text-center px-2 py-2 text-yellow-400/50 font-semibold">5x</th>
+                <th className="text-center px-2 py-2 text-yellow-400/50 font-semibold">4x</th>
+                <th className="text-center px-2 py-2 text-yellow-400/50 font-semibold">3x</th>
+                <th className="text-center px-2 py-2 text-yellow-400/50 font-semibold">2x</th>
               </tr>
             </thead>
             <tbody>
@@ -2507,10 +2546,10 @@ function SlotMachine({ eventKey, myBalance }: { eventKey: string; myBalance: num
                     <span className="mr-2">{row.emoji}</span>
                     <span className="text-muted-foreground/70 capitalize">{row.symbol}</span>
                   </td>
-                  <td className="text-center px-2 py-2 font-mono font-bold text-yellow-400">{row.x5}×</td>
-                  <td className="text-center px-2 py-2 font-mono font-bold text-yellow-400/70">{row.x4}×</td>
-                  <td className="text-center px-2 py-2 font-mono font-bold text-yellow-400/50">{row.x3}×</td>
-                  <td className="text-center px-2 py-2 font-mono font-bold text-yellow-400/30">{row.x2}×</td>
+                  <td className="text-center px-2 py-2 font-mono font-bold text-yellow-400">{row.x5}x</td>
+                  <td className="text-center px-2 py-2 font-mono font-bold text-yellow-400/70">{row.x4}x</td>
+                  <td className="text-center px-2 py-2 font-mono font-bold text-yellow-400/50">{row.x3}x</td>
+                  <td className="text-center px-2 py-2 font-mono font-bold text-yellow-400/30">{row.x2}x</td>
                 </tr>
               ))}
             </tbody>
@@ -2521,7 +2560,1298 @@ function SlotMachine({ eventKey, myBalance }: { eventKey: string; myBalance: num
   );
 }
 
-type Tab = "markets" | "my-bets" | "leaderboard" | "slots";
+// -- Plinko Game --------------------------------------------------------------
+
+const PLINKO_ROWS = 10;
+const PLINKO_SLOTS = 11;
+
+const PLINKO_MULTIPLIERS_UI: Record<string, number[]> = {
+  low:    [1.5, 1.2, 1.1, 1.0, 0.5, 0.3, 0.5, 1.0, 1.1, 1.2, 1.5],
+  medium: [3.0, 1.5, 1.3, 1.0, 0.7, 0.2, 0.7, 1.0, 1.3, 1.5, 3.0],
+  high:   [10.0, 3.0, 1.5, 0.5, 0.3, 0.1, 0.3, 0.5, 1.5, 3.0, 10.0],
+};
+
+function getMultiplierColor(mult: number): string {
+  if (mult >= 10) return "text-yellow-300";
+  if (mult >= 3) return "text-yellow-400";
+  if (mult >= 1.5) return "text-amber-400";
+  if (mult >= 1) return "text-amber-300/70";
+  if (mult >= 0.5) return "text-red-300/70";
+  return "text-red-400/70";
+}
+
+function getMultiplierBg(mult: number): string {
+  if (mult >= 10) return "bg-yellow-400/20 border-yellow-400/40";
+  if (mult >= 3) return "bg-yellow-400/15 border-yellow-400/30";
+  if (mult >= 1.5) return "bg-amber-400/10 border-amber-400/25";
+  if (mult >= 1) return "bg-amber-300/5 border-amber-300/15";
+  if (mult >= 0.5) return "bg-red-400/5 border-red-400/15";
+  return "bg-red-400/10 border-red-400/20";
+}
+
+// Position helpers (pure functions  -  constant peg/slot layout)
+function plinkoPegX(row: number, col: number): number {
+  const pegsInRow = row + 2;
+  const spacing = 100 / (PLINKO_SLOTS + 1);
+  const offset = (PLINKO_SLOTS + 1 - pegsInRow) * spacing / 2;
+  return offset + (col + 1) * spacing;
+}
+
+function plinkoPegY(row: number): number {
+  return ((row + 1) / (PLINKO_ROWS + 2)) * 100;
+}
+
+/**
+ * Generate physics-based bounce keyframes for the Web Animations API.
+ * Each peg bounce has a spring-up -> arc -> fall sequence that creates a
+ * satisfying, realistic ball motion. All movement uses `transform: translate()`
+ * for 100% GPU compositing  -  no layout thrashing.
+ */
+function computeBounceKeyframes(path: number[], W: number, H: number): Keyframe[] {
+  const frames: Keyframe[] = [];
+  const ballR = 7; // half ball size for centering
+  const tx = (pos: number) => ((pos + 1) / (PLINKO_SLOTS + 1)) * W - ballR;
+  const ty = (row: number) => ((row + 1) / (PLINKO_ROWS + 2)) * H - ballR;
+
+  const tStart = 0.06;
+  const tEnd = 0.82;
+  const dt = (tEnd - tStart) / PLINKO_ROWS;
+
+  // Entry: ball drops in from above with a slight scale pop
+  frames.push({
+    transform: `translate(${tx(path[0])}px, -20px) scale(0.4)`,
+    opacity: "0",
+    offset: 0,
+  });
+  frames.push({
+    transform: `translate(${tx(path[0])}px, ${ty(0) * 0.25}px) scale(1)`,
+    opacity: "1",
+    offset: 0.04,
+    easing: "ease-out",
+  });
+
+  // Bounce through each row of pegs
+  for (let r = 0; r < PLINKO_ROWS; r++) {
+    const t0 = tStart + r * dt;
+    const fromX = tx(path[r]);
+    const toX = tx(path[r + 1]);
+    const fromY = ty(r);
+    const toY = ty(r + 1);
+    // Bounce height decreases as ball speeds up (gravity feel)
+    const bounceH = Math.max(3, 11 - r * 0.8);
+
+    // (1) Hit peg  -  arrive at peg position
+    frames.push({
+      transform: `translate(${fromX}px, ${fromY}px) scale(1)`,
+      opacity: "1",
+      offset: t0,
+      easing: "cubic-bezier(0.4, 0, 0.6, 1)",
+    });
+
+    // (2) Spring up  -  satisfying bounce off peg with slight sideways motion
+    frames.push({
+      transform: `translate(${fromX + (toX - fromX) * 0.22}px, ${fromY - bounceH}px) scale(1.08)`,
+      opacity: "1",
+      offset: t0 + dt * 0.26,
+      easing: "cubic-bezier(0.34, 1.4, 0.64, 1)",
+    });
+
+    // (3) Arc down  -  accelerate toward next peg (gravity)
+    frames.push({
+      transform: `translate(${fromX + (toX - fromX) * 0.68}px, ${fromY + (toY - fromY) * 0.55}px) scale(0.97)`,
+      opacity: "1",
+      offset: t0 + dt * 0.65,
+      easing: "ease-in",
+    });
+  }
+
+  // Final peg arrival
+  const finalX = tx(path[PLINKO_ROWS]);
+  const finalPegY = ty(PLINKO_ROWS);
+  frames.push({
+    transform: `translate(${finalX}px, ${finalPegY}px) scale(1)`,
+    opacity: "1",
+    offset: tEnd,
+    easing: "ease-in",
+  });
+
+  // Settle into multiplier slot with a bouncy landing
+  const slotY = ((PLINKO_ROWS + 1.4) / (PLINKO_ROWS + 2)) * H - ballR;
+  frames.push({
+    transform: `translate(${finalX}px, ${slotY + 7}px) scale(1.14, 0.88)`,
+    opacity: "1",
+    offset: 0.88,
+    easing: "ease-in",
+  });
+  frames.push({
+    transform: `translate(${finalX}px, ${slotY - 3}px) scale(0.94, 1.06)`,
+    opacity: "1",
+    offset: 0.92,
+    easing: "ease-out",
+  });
+  frames.push({
+    transform: `translate(${finalX}px, ${slotY + 1}px) scale(1.02)`,
+    opacity: "1",
+    offset: 0.95,
+    easing: "ease-in-out",
+  });
+  frames.push({
+    transform: `translate(${finalX}px, ${slotY}px) scale(1)`,
+    opacity: "1",
+    offset: 0.97,
+  });
+
+  // Shrink + fade out
+  frames.push({
+    transform: `translate(${finalX}px, ${slotY}px) scale(0)`,
+    opacity: "0",
+    offset: 1,
+    easing: "ease-in",
+  });
+
+  return frames;
+}
+
+function PlinkoGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: string; myBalance: number; onBalanceOverride: (v: number | null) => void }) {
+  // --- Controls state ---
+  const [betAmount, setBetAmount] = useState(50);
+  const [risk, setRisk] = useState<"low" | "medium" | "high">("medium");
+
+  // --- Result / display state ---
+  const [lastResult, setLastResult] = useState<{
+    multiplier: number; payout: number; slotIndex: number; bet: number;
+  } | null>(null);
+  const [showWin, setShowWin] = useState(false);
+  const [winSlot, setWinSlot] = useState<number | null>(null);
+  const [showCoins, setShowCoins] = useState(false);
+
+  // --- Session / addiction state ---
+  const [sessionDrops, setSessionDrops] = useState(0);
+  const [sessionProfit, setSessionProfit] = useState(0);
+  const [bestMultiplier, setBestMultiplier] = useState(0);
+  const [winStreak, setWinStreak] = useState(0);
+  const [autoDrop, setAutoDrop] = useState(false);
+  const [activeBallCount, setActiveBallCount] = useState(0);
+
+  // Local display balance: freezes during animation so Convex reactivity doesn't spoil the result
+  const [displayBalance, setDisplayBalance] = useState(myBalance);
+  const displayBalanceRef = useRef(myBalance);
+  const hasBallsInFlightRef = useRef(false);
+
+  // Sync displayBalance with server balance ONLY when no balls are in flight
+  useEffect(() => {
+    if (!hasBallsInFlightRef.current) {
+      setDisplayBalance(myBalance);
+      displayBalanceRef.current = myBalance;
+      onBalanceOverride(null);
+    }
+  }, [myBalance, onBalanceOverride]);
+
+  // Clear override on unmount
+  useEffect(() => {
+    return () => { onBalanceOverride(null); };
+  }, [onBalanceOverride]);
+
+  // --- Refs (animation state lives outside React for performance) ---
+  const boardRef = useRef<HTMLDivElement>(null);
+  const activeBallsRef = useRef(0);
+  const autoDropRef = useRef(false);
+  const cleanupFnsRef = useRef<(() => void)[]>([]);
+  const betAmountRef = useRef(betAmount);
+  const riskRef = useRef(risk);
+
+  const dropPlinko = useMutation(api.betting.dropPlinko);
+  const multipliers = PLINKO_MULTIPLIERS_UI[risk];
+
+  // Keep refs in sync with state
+  useEffect(() => { autoDropRef.current = autoDrop; }, [autoDrop]);
+  useEffect(() => { betAmountRef.current = betAmount; }, [betAmount]);
+  useEffect(() => { riskRef.current = risk; }, [risk]);
+
+  // Cleanup on unmount: cancel all running animations + remove ball elements
+  useEffect(() => {
+    return () => {
+      cleanupFnsRef.current.forEach(fn => fn());
+      cleanupFnsRef.current = [];
+    };
+  }, []);
+
+  // Pre-compute peg layout (static  -  never changes)
+  const pegs = useMemo(() => {
+    const result: { key: string; x: number; y: number }[] = [];
+    for (let row = 0; row < PLINKO_ROWS; row++) {
+      const pegsInRow = row + 2;
+      for (let col = 0; col < pegsInRow; col++) {
+        result.push({
+          key: `${row}-${col}`,
+          x: plinkoPegX(row, col),
+          y: plinkoPegY(row),
+        });
+      }
+    }
+    return result;
+  }, []);
+
+  // --- Core drop handler ---
+  const doDrop = useCallback(async () => {
+    if (activeBallsRef.current >= 8) return;
+    const currentBet = betAmountRef.current;
+    const currentRisk = riskRef.current;
+
+    if (displayBalanceRef.current < currentBet) {
+      toast.error("Not enough coins!");
+      setAutoDrop(false);
+      return;
+    }
+
+    // Freeze display balance: deduct bet locally before the server responds
+    hasBallsInFlightRef.current = true;
+    displayBalanceRef.current -= currentBet;
+    setDisplayBalance(displayBalanceRef.current);
+    onBalanceOverride(displayBalanceRef.current);
+
+    try {
+      const result = await dropPlinko({ eventKey, betAmount: currentBet, risk: currentRisk });
+      const board = boardRef.current;
+      if (!board) return;
+
+      activeBallsRef.current++;
+      setActiveBallCount(c => c + 1);
+      setSessionDrops(d => d + 1);
+
+      const W = board.offsetWidth;
+      const H = board.offsetHeight;
+
+      // -- Create ball DOM element (outside React for zero re-render cost) --
+      const ballEl = document.createElement("div");
+      ballEl.className = "plinko-active-ball";
+      ballEl.style.cssText = `
+        position:absolute; left:0; top:0; width:14px; height:14px;
+        border-radius:50%; z-index:30; pointer-events:none;
+        background:radial-gradient(circle at 35% 35%, #ffd700, #b8860b, #8b6914);
+        box-shadow:0 0 10px rgba(255,215,0,0.5), 0 2px 6px rgba(0,0,0,0.4);
+      `;
+      board.appendChild(ballEl);
+
+      // -- Generate physics keyframes & animate --
+      const keyframes = computeBounceKeyframes(result.path, W, H);
+      const duration = 2500; // 2.5s total
+      const animation = ballEl.animate(keyframes, {
+        duration,
+        easing: "linear",
+        fill: "forwards",
+      });
+
+      // -- Schedule peg flashes (direct DOM  -  zero React re-renders) --
+      const pegTimers: ReturnType<typeof setTimeout>[] = [];
+      for (let r = 0; r < PLINKO_ROWS; r++) {
+        const flashTime = (0.06 + r * ((0.82 - 0.06) / PLINKO_ROWS)) * duration;
+        // Compute which peg column the ball hits at this row
+        const pegCol = Math.round(result.path[r] - (10 - r) / 2);
+        const clamped = Math.max(0, Math.min(r + 1, pegCol));
+        const timer = setTimeout(() => {
+          const pegEl = board.querySelector(`[data-peg="${r}-${clamped}"]`) as HTMLElement | null;
+          if (pegEl) {
+            pegEl.classList.add("plinko-peg-flash");
+            setTimeout(() => pegEl.classList.remove("plinko-peg-flash"), 280);
+          }
+        }, flashTime);
+        pegTimers.push(timer);
+      }
+
+      // -- Cleanup registration --
+      const cleanup = () => {
+        animation.cancel();
+        pegTimers.forEach(clearTimeout);
+        if (ballEl.parentNode) ballEl.remove();
+        activeBallsRef.current = Math.max(0, activeBallsRef.current - 1);
+        setActiveBallCount(c => Math.max(0, c - 1));
+      };
+      cleanupFnsRef.current.push(cleanup);
+
+      // -- On animation finish: show results, near-miss, cleanup --
+      animation.onfinish = () => {
+        cleanupFnsRef.current = cleanupFnsRef.current.filter(fn => fn !== cleanup);
+        activeBallsRef.current = Math.max(0, activeBallsRef.current - 1);
+        setActiveBallCount(c => Math.max(0, c - 1));
+
+        // Remove ball element (it's already faded to opacity 0 by the last keyframe)
+        setTimeout(() => { if (ballEl.parentNode) ballEl.remove(); }, 100);
+
+        // Show result
+        setLastResult({
+          multiplier: result.multiplier,
+          payout: result.payout,
+          slotIndex: result.slotIndex,
+          bet: currentBet,
+        });
+        setWinSlot(result.slotIndex);
+
+        const isWin = result.payout > currentBet;
+        if (isWin) {
+          setShowWin(true);
+          setSessionProfit(p => p + (result.payout - currentBet));
+          setBestMultiplier(prev => Math.max(prev, result.multiplier));
+          setWinStreak(s => s + 1);
+          if (result.multiplier >= 3) {
+            setShowCoins(true);
+            setTimeout(() => setShowCoins(false), 2500);
+          }
+          setTimeout(() => setShowWin(false), 3000);
+        } else {
+          setSessionProfit(p => p - (currentBet - result.payout));
+          setWinStreak(0);
+        }
+
+        // Near-miss: shimmer adjacent high-value slots to tease the player
+        const mults = PLINKO_MULTIPLIERS_UI[currentRisk];
+        for (const adj of [result.slotIndex - 1, result.slotIndex + 1]) {
+          if (adj >= 0 && adj < PLINKO_SLOTS && mults[adj] > result.multiplier * 2) {
+            setTimeout(() => {
+              const slotEl = board.querySelector(`[data-slot="${adj}"]`) as HTMLElement | null;
+              if (slotEl) {
+                slotEl.classList.add("plinko-near-miss");
+                setTimeout(() => slotEl.classList.remove("plinko-near-miss"), 1200);
+              }
+            }, 150);
+          }
+        }
+
+        setTimeout(() => setWinSlot(null), 2000);
+
+        // Apply payout to local display balance
+        displayBalanceRef.current += result.payout;
+        setDisplayBalance(displayBalanceRef.current);
+        // If no more balls in flight, unfreeze; otherwise keep override
+        if (activeBallsRef.current <= 0) {
+          hasBallsInFlightRef.current = false;
+          onBalanceOverride(null); // server value will take over
+        } else {
+          onBalanceOverride(displayBalanceRef.current);
+        }
+      };
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Drop failed");
+      setAutoDrop(false);
+      // Refund the local deduction on error
+      displayBalanceRef.current += betAmountRef.current;
+      setDisplayBalance(displayBalanceRef.current);
+      if (activeBallsRef.current <= 0) {
+        hasBallsInFlightRef.current = false;
+        onBalanceOverride(null);
+      } else {
+        onBalanceOverride(displayBalanceRef.current);
+      }
+    }
+  }, [eventKey, dropPlinko, onBalanceOverride]);
+
+  // Keep doDrop ref current for auto-drop timer
+  const doDropRef = useRef(doDrop);
+  useEffect(() => { doDropRef.current = doDrop; }, [doDrop]);
+
+  // --- Auto-drop loop ---
+  useEffect(() => {
+    if (!autoDrop) return;
+    let cancelled = false;
+
+    const loop = async () => {
+      while (!cancelled && autoDropRef.current) {
+        await doDropRef.current();
+        if (cancelled) break;
+        await new Promise(r => setTimeout(r, 900)); // pace: ~1 drop/sec
+      }
+    };
+
+    loop();
+    return () => { cancelled = true; };
+  }, [autoDrop]);
+
+  // --- Render ---
+  return (
+    <div className="space-y-4">
+      <div
+        className="rounded-2xl border border-yellow-400/20 overflow-hidden relative"
+        style={{
+          background: "linear-gradient(180deg, #0a0a0a 0%, #111111 50%, #0a0a0a 100%)",
+        }}
+      >
+        {/* Coin rain on big win */}
+        {showCoins && (
+          <div className="absolute inset-0 overflow-hidden pointer-events-none z-50">
+            {Array.from({ length: 24 }).map((_, i) => (
+              <div
+                key={i}
+                className="plinko-coin absolute text-yellow-400 z-50"
+                style={{
+                  left: `${Math.random() * 100}%`,
+                  top: "-20px",
+                  fontSize: `${14 + Math.random() * 14}px`,
+                  animationDelay: `${Math.random() * 0.8}s`,
+                  animationDuration: `${1.5 + Math.random() * 1}s`,
+                }}
+              >
+                $
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Title bar */}
+        <div
+          className="px-4 py-3 flex items-center justify-between"
+          style={{
+            background: "linear-gradient(90deg, #0d0d0d, #1a1a0a, #0d0d0d)",
+            borderBottom: "1px solid rgba(234, 179, 8, 0.15)",
+          }}
+        >
+          <div className="flex items-center gap-2">
+            <div
+              className="text-lg font-black tracking-wider"
+              style={{
+                background: "linear-gradient(90deg, #b8860b, #ffd700, #b8860b)",
+                WebkitBackgroundClip: "text",
+                WebkitTextFillColor: "transparent",
+                backgroundSize: "200% 100%",
+              }}
+            >
+               PLINKO
+            </div>
+            {/* Win streak badge */}
+            {winStreak >= 2 && (
+              <div className="px-2 py-0.5 rounded-full bg-yellow-400/15 border border-yellow-400/30 text-[10px] font-black text-yellow-400 plinko-streak flex items-center gap-1">
+                FIRE {winStreak}
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-3 text-xs">
+            <span className="text-muted-foreground">Balance:</span>
+            <span className="text-yellow-400 font-mono font-bold">{formatCoins(displayBalance)}</span>
+            <Coins className="h-3.5 w-3.5 text-yellow-400" />
+          </div>
+        </div>
+
+        <div className="p-4 space-y-4">
+          {/* Risk selector + Bet controls row */}
+          <div className="flex flex-wrap gap-3 items-end">
+            {/* Risk level */}
+            <div className="space-y-1.5">
+              <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Risk</label>
+              <div className="flex gap-1">
+                {(["low", "medium", "high"] as const).map((r) => (
+                  <button
+                    key={r}
+                    onClick={() => setRisk(r)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${
+                      risk === r
+                        ? r === "high"
+                          ? "bg-red-500/20 border-red-500/40 text-red-400"
+                          : r === "medium"
+                            ? "bg-yellow-400/20 border-yellow-400/40 text-yellow-400"
+                            : "bg-green-400/20 border-green-400/40 text-green-400"
+                        : "bg-muted/30 border-border/30 text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {r.charAt(0).toUpperCase() + r.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Bet amount */}
+            <div className="space-y-1.5 flex-1 min-w-[140px]">
+              <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Bet Amount</label>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setBetAmount(prev => Math.max(10, Math.floor(prev / 2)))}
+                  className="px-2 py-1.5 rounded-lg bg-muted/40 border border-border/30 text-xs font-bold text-muted-foreground hover:text-foreground transition-all"
+                >
+                  1/2
+                </button>
+                <input
+                  type="number"
+                  min={10}
+                  max={displayBalance}
+                  value={betAmount}
+                  onChange={(e) => setBetAmount(Math.max(10, parseInt(e.target.value) || 10))}
+                  className="flex-1 bg-black/40 border border-yellow-400/20 rounded-lg px-3 py-1.5 text-center font-mono font-bold text-yellow-400 text-sm focus:outline-none focus:border-yellow-400/50 transition-all"
+                />
+                <button
+                  onClick={() => setBetAmount(prev => Math.min(displayBalance, prev * 2))}
+                  className="px-2 py-1.5 rounded-lg bg-muted/40 border border-border/30 text-xs font-bold text-muted-foreground hover:text-foreground transition-all"
+                >
+                  2x
+                </button>
+                <button
+                  onClick={() => setBetAmount(displayBalance)}
+                  className="px-2 py-1.5 rounded-lg bg-red-500/10 border border-red-500/20 text-xs font-bold text-red-400 hover:bg-red-500/20 transition-all"
+                >
+                  MAX
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick bet buttons */}
+          <div className="flex gap-1.5">
+            {[10, 25, 50, 100, 250, 500].map((amount) => (
+              <button
+                key={amount}
+                onClick={() => setBetAmount(Math.min(amount, displayBalance))}
+                className={`flex-1 py-1 rounded-md text-xs font-mono font-bold transition-all border ${
+                  betAmount === amount
+                    ? "bg-yellow-400/20 border-yellow-400/40 text-yellow-400"
+                    : "bg-black/30 border-border/20 text-muted-foreground hover:text-foreground hover:border-border/40"
+                }`}
+              >
+                {amount}
+              </button>
+            ))}
+          </div>
+
+          {/* == Plinko Board == */}
+          <div
+            ref={boardRef}
+            className="relative rounded-xl border border-yellow-400/10 overflow-hidden"
+            style={{
+              background: "linear-gradient(180deg, #0d0d0d 0%, #080808 100%)",
+              aspectRatio: "1 / 1.1",
+              maxHeight: "420px",
+              margin: "0 auto",
+            }}
+          >
+            {/* Static pegs (rendered once via React, animated via direct DOM class toggle) */}
+            {pegs.map((peg) => (
+              <div
+                key={peg.key}
+                data-peg={peg.key}
+                className="absolute rounded-full"
+                style={{
+                  left: `${peg.x}%`,
+                  top: `${peg.y}%`,
+                  width: "6px",
+                  height: "6px",
+                  transform: "translate(-50%, -50%)",
+                  background: "radial-gradient(circle, rgba(245, 197, 24, 0.5), rgba(245, 197, 24, 0.2))",
+                  boxShadow: "0 0 4px rgba(245, 197, 24, 0.15)",
+                }}
+              />
+            ))}
+
+            {/* Ball elements are injected here via direct DOM manipulation  -  not in JSX */}
+
+            {/* Multiplier slots at the bottom */}
+            <div
+              className="absolute bottom-0 left-0 right-0 flex px-1 pb-1"
+              style={{ gap: "2px" }}
+            >
+              {multipliers.map((mult, i) => (
+                <div
+                  key={`slot-${i}`}
+                  data-slot={i}
+                  className={`flex-1 rounded-md flex items-center justify-center text-[9px] sm:text-[10px] font-mono font-black py-2 border transition-all duration-300 ${
+                    winSlot === i
+                      ? "plinko-win-slot " + getMultiplierBg(mult)
+                      : getMultiplierBg(mult)
+                  } ${getMultiplierColor(mult)}`}
+                  style={{
+                    boxShadow: winSlot === i
+                      ? "0 0 15px rgba(234, 179, 8, 0.4)"
+                      : "none",
+                  }}
+                >
+                  {mult}x
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Drop + Auto-drop buttons */}
+          <div className="flex gap-2">
+            <button
+              onClick={doDrop}
+              disabled={activeBallCount >= 8 || displayBalance < betAmount}
+              className="flex-1 py-3 rounded-xl font-black text-base tracking-wide transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{
+                background: activeBallCount >= 8
+                  ? "linear-gradient(135deg, #333, #222)"
+                  : "linear-gradient(135deg, #f5c518, #d4a017)",
+                color: activeBallCount >= 8 ? "#888" : "#000",
+                boxShadow: activeBallCount >= 8
+                  ? "none"
+                  : "0 4px 20px rgba(245, 197, 24, 0.3), 0 2px 8px rgba(245, 197, 24, 0.2)",
+              }}
+            >
+              <span className="flex items-center justify-center gap-2">
+                <ArrowDown className="h-4 w-4" />
+                DROP  -  {formatCoins(betAmount)}
+                {activeBallCount > 0 && (
+                  <span className="text-xs opacity-70">({activeBallCount} !)</span>
+                )}
+              </span>
+            </button>
+            <button
+              onClick={() => setAutoDrop(prev => !prev)}
+              className={`px-4 py-3 rounded-xl font-black text-sm transition-all border ${
+                autoDrop
+                  ? "bg-red-500/20 border-red-500/40 text-red-400 plinko-auto-active"
+                  : "bg-muted/30 border-border/30 text-muted-foreground hover:text-foreground hover:border-border/50"
+              }`}
+            >
+              {autoDrop ? "STOP" : "AUTO"}
+            </button>
+          </div>
+
+          {/* Result display */}
+          {lastResult && (
+            <div
+              className={`rounded-xl border p-3 text-center transition-all duration-500 ${
+                showWin
+                  ? "border-yellow-400/40 bg-yellow-400/10"
+                  : lastResult.payout >= lastResult.bet
+                    ? "border-yellow-400/20 bg-yellow-400/5"
+                    : "border-border/30 bg-muted/20"
+              }`}
+            >
+              <div className="flex items-center justify-center gap-3">
+                <span className={`text-2xl font-black font-mono plinko-multiplier ${
+                  lastResult.multiplier >= 3 ? "text-yellow-400" :
+                  lastResult.multiplier >= 1 ? "text-amber-400" : "text-red-400"
+                }`}>
+                  {lastResult.multiplier}x
+                </span>
+                <span className="text-muted-foreground">{"\u2192"}</span>
+                <span className={`text-lg font-bold font-mono ${
+                  lastResult.payout > lastResult.bet ? "text-green-400" :
+                  lastResult.payout > 0 ? "text-amber-300" : "text-red-400"
+                }`}>
+                  {lastResult.payout >= lastResult.bet ? "+" : ""}{formatCoins(lastResult.payout - lastResult.bet)}
+                </span>
+                <Coins className="h-3.5 w-3.5 text-yellow-400" />
+              </div>
+              {showWin && lastResult.multiplier >= 3 && (
+                <div className="text-yellow-400 text-sm font-bold mt-1 slot-win-text">
+                  !! BIG WIN! !!
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Session stats */}
+          <div className="flex gap-2">
+            <div className="flex-1 rounded-lg bg-black/40 border border-yellow-400/10 px-3 py-2 text-center">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Drops</div>
+              <div className="text-sm font-mono font-bold text-foreground">{sessionDrops}</div>
+            </div>
+            <div className="flex-1 rounded-lg bg-black/40 border border-yellow-400/10 px-3 py-2 text-center">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Profit</div>
+              <div className={`text-sm font-mono font-bold ${sessionProfit >= 0 ? "text-green-400/80" : "text-red-400/80"}`}>
+                {sessionProfit >= 0 ? "+" : ""}{formatCoins(sessionProfit)}
+              </div>
+            </div>
+            <div className="flex-1 rounded-lg bg-black/40 border border-yellow-400/10 px-3 py-2 text-center">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Best</div>
+              <div className="text-sm font-mono font-bold text-yellow-400/80">
+                {bestMultiplier > 0 ? `${bestMultiplier}x` : " - "}
+              </div>
+            </div>
+          </div>
+
+          {/* Payout table */}
+          <details className="group">
+            <summary className="flex items-center gap-2 cursor-pointer text-xs text-muted-foreground hover:text-foreground transition-colors py-1">
+              <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
+              Payout Table
+            </summary>
+            <div className="mt-2 rounded-lg bg-black/30 border border-border/20 p-3">
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div className="font-bold text-muted-foreground text-center">Low</div>
+                <div className="font-bold text-muted-foreground text-center">Medium</div>
+                <div className="font-bold text-muted-foreground text-center">High</div>
+                {PLINKO_MULTIPLIERS_UI.low.map((_, i) => (
+                  <div key={`payout-row-${i}`} className="contents">
+                    <div className={`text-center font-mono ${getMultiplierColor(PLINKO_MULTIPLIERS_UI.low[i])}`}>
+                      {PLINKO_MULTIPLIERS_UI.low[i]}x
+                    </div>
+                    <div className={`text-center font-mono ${getMultiplierColor(PLINKO_MULTIPLIERS_UI.medium[i])}`}>
+                      {PLINKO_MULTIPLIERS_UI.medium[i]}x
+                    </div>
+                    <div className={`text-center font-mono ${getMultiplierColor(PLINKO_MULTIPLIERS_UI.high[i])}`}>
+                      {PLINKO_MULTIPLIERS_UI.high[i]}x
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[10px] text-muted-foreground/50 mt-2 text-center">
+                Multipliers are symmetric. Edge slots pay the most on High risk.
+              </p>
+            </div>
+          </details>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// -- Crossy Road (Chicken Cross) Game -----------------------------------------
+
+const CROSSY_ROWS = 10;
+const CROSSY_DIFFICULTIES_UI: Record<string, { tilesPerRow: number; trapsPerRow: number; baseMultiplier: number; label: string; color: string }> = {
+  easy:   { tilesPerRow: 4, trapsPerRow: 1, baseMultiplier: 1.31, label: "Easy",   color: "text-green-400" },
+  medium: { tilesPerRow: 3, trapsPerRow: 1, baseMultiplier: 1.47, label: "Medium", color: "text-yellow-400" },
+  hard:   { tilesPerRow: 2, trapsPerRow: 1, baseMultiplier: 1.96, label: "Hard",   color: "text-orange-400" },
+  expert: { tilesPerRow: 3, trapsPerRow: 2, baseMultiplier: 2.94, label: "Expert", color: "text-red-400" },
+};
+
+type CrossyTileState = "hidden" | "safe" | "trap" | "selected";
+type CrossyGameState = "idle" | "playing" | "won" | "lost";
+
+interface CrossyRowData {
+  tiles: CrossyTileState[];
+  selectedIndex?: number;
+  trapIndices?: number[];
+}
+
+function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: string; myBalance: number; onBalanceOverride: (v: number | null) => void }) {
+  const [betAmount, setBetAmount] = useState(50);
+  const [difficulty, setDifficulty] = useState<"easy" | "medium" | "hard" | "expert">("medium");
+  const [gameState, setGameState] = useState<CrossyGameState>("idle");
+  const [currentRow, setCurrentRow] = useState(0);
+  const [currentMultiplier, setCurrentMultiplier] = useState(1);
+  const [rows, setRows] = useState<CrossyRowData[]>([]);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [lastPayout, setLastPayout] = useState(0);
+  const [showCoinShower, setShowCoinShower] = useState(false);
+  const [hopKey, setHopKey] = useState(0);
+  const [shakeBoard, setShakeBoard] = useState(false);
+
+  // Session stats
+  const [sessionRounds, setSessionRounds] = useState(0);
+  const [sessionProfit, setSessionProfit] = useState(0);
+  const [bestMultiplier, setBestMultiplier] = useState(0);
+
+  // Local display balance
+  const [displayBalance, setDisplayBalance] = useState(myBalance);
+  const isAnimatingRef = useRef(false);
+
+  useEffect(() => {
+    if (!isAnimatingRef.current) {
+      setDisplayBalance(myBalance);
+      onBalanceOverride(null);
+    }
+  }, [myBalance, onBalanceOverride]);
+
+  useEffect(() => {
+    return () => { onBalanceOverride(null); };
+  }, [onBalanceOverride]);
+
+  const crossyStep = useMutation(api.betting.crossyStep);
+  const crossyCashOut = useMutation(api.betting.crossyCashOut);
+
+  const config = CROSSY_DIFFICULTIES_UI[difficulty];
+
+  // Initialize/reset rows when game starts
+  const initRows = useCallback(() => {
+    const newRows: CrossyRowData[] = [];
+    for (let i = 0; i < CROSSY_ROWS; i++) {
+      newRows.push({
+        tiles: Array(config.tilesPerRow).fill("hidden"),
+      });
+    }
+    return newRows;
+  }, [config.tilesPerRow]);
+
+  const startGame = useCallback(() => {
+    if (displayBalance < betAmount) {
+      toast.error("Insufficient balance!");
+      return;
+    }
+    setGameState("playing");
+    setCurrentRow(0);
+    setCurrentMultiplier(1);
+    setRows(initRows());
+    setLastPayout(0);
+    setShowCoinShower(false);
+    setShakeBoard(false);
+
+    // Optimistically deduct bet from display
+    isAnimatingRef.current = true;
+    const newBal = displayBalance - betAmount;
+    setDisplayBalance(newBal);
+    onBalanceOverride(newBal);
+  }, [displayBalance, betAmount, initRows, onBalanceOverride]);
+
+  const handleTileClick = useCallback(async (tileIndex: number) => {
+    if (gameState !== "playing" || isProcessing) return;
+    if (tileIndex < 0 || tileIndex >= config.tilesPerRow) return;
+
+    setIsProcessing(true);
+
+    try {
+      const result = await crossyStep({
+        eventKey,
+        betAmount,
+        difficulty,
+        tileIndex,
+        currentRow,
+      });
+
+      // Update row with results
+      setRows(prev => {
+        const updated = [...prev];
+        const row = { ...updated[currentRow] };
+        const newTiles = [...row.tiles];
+
+        // Mark all tiles in this row
+        for (let i = 0; i < newTiles.length; i++) {
+          if (i === tileIndex) {
+            newTiles[i] = result.safe ? "safe" : "trap";
+          } else if (result.trapIndices.includes(i)) {
+            newTiles[i] = "trap";
+          } else {
+            newTiles[i] = "safe";
+          }
+        }
+
+        row.tiles = newTiles;
+        row.selectedIndex = tileIndex;
+        row.trapIndices = result.trapIndices;
+        updated[currentRow] = row;
+        return updated;
+      });
+
+      if (result.safe) {
+        // Safe! Advance
+        setCurrentMultiplier(result.multiplier);
+        setHopKey(k => k + 1);
+
+        if (result.gameOver) {
+          // Completed all rows — auto cash out
+          const cashResult = await crossyCashOut({
+            eventKey,
+            betAmount,
+            multiplier: result.multiplier,
+          });
+          setGameState("won");
+          setLastPayout(cashResult.payout);
+          setShowCoinShower(true);
+          setSessionRounds(r => r + 1);
+          setSessionProfit(p => p + cashResult.payout - betAmount);
+          if (result.multiplier > bestMultiplier) setBestMultiplier(result.multiplier);
+
+          setDisplayBalance(cashResult.newBalance);
+          onBalanceOverride(cashResult.newBalance);
+          isAnimatingRef.current = false;
+
+          toast.success(`🏆 Max row! Won ${formatCoins(cashResult.payout)} coins at ${result.multiplier}x!`);
+          setTimeout(() => setShowCoinShower(false), 2500);
+        } else {
+          setCurrentRow(r => r + 1);
+        }
+      } else {
+        // Hit trap!
+        setGameState("lost");
+        setShakeBoard(true);
+        setSessionRounds(r => r + 1);
+        setSessionProfit(p => p - betAmount);
+
+        setDisplayBalance(result.newBalance);
+        onBalanceOverride(result.newBalance);
+        isAnimatingRef.current = false;
+
+        toast.error(`💀 Hit a trap on row ${currentRow + 1}! Lost ${formatCoins(betAmount)} coins.`);
+        setTimeout(() => setShakeBoard(false), 600);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      toast.error(msg);
+      isAnimatingRef.current = false;
+      onBalanceOverride(null);
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [gameState, isProcessing, config.tilesPerRow, crossyStep, eventKey, betAmount, difficulty, currentRow, crossyCashOut, onBalanceOverride, bestMultiplier]);
+
+  const handleCashOut = useCallback(async () => {
+    if (gameState !== "playing" || isProcessing || currentRow === 0) return;
+
+    setIsProcessing(true);
+    try {
+      const result = await crossyCashOut({
+        eventKey,
+        betAmount,
+        multiplier: currentMultiplier,
+      });
+
+      setGameState("won");
+      setLastPayout(result.payout);
+      setShowCoinShower(true);
+      setSessionRounds(r => r + 1);
+      setSessionProfit(p => p + result.payout - betAmount);
+      if (currentMultiplier > bestMultiplier) setBestMultiplier(currentMultiplier);
+
+      setDisplayBalance(result.newBalance);
+      onBalanceOverride(result.newBalance);
+      isAnimatingRef.current = false;
+
+      toast.success(`💰 Cashed out ${formatCoins(result.payout)} coins at ${currentMultiplier}x!`);
+      setTimeout(() => setShowCoinShower(false), 2500);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      toast.error(msg);
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [gameState, isProcessing, currentRow, crossyCashOut, eventKey, betAmount, currentMultiplier, onBalanceOverride, bestMultiplier]);
+
+  // Get the multiplier for a completed row number
+  // Row 0 = 0.9x (hook), then rows 1+ compound: 0.9 * baseMultiplier^row
+  const HOOK_MULT = 0.9;
+  const getRowMultiplier = (row: number) => {
+    if (row === 0) return HOOK_MULT;
+    return parseFloat((HOOK_MULT * Math.pow(config.baseMultiplier, row)).toFixed(2));
+  };
+
+  // Tile emoji helper
+  const getTileDisplay = (state: CrossyTileState, isSelected: boolean) => {
+    switch (state) {
+      case "hidden": return "❓";
+      case "safe": return isSelected ? "🐔" : "✅";
+      case "trap": return isSelected ? "💀" : "☠️";
+      default: return "❓";
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Coin shower effect */}
+      {showCoinShower && (
+        <div className="fixed inset-0 pointer-events-none z-50">
+          {Array.from({ length: 20 }).map((_, i) => (
+            <span
+              key={`crossy-coin-${i}`}
+              className="crossy-coin absolute text-yellow-400 z-50"
+              style={{
+                left: `${Math.random() * 100}%`,
+                top: `-20px`,
+                fontSize: `${16 + Math.random() * 16}px`,
+                animationDelay: `${Math.random() * 0.8}s`,
+                animationDuration: `${1.5 + Math.random() * 1}s`,
+              }}
+            >
+              🪙
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-col lg:flex-row gap-4">
+        {/* == Controls Panel (Left) == */}
+        <div className="lg:w-64 shrink-0 space-y-3">
+          {/* Bet Amount */}
+          <div className="rounded-xl border border-border/50 bg-card/60 p-3 space-y-2">
+            <Label className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Bet Amount</Label>
+            <div className="flex items-center gap-1">
+              <Coins className="h-4 w-4 text-yellow-400 shrink-0" />
+              <Input
+                type="number"
+                min={10}
+                value={betAmount}
+                onChange={e => setBetAmount(Math.max(10, parseInt(e.target.value) || 10))}
+                disabled={gameState === "playing"}
+                className="h-8 font-mono font-bold text-sm bg-muted/40"
+              />
+            </div>
+            <div className="flex gap-1">
+              {[{ l: "½", fn: () => setBetAmount(Math.max(10, Math.floor(betAmount / 2))) },
+                { l: "2×", fn: () => setBetAmount(betAmount * 2) },
+                { l: "Max", fn: () => setBetAmount(displayBalance) },
+              ].map(({ l, fn }) => (
+                <Button
+                  key={l}
+                  variant="outline"
+                  size="sm"
+                  className="flex-1 h-7 text-xs font-bold"
+                  disabled={gameState === "playing"}
+                  onClick={fn}
+                >
+                  {l}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          {/* Difficulty */}
+          <div className="rounded-xl border border-border/50 bg-card/60 p-3 space-y-2">
+            <Label className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Difficulty</Label>
+            <Select value={difficulty} onValueChange={(v) => setDifficulty(v as typeof difficulty)} disabled={gameState === "playing"}>
+              <SelectTrigger className="h-8 text-sm font-semibold bg-muted/40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(CROSSY_DIFFICULTIES_UI).map(([key, val]) => (
+                  <SelectItem key={key} value={key}>
+                    <span className={val.color}>{val.label}</span>
+                    <span className="text-muted-foreground ml-2 text-xs">
+                      ({val.tilesPerRow - val.trapsPerRow}/{val.tilesPerRow} safe)
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="text-[10px] text-muted-foreground/70 leading-tight">
+              {config.trapsPerRow} trap{config.trapsPerRow > 1 ? "s" : ""} per row · {config.baseMultiplier}x per step
+            </div>
+          </div>
+
+          {/* Current Multiplier & Cash Out */}
+          {gameState === "playing" && currentRow > 0 && (
+            <div className={`rounded-xl border-2 border-yellow-400/50 bg-yellow-400/5 p-3 space-y-2 ${
+              currentMultiplier >= 5 ? "crossy-win-glow" : ""
+            }`}>
+              <div className="text-center">
+                <div className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Current Multiplier</div>
+                <div className="text-3xl font-black text-yellow-400 crossy-mult-pop" key={`mult-${currentRow}`}>
+                  {currentMultiplier}x
+                </div>
+                <div className="text-sm font-mono text-muted-foreground">
+                  Payout: <span className="text-yellow-400 font-bold">{formatCoins(Math.floor(betAmount * currentMultiplier))}</span>
+                </div>
+              </div>
+              <Button
+                onClick={handleCashOut}
+                disabled={isProcessing}
+                className={`w-full h-10 font-black text-base bg-yellow-400 hover:bg-yellow-300 text-black crossy-cashout-pulse`}
+              >
+                💰 CASH OUT
+              </Button>
+            </div>
+          )}
+
+          {/* Start / Play Again */}
+          {gameState !== "playing" && (
+            <Button
+              onClick={startGame}
+              className="w-full h-11 font-black text-base bg-yellow-400 hover:bg-yellow-300 text-black"
+              disabled={displayBalance < betAmount}
+            >
+              {gameState === "idle" ? (
+                <><Play className="h-5 w-5 mr-2" /> START GAME</>
+              ) : (
+                <><RefreshCw className="h-5 w-5 mr-2" /> PLAY AGAIN</>
+              )}
+            </Button>
+          )}
+
+          {/* Result Display */}
+          {gameState === "won" && (
+            <div className="rounded-xl border-2 border-yellow-400/60 bg-yellow-400/10 p-3 text-center crossy-win-glow">
+              <div className="text-2xl">🏆</div>
+              <div className="text-xs text-muted-foreground uppercase">You Won!</div>
+              <div className="text-xl font-black text-yellow-400">{formatCoins(lastPayout)}</div>
+              <div className="text-xs text-muted-foreground">at {currentMultiplier}x</div>
+            </div>
+          )}
+          {gameState === "lost" && (
+            <div className="rounded-xl border-2 border-red-400/40 bg-red-400/10 p-3 text-center">
+              <div className="text-2xl">💀</div>
+              <div className="text-xs text-muted-foreground uppercase">Game Over</div>
+              <div className="text-xl font-black text-red-400">-{formatCoins(betAmount)}</div>
+              <div className="text-xs text-muted-foreground">Row {currentRow + 1} trap</div>
+            </div>
+          )}
+
+          {/* Session Stats */}
+          <div className="rounded-xl border border-border/50 bg-card/60 p-3 space-y-1.5">
+            <div className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Session Stats</div>
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div>
+                <div className="text-xs text-muted-foreground">Rounds</div>
+                <div className="text-sm font-bold">{sessionRounds}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">Profit</div>
+                <div className={`text-sm font-bold font-mono ${sessionProfit >= 0 ? "text-green-400" : "text-red-400"}`}>
+                  {sessionProfit >= 0 ? "+" : ""}{formatCoins(sessionProfit)}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">Best</div>
+                <div className="text-sm font-bold text-yellow-400">{bestMultiplier > 0 ? `${bestMultiplier}x` : "—"}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* == Game Board (Center) == */}
+        <div className="flex-1 min-w-0">
+          <div className={`rounded-2xl border border-border/50 bg-card/80 p-4 relative overflow-hidden ${
+            shakeBoard ? "crossy-death-shake" : ""
+          } ${gameState === "won" ? "crossy-win-glow" : ""}`}>
+            {/* Title bar */}
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">🐔</span>
+                <div>
+                  <h3 className="font-black text-sm tracking-tight">CHICKEN CROSS</h3>
+                  <p className="text-[10px] text-muted-foreground">Pick a tile, dodge the traps</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <span className={`font-semibold ${config.color}`}>{config.label}</span>
+                <span className="text-muted-foreground">·</span>
+                <span className="text-muted-foreground">Row {gameState === "playing" ? currentRow + 1 : 0}/{CROSSY_ROWS}</span>
+              </div>
+            </div>
+
+            {/* Road / Grid */}
+            <div className="space-y-1.5">
+              {/* Rows displayed top-to-bottom (row 9 at top, row 0 at bottom) */}
+              {Array.from({ length: CROSSY_ROWS }).map((_, displayIdx) => {
+                const rowIdx = CROSSY_ROWS - 1 - displayIdx; // reverse: top = highest row
+                const rowData = rows[rowIdx];
+                const isCurrentRow = gameState === "playing" && rowIdx === currentRow;
+                const isCompletedRow = rowData && rowData.selectedIndex !== undefined;
+                const isFutureRow = gameState === "playing" && rowIdx > currentRow;
+                const rowMult = getRowMultiplier(rowIdx);
+
+                return (
+                  <div
+                    key={`row-${rowIdx}`}
+                    className={`flex items-center gap-2 rounded-lg p-1.5 transition-all duration-200 ${
+                      isCurrentRow
+                        ? "bg-yellow-400/10 border border-yellow-400/30 shadow-[0_0_15px_rgba(234,179,8,0.15)]"
+                        : isCompletedRow
+                          ? "bg-muted/20 border border-border/20"
+                          : isFutureRow
+                            ? "bg-muted/5 border border-border/10 opacity-40"
+                            : "bg-muted/10 border border-border/15"
+                    } ${isCurrentRow ? "crossy-row-unlock" : ""}`}
+                  >
+                    {/* Row number */}
+                    <div className="w-7 text-center shrink-0">
+                      <span className={`text-xs font-bold ${
+                        isCurrentRow ? "text-yellow-400" : isCompletedRow ? "text-muted-foreground" : "text-muted-foreground/40"
+                      }`}>
+                        {rowIdx + 1}
+                      </span>
+                    </div>
+
+                    {/* Tiles */}
+                    <div className="flex-1 flex gap-1.5 justify-center">
+                      {Array.from({ length: config.tilesPerRow }).map((_, tileIdx) => {
+                        const tileState = rowData?.tiles[tileIdx] ?? "hidden";
+                        const isSelected = rowData?.selectedIndex === tileIdx;
+                        const isTrap = tileState === "trap";
+                        const isSafe = tileState === "safe";
+                        const isClickable = isCurrentRow && tileState === "hidden" && !isProcessing;
+
+                        return (
+                          <button
+                            key={`tile-${rowIdx}-${tileIdx}`}
+                            onClick={() => isClickable && handleTileClick(tileIdx)}
+                            disabled={!isClickable}
+                            className={`
+                              relative flex items-center justify-center
+                              w-full aspect-square max-w-[56px] rounded-lg
+                              text-lg font-bold transition-all duration-200
+                              border-2
+                              ${isClickable
+                                ? "bg-yellow-400/10 border-yellow-400/40 hover:bg-yellow-400/20 hover:border-yellow-400/60 hover:shadow-[0_0_12px_rgba(234,179,8,0.3)] cursor-pointer crossy-tile-active"
+                                : isSafe && isSelected
+                                  ? "bg-yellow-400/20 border-yellow-400/50 crossy-safe"
+                                  : isSafe
+                                    ? "bg-green-400/10 border-green-400/20 crossy-tile-reveal"
+                                    : isTrap && isSelected
+                                      ? "bg-red-500/30 border-red-400/60 crossy-trap"
+                                      : isTrap
+                                        ? "bg-red-400/10 border-red-400/20 crossy-tile-reveal"
+                                        : "bg-muted/10 border-border/20 opacity-40"
+                              }
+                            `}
+                          >
+                            <span className={`text-lg ${
+                              isClickable ? "opacity-50" : ""
+                            } ${isSelected && isSafe ? "crossy-hop" : ""}`}
+                              key={isSelected && isSafe ? `hop-${hopKey}` : undefined}
+                            >
+                              {getTileDisplay(tileState, isSelected)}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Multiplier for this row */}
+                    <div className="w-16 text-right shrink-0">
+                      <span className={`text-xs font-mono font-bold ${
+                        isCompletedRow && rowData?.tiles[rowData.selectedIndex!] === "safe"
+                          ? "text-yellow-400"
+                          : isCompletedRow && rowData?.tiles[rowData.selectedIndex!] === "trap"
+                            ? "text-red-400"
+                            : isCurrentRow
+                              ? "text-yellow-400/80"
+                              : "text-muted-foreground/40"
+                      }`}>
+                        {rowMult}x
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Idle state overlay */}
+            {gameState === "idle" && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm rounded-2xl">
+                <div className="text-center space-y-2">
+                  <div className="text-5xl">🐔</div>
+                  <p className="text-sm font-semibold text-muted-foreground">Set your bet and start the game</p>
+                  <p className="text-xs text-muted-foreground/60">Pick tiles to cross the road. Cash out anytime!</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Multiplier ladder reference */}
+          <details className="mt-3 text-xs">
+            <summary className="text-muted-foreground/60 cursor-pointer hover:text-muted-foreground transition-colors">
+              View multiplier table
+            </summary>
+            <div className="mt-2 rounded-xl border border-border/30 bg-card/40 p-3">
+              <div className="grid grid-cols-5 gap-1 text-center text-[10px] font-semibold">
+                <div className="text-muted-foreground">Row</div>
+                <div className="text-green-400">Easy</div>
+                <div className="text-yellow-400">Med</div>
+                <div className="text-orange-400">Hard</div>
+                <div className="text-red-400">Expert</div>
+                {Array.from({ length: CROSSY_ROWS }).map((_, i) => (
+                  <div key={`table-row-${i}`} className="contents">
+                    <div className="text-muted-foreground">{i + 1}</div>
+                    {["easy", "medium", "hard", "expert"].map(d => {
+                      const m = i === 0 ? 0.9 : parseFloat((0.9 * Math.pow(CROSSY_DIFFICULTIES_UI[d].baseMultiplier, i)).toFixed(2));
+                      return (
+                        <div key={d} className={`font-mono ${
+                          m >= 100 ? "text-yellow-300" : m >= 10 ? "text-yellow-400" : m >= 3 ? "text-amber-400" : "text-muted-foreground"
+                        }`}>
+                          {m >= 1000 ? `${(m / 1000).toFixed(1)}K` : m.toFixed(2)}x
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+              <p className="text-[10px] text-muted-foreground/50 mt-2 text-center">
+                Multipliers compound each row. Higher difficulty = more risk, bigger rewards.
+              </p>
+            </div>
+          </details>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type Tab = "markets" | "my-bets" | "leaderboard" | "slots" | "plinko" | "crossy";
 
 export default function BettingPage() {
   const [activeTab, setActiveTab] = useState<Tab>("markets");
@@ -2543,6 +3873,10 @@ export default function BettingPage() {
 
   const myBalance = balanceLive?.balance ?? 1000;
 
+  // Override balance shown in header while games are animating
+  const [balanceOverride, setBalanceOverride] = useState<number | null>(null);
+  const headerBalance = balanceOverride ?? myBalance;
+
   if (!eventKey) {
     return (
       <div className="flex flex-col items-center justify-center h-64 gap-4 text-center">
@@ -2560,6 +3894,8 @@ export default function BettingPage() {
   const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
     { id: "markets",     label: "Markets",     icon: Swords },
     { id: "slots",       label: "Slots",       icon: Dices },
+    { id: "plinko",      label: "Plinko",      icon: Circle },
+    { id: "crossy",      label: "Crossy",      icon: Bird },
     { id: "my-bets",     label: "My Bets",     icon: Coins },
     { id: "leaderboard", label: "Leaderboard", icon: Trophy },
   ];
@@ -2582,7 +3918,7 @@ export default function BettingPage() {
         {/* Balance pill */}
         {balanceLive && (
           <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-muted/40 border border-border/50">
-            <span className="text-yellow-400 font-black font-mono text-lg">{formatCoins(myBalance)}</span>
+            <span className="text-yellow-400 font-black font-mono text-lg">{formatCoins(headerBalance)}</span>
             <Coins className="h-5 w-5 text-yellow-400" />
           </div>
         )}
@@ -2611,7 +3947,13 @@ export default function BettingPage() {
         <MarketsTab eventKey={eventKey} myBalance={myBalance} isAdmin={isAdminMode} />
       )}
       {activeTab === "slots" && (
-        <SlotMachine eventKey={eventKey} myBalance={myBalance} />
+        <SlotMachine eventKey={eventKey} myBalance={myBalance} onBalanceOverride={setBalanceOverride} />
+      )}
+      {activeTab === "plinko" && (
+        <PlinkoGame eventKey={eventKey} myBalance={myBalance} onBalanceOverride={setBalanceOverride} />
+      )}
+      {activeTab === "crossy" && (
+        <CrossyRoadGame eventKey={eventKey} myBalance={myBalance} onBalanceOverride={setBalanceOverride} />
       )}
       {activeTab === "my-bets" && <MyBetsTab eventKey={eventKey} />}
       {activeTab === "leaderboard" && <LeaderboardTab eventKey={eventKey} />}

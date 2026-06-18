@@ -739,3 +739,273 @@ export const spinSlot = mutation({
     };
   },
 });
+
+// ── Plinko ────────────────────────────────────────────────────────────────────
+
+/** Risk levels determine the multiplier distribution */
+const PLINKO_MULTIPLIERS: Record<string, number[]> = {
+  // Low risk: flatter distribution, safer payouts
+  low: [1.5, 1.2, 1.1, 1.0, 0.5, 0.3, 0.5, 1.0, 1.1, 1.2, 1.5],
+  // Medium risk: moderate variance
+  medium: [3.0, 1.5, 1.3, 1.0, 0.7, 0.2, 0.7, 1.0, 1.3, 1.5, 3.0],
+  // High risk: extreme variance, big wins or bust
+  high: [10.0, 3.0, 1.5, 0.5, 0.3, 0.1, 0.3, 0.5, 1.5, 3.0, 10.0],
+};
+
+/**
+ * Simulate a Plinko ball drop. The ball starts at the center and bounces
+ * left or right at each row of pegs. Each bounce has a slight center bias
+ * to create a natural distribution. Returns the path and final multiplier.
+ */
+export const dropPlinko = mutation({
+  args: {
+    eventKey:  v.string(),
+    betAmount: v.number(),
+    risk:      v.string(),  // "low" | "medium" | "high"
+  },
+  handler: async (ctx, { eventKey, betAmount, risk }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    if (betAmount < 10) throw new Error("Minimum bet is 10 coins");
+    if (!PLINKO_MULTIPLIERS[risk]) throw new Error("Invalid risk level");
+
+    // Get or create balance
+    let bal = await ctx.db
+      .query("userBalances")
+      .withIndex("by_user_event", (q) =>
+        q.eq("userId", userId).eq("eventKey", eventKey)
+      )
+      .first();
+
+    if (!bal) {
+      const id = await ctx.db.insert("userBalances", {
+        userId,
+        eventKey,
+        balance:   STARTING_BALANCE,
+        totalWon:  0,
+        totalLost: 0,
+        totalBet:  0,
+        totalBegs: 0,
+      });
+      bal = (await ctx.db.get(id))!;
+    }
+
+    if (bal.balance < betAmount) throw new Error("Insufficient balance");
+
+    // Deduct bet
+    await ctx.db.patch(bal._id, {
+      balance:  bal.balance - betAmount,
+      totalBet: bal.totalBet + betAmount,
+    });
+
+    // Simulate ball path through 10 rows of pegs
+    // Ball starts at position 5 (center of 11 slots: 0-10)
+    // At each row, it goes left (-0.5) or right (+0.5)
+    const path: number[] = [5]; // starting position (center)
+    const multipliers = PLINKO_MULTIPLIERS[risk];
+    let position = 5;
+
+    for (let row = 0; row < 10; row++) {
+      // Slight center bias (55% toward center, 45% away)
+      const centerBias = position > 5 ? -0.02 : position < 5 ? 0.02 : 0;
+      const goRight = Math.random() < (0.5 + centerBias);
+      position = Math.max(0, Math.min(10, position + (goRight ? 0.5 : -0.5)));
+      path.push(position);
+    }
+
+    // Map final position to slot index (0-10)
+    const slotIndex = Math.round(position);
+    const multiplier = multipliers[Math.min(slotIndex, multipliers.length - 1)];
+    const payout = Math.floor(betAmount * multiplier);
+
+    // Credit winnings
+    const updated = (await ctx.db.get(bal._id))!;
+    if (payout > 0) {
+      await ctx.db.patch(bal._id, {
+        balance:  updated.balance + payout,
+        totalWon: payout > betAmount ? updated.totalWon + (payout - betAmount) : updated.totalWon,
+        totalLost: payout < betAmount ? updated.totalLost + (betAmount - payout) : updated.totalLost,
+      });
+    } else {
+      await ctx.db.patch(bal._id, {
+        totalLost: updated.totalLost + betAmount,
+      });
+    }
+
+    const final = (await ctx.db.get(bal._id))!;
+    return {
+      path,
+      slotIndex,
+      multiplier,
+      payout,
+      newBalance: final.balance,
+    };
+  },
+});
+
+// ── Crossy Road (Chicken Cross) ───────────────────────────────────────────────
+
+/**
+ * Difficulty configs for Chicken Cross.
+ * tilesPerRow = total tiles shown, trapsPerRow = how many are deadly.
+ * baseMultiplier = payout multiplier per safe step (compounds).
+ */
+const CROSSY_DIFFICULTIES: Record<string, { tilesPerRow: number; trapsPerRow: number; baseMultiplier: number }> = {
+  easy:   { tilesPerRow: 4, trapsPerRow: 1, baseMultiplier: 1.31 },
+  medium: { tilesPerRow: 3, trapsPerRow: 1, baseMultiplier: 1.47 },
+  hard:   { tilesPerRow: 2, trapsPerRow: 1, baseMultiplier: 1.96 },
+  expert: { tilesPerRow: 3, trapsPerRow: 2, baseMultiplier: 2.94 },
+};
+
+const CROSSY_MAX_ROWS = 10;
+
+/**
+ * Process a single step in the Crossy Road game.
+ * - On row 0 (first step): deducts the bet from balance.
+ * - Randomly determines trap positions for the current row.
+ * - Returns whether the chosen tile was safe or a trap.
+ */
+export const crossyStep = mutation({
+  args: {
+    eventKey:   v.string(),
+    betAmount:  v.number(),
+    difficulty: v.string(),   // "easy" | "medium" | "hard" | "expert"
+    tileIndex:  v.number(),   // which tile the player picked (0-based)
+    currentRow: v.number(),   // which row we're on (0-based, 0 = first step)
+  },
+  handler: async (ctx, { eventKey, betAmount, difficulty, tileIndex, currentRow }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    if (betAmount < 10) throw new Error("Minimum bet is 10 coins");
+
+    const config = CROSSY_DIFFICULTIES[difficulty];
+    if (!config) throw new Error("Invalid difficulty");
+    if (tileIndex < 0 || tileIndex >= config.tilesPerRow) throw new Error("Invalid tile index");
+    if (currentRow < 0 || currentRow >= CROSSY_MAX_ROWS) throw new Error("Invalid row");
+
+    // Get or create balance
+    let bal = await ctx.db
+      .query("userBalances")
+      .withIndex("by_user_event", (q) =>
+        q.eq("userId", userId).eq("eventKey", eventKey)
+      )
+      .first();
+
+    if (!bal) {
+      const id = await ctx.db.insert("userBalances", {
+        userId,
+        eventKey,
+        balance:   STARTING_BALANCE,
+        totalWon:  0,
+        totalLost: 0,
+        totalBet:  0,
+        totalBegs: 0,
+      });
+      bal = (await ctx.db.get(id))!;
+    }
+
+    // On first step, deduct the bet
+    if (currentRow === 0) {
+      if (bal.balance < betAmount) throw new Error("Insufficient balance");
+      await ctx.db.patch(bal._id, {
+        balance:  bal.balance - betAmount,
+        totalBet: bal.totalBet + betAmount,
+      });
+    }
+
+    // Row 0 is a "hook" row: no traps, 0.9x multiplier to lure the player in
+    const trapsThisRow = currentRow === 0 ? 0 : config.trapsPerRow;
+
+    // Generate trap positions for this row (random, determined server-side)
+    const trapIndices: number[] = [];
+    const allIndices = Array.from({ length: config.tilesPerRow }, (_, i) => i);
+    for (let t = 0; t < trapsThisRow; t++) {
+      const pick = Math.floor(Math.random() * allIndices.length);
+      trapIndices.push(allIndices[pick]);
+      allIndices.splice(pick, 1);
+    }
+
+    const hitTrap = trapIndices.includes(tileIndex);
+
+    // Calculate current multiplier (compounding)
+    // Row 0 = 0.9x (hook), then rows 1+ compound: 0.9 * baseMultiplier^row
+    const rowsCompleted = hitTrap ? currentRow : currentRow + 1;
+    const HOOK_MULTIPLIER = 0.9;
+    const multiplier = rowsCompleted === 0
+      ? 1
+      : rowsCompleted === 1
+        ? HOOK_MULTIPLIER
+        : parseFloat((HOOK_MULTIPLIER * Math.pow(config.baseMultiplier, rowsCompleted - 1)).toFixed(2));
+
+    if (hitTrap) {
+      // Player lost — record the loss
+      const updated = (await ctx.db.get(bal._id))!;
+      await ctx.db.patch(bal._id, {
+        totalLost: updated.totalLost + betAmount,
+      });
+      const final = (await ctx.db.get(bal._id))!;
+      const lostAtMult = currentRow === 0
+        ? 1
+        : currentRow === 1
+          ? HOOK_MULTIPLIER
+          : parseFloat((HOOK_MULTIPLIER * Math.pow(config.baseMultiplier, currentRow - 1)).toFixed(2));
+      return {
+        safe: false,
+        trapIndices,
+        multiplier: lostAtMult,
+        payout: 0,
+        newBalance: final.balance,
+        gameOver: true,
+      };
+    }
+
+    // Safe tile
+    const payout = Math.floor(betAmount * multiplier);
+    const final = (await ctx.db.get(bal._id))!;
+    return {
+      safe: true,
+      trapIndices,
+      multiplier,
+      payout,
+      newBalance: final.balance,
+      gameOver: rowsCompleted >= CROSSY_MAX_ROWS,  // auto-cashout at max
+    };
+  },
+});
+
+/**
+ * Cash out the current Crossy Road game.
+ * Credits bet × multiplier to the player's balance.
+ */
+export const crossyCashOut = mutation({
+  args: {
+    eventKey:   v.string(),
+    betAmount:  v.number(),
+    multiplier: v.number(),
+  },
+  handler: async (ctx, { eventKey, betAmount, multiplier }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+
+    let bal = await ctx.db
+      .query("userBalances")
+      .withIndex("by_user_event", (q) =>
+        q.eq("userId", userId).eq("eventKey", eventKey)
+      )
+      .first();
+
+    if (!bal) throw new Error("No balance record");
+
+    const payout = Math.floor(betAmount * multiplier);
+    await ctx.db.patch(bal._id, {
+      balance:  bal.balance + payout,
+      totalWon: bal.totalWon + (payout > betAmount ? payout - betAmount : 0),
+    });
+
+    const final = (await ctx.db.get(bal._id))!;
+    return {
+      payout,
+      newBalance: final.balance,
+    };
+  },
+});
