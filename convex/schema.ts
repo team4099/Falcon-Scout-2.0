@@ -243,4 +243,16 @@ export default defineSchema({
     totalPenalties: v.optional(v.number()), // coins lost for skipping markets
   })
     .index("by_user_event", ["userId", "eventKey"]),
+
+  // ── Retention tracking (player abandon behavior) ─────────────────────────
+  retentionProfiles: defineTable({
+    userId:              v.id("users"),
+    eventKey:            v.string(),
+    abandonHistory:      v.array(v.number()),  // rolling net losses at time of page abandon
+    threshold:           v.number(),            // computed avg abandon loss (default: -500)
+    sessionStartBalance: v.number(),            // balance when current session began
+    sessionStartTime:    v.number(),            // timestamp of session start
+    updatedAt:           v.number(),
+  })
+    .index("by_user_event", ["userId", "eventKey"]),
 });

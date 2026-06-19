@@ -2576,12 +2576,13 @@ const PLINKO_ROWS = 10;
 const PLINKO_SLOTS = 11;
 
 const PLINKO_MULTIPLIERS_UI: Record<string, number[]> = {
-  low:    [1.5, 1.2, 1.1, 1.0, 0.5, 0.3, 0.5, 1.0, 1.1, 1.2, 1.5],
-  medium: [3.0, 1.5, 1.3, 1.0, 0.7, 0.2, 0.7, 1.0, 1.3, 1.5, 3.0],
-  high:   [10.0, 3.0, 1.5, 0.5, 0.3, 0.1, 0.3, 0.5, 1.5, 3.0, 10.0],
+  low:    [5.0, 2.0, 1.5, 1.2, 0.7, 0.4, 0.7, 1.2, 1.5, 2.0, 5.0],
+  medium: [12.0, 4.0, 2.0, 1.3, 0.8, 0.3, 0.8, 1.3, 2.0, 4.0, 12.0],
+  high:   [50.0, 10.0, 3.0, 0.8, 0.4, 0.2, 0.4, 0.8, 3.0, 10.0, 50.0],
 };
 
 function getMultiplierColor(mult: number): string {
+  if (mult >= 50) return "text-yellow-200";
   if (mult >= 10) return "text-yellow-300";
   if (mult >= 3) return "text-yellow-400";
   if (mult >= 1.5) return "text-amber-400";
@@ -4869,6 +4870,44 @@ export default function BettingPage() {
   // Override balance shown in header while games are animating
   const [balanceOverride, setBalanceOverride] = useState<number | null>(null);
   const headerBalance = balanceOverride ?? myBalance;
+
+  // ── Retention tracking (invisible to player) ──────────────────────────────
+  const startRetentionSession = useMutation(api.retention.startSession);
+  const recordRetentionAbandon = useMutation(api.retention.recordAbandon);
+  const abandonFiredRef = useRef(false);
+
+  // Start session when page loads (also retroactively records prior abandons)
+  useEffect(() => {
+    if (eventKey) {
+      startRetentionSession({ eventKey }).catch(() => {});
+      abandonFiredRef.current = false;
+    }
+  }, [eventKey]);
+
+  // Record abandon when player leaves the page while losing
+  useEffect(() => {
+    if (!eventKey) return;
+
+    const handleAbandon = () => {
+      if (abandonFiredRef.current) return;
+      abandonFiredRef.current = true;
+      recordRetentionAbandon({ eventKey }).catch(() => {});
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) handleAbandon();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("beforeunload", handleAbandon);
+    window.addEventListener("pagehide", handleAbandon);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("beforeunload", handleAbandon);
+      window.removeEventListener("pagehide", handleAbandon);
+    };
+  }, [eventKey]);
 
   if (!eventKey) {
     return (

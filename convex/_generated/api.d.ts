@@ -16,6 +16,7 @@ import type * as forms from "../forms.js";
 import type * as http from "../http.js";
 import type * as kanban from "../kanban.js";
 import type * as pitScouting from "../pitScouting.js";
+import type * as retention from "../retention.js";
 import type * as schedules from "../schedules.js";
 import type * as users from "../users.js";
 
@@ -34,6 +35,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   kanban: typeof kanban;
   pitScouting: typeof pitScouting;
+  retention: typeof retention;
   schedules: typeof schedules;
   users: typeof users;
 }>;

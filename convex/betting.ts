@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
+import { getBoostForUser } from "./retention";
 
 const STARTING_BALANCE = 1000;
 
@@ -691,6 +692,27 @@ export const spinSlot = mutation({
     const reels: string[] = [];
     for (let i = 0; i < 5; i++) reels.push(weightedSlotSymbol());
 
+    // ── Retention boost: increase matching probability ──────────────────────
+    const slotBoost = await getBoostForUser(ctx, userId, eventKey, bal.balance - betAmount);
+    if (slotBoost > 0) {
+      const forceTripleChance = [0, 0.08, 0.15, 0.25][slotBoost];
+      const forcePairChance = [0, 0.20, 0.30, 0.40][slotBoost];
+      const rand = Math.random();
+      if (rand < forceTripleChance) {
+        // Force 3-of-a-kind with a mid/high value symbol
+        const boostSymbols = ["cherry", "bell", "star", "seven"];
+        const sym = boostSymbols[Math.floor(Math.random() * boostSymbols.length)];
+        const positions = [0, 1, 2, 3, 4].sort(() => Math.random() - 0.5).slice(0, 3);
+        for (const p of positions) reels[p] = sym;
+      } else if (rand < forcePairChance) {
+        // Force at least one matching pair
+        const src = Math.floor(Math.random() * 5);
+        let dst = Math.floor(Math.random() * 5);
+        while (dst === src) dst = Math.floor(Math.random() * 5);
+        reels[dst] = reels[src];
+      }
+    }
+
     // Count occurrences of each symbol
     const counts: Record<string, number> = {};
     for (const s of reels) counts[s] = (counts[s] ?? 0) + 1;
@@ -744,12 +766,12 @@ export const spinSlot = mutation({
 
 /** Risk levels determine the multiplier distribution */
 const PLINKO_MULTIPLIERS: Record<string, number[]> = {
-  // Low risk: flatter distribution, safer payouts
-  low: [1.5, 1.2, 1.1, 1.0, 0.5, 0.3, 0.5, 1.0, 1.1, 1.2, 1.5],
-  // Medium risk: moderate variance
-  medium: [3.0, 1.5, 1.3, 1.0, 0.7, 0.2, 0.7, 1.0, 1.3, 1.5, 3.0],
-  // High risk: extreme variance, big wins or bust
-  high: [10.0, 3.0, 1.5, 0.5, 0.3, 0.1, 0.3, 0.5, 1.5, 3.0, 10.0],
+  // Low risk: safer payouts, generous edges
+  low: [5.0, 2.0, 1.5, 1.2, 0.7, 0.4, 0.7, 1.2, 1.5, 2.0, 5.0],
+  // Medium risk: solid variance, juicy edges
+  medium: [12.0, 4.0, 2.0, 1.3, 0.8, 0.3, 0.8, 1.3, 2.0, 4.0, 12.0],
+  // High risk: extreme variance, massive edge payouts
+  high: [50.0, 10.0, 3.0, 0.8, 0.4, 0.2, 0.4, 0.8, 3.0, 10.0, 50.0],
 };
 
 /**
@@ -805,9 +827,13 @@ export const dropPlinko = mutation({
     const multipliers = PLINKO_MULTIPLIERS[risk];
     let position = 5;
 
+    // ── Retention boost: modify center bias to favor higher-multiplier zones ──
+    const plinkoBoost = await getBoostForUser(ctx, userId, eventKey, bal.balance - betAmount);
+    // Normal (1.0): slight center bias → low multipliers. Boosted: reduce/reverse → edge bias
+    const biasScale = [1.0, 0.0, -1.0, -2.0][plinkoBoost];
+
     for (let row = 0; row < 10; row++) {
-      // Slight center bias (55% toward center, 45% away)
-      const centerBias = position > 5 ? -0.02 : position < 5 ? 0.02 : 0;
+      const centerBias = (position > 5 ? -0.02 : position < 5 ? 0.02 : 0) * biasScale;
       const goRight = Math.random() < (0.5 + centerBias);
       position = Math.max(0, Math.min(10, position + (goRight ? 0.5 : -0.5)));
       path.push(position);
@@ -923,6 +949,20 @@ export const crossyStep = mutation({
       const pick = Math.floor(Math.random() * allIndices.length);
       trapIndices.push(allIndices[pick]);
       allIndices.splice(pick, 1);
+    }
+
+    // ── Retention mercy: chance to save player from trap ────────────────────
+    const crossyEffectiveBal = currentRow === 0 ? bal.balance - betAmount : bal.balance;
+    const crossyBoost = await getBoostForUser(ctx, userId, eventKey, crossyEffectiveBal);
+    if (crossyBoost > 0 && trapIndices.includes(tileIndex) && currentRow > 0) {
+      const mercyChance = [0, 0.15, 0.25, 0.40][crossyBoost];
+      if (Math.random() < mercyChance) {
+        const safeTiles = Array.from({ length: config.tilesPerRow }, (_, i) => i)
+          .filter(i => i !== tileIndex && !trapIndices.includes(i));
+        if (safeTiles.length > 0) {
+          trapIndices[trapIndices.indexOf(tileIndex)] = safeTiles[Math.floor(Math.random() * safeTiles.length)];
+        }
+      }
     }
 
     const hitTrap = trapIndices.includes(tileIndex);
@@ -1087,7 +1127,16 @@ export const minesReveal = mutation({
     }
     const minePositions = indices.slice(0, mineCount);
 
-    const hitMine = minePositions.includes(tileIndex);
+    // ── Retention mercy: chance to save player from mine ────────────────────
+    const minesEffectiveBal = revealedCount === 0 ? bal.balance - betAmount : bal.balance;
+    const minesBoost = await getBoostForUser(ctx, userId, eventKey, minesEffectiveBal);
+    let hitMine = minePositions.includes(tileIndex);
+    if (minesBoost > 0 && hitMine) {
+      const mercyChance = [0, 0.15, 0.25, 0.40][minesBoost];
+      if (Math.random() < mercyChance) {
+        hitMine = false;
+      }
+    }
 
     // Calculate multiplier using combinatorial formula with 3% house edge
     // Multiplier = 0.97 * C(25, s) / C(25 - N, s)
