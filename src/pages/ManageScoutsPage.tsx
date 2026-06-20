@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
@@ -30,6 +30,7 @@ import {
   UserPlus as UserPlusIcon,
   Eye,
   AlertTriangle,
+  Ban,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -125,6 +126,7 @@ function Avatar({ user, size = 40 }: { user: User; size?: number }) {
       <img
         src={user.image}
         alt={displayName(user)}
+        referrerPolicy="no-referrer"
         style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }}
       />
     );
@@ -162,9 +164,10 @@ interface ScoutRowProps {
   hasSubmissions: boolean;
   rank?: number;
   hasPrefs?: boolean;
+  isExcluded?: boolean;
 }
 
-function ScoutRow({ user, count, selected, onClick, hasSubmissions, rank, hasPrefs }: ScoutRowProps) {
+function ScoutRow({ user, count, selected, onClick, hasSubmissions, rank, hasPrefs, isExcluded }: ScoutRowProps) {
   return (
     <button
       onClick={onClick}
@@ -275,6 +278,18 @@ function ScoutRow({ user, count, selected, onClick, hasSubmissions, rank, hasPre
           }}
         >
           0
+        </span>
+      )}
+
+      {/* Excluded badge */}
+      {isExcluded && (
+        <span title="Excluded from schedule generation" style={{
+          display: "flex", alignItems: "center", justifyContent: "center",
+          width: 20, height: 20, borderRadius: "50%", flexShrink: 0,
+          background: "oklch(0.55 0.18 30 / 20%)",
+          border: "1px solid oklch(0.55 0.18 30 / 40%)",
+        }}>
+          <Ban size={10} style={{ color: "oklch(0.72 0.18 30)" }} />
         </span>
       )}
 
@@ -818,14 +833,23 @@ export default function ManageScoutsPage() {
     currentEvent ? { eventKey } : "skip"
   ) as PitRotation[] | undefined;
   const allTemplates = useQuery(api.forms.listTemplates) as FormTemplate[] | undefined;
+  const dbExcludedScoutIds = useQuery(
+    api.schedules.getScheduleExclusions,
+    currentEvent ? { eventKey } : "skip"
+  ) as string[] | undefined;
 
   // Mutations
   const clearMatchAssignment = useMutation(api.schedules.clearMatchAssignment);
   const upsertPitRotation    = useMutation(api.schedules.upsertPitRotation);
+  const setScheduleExclusions = useMutation(api.schedules.setScheduleExclusions);
 
   // Saving state
   const [clearingSlot, setClearingSlot]   = useState<string | null>(null);
   const [togglingRot,  setTogglingRot]    = useState<string | null>(null);
+  const [togglingExclude, setTogglingExclude] = useState(false);
+
+  // Derived: excluded scout set
+  const excludedSet = new Set(dbExcludedScoutIds ?? []);
 
   // ── Derived data ─────────────────────────────────────────────────────────────
 
@@ -902,6 +926,22 @@ export default function ManageScoutsPage() {
       setTogglingRot(null);
     }
   }
+
+  const handleToggleExclude = useCallback(async (scoutId: string) => {
+    if (!currentEvent?.eventKey) return;
+    setTogglingExclude(true);
+    try {
+      const current = dbExcludedScoutIds ?? [];
+      const isExcluded = current.includes(scoutId);
+      const next = isExcluded
+        ? current.filter(id => id !== scoutId)
+        : [...current, scoutId];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await setScheduleExclusions({ eventKey: currentEvent.eventKey, excludedScoutIds: next as any[] });
+    } finally {
+      setTogglingExclude(false);
+    }
+  }, [currentEvent?.eventKey, dbExcludedScoutIds, setScheduleExclusions]);
 
   // ── Guard ─────────────────────────────────────────────────────────────────────
 
@@ -1131,6 +1171,7 @@ export default function ManageScoutsPage() {
                           hasSubmissions={true}
                           rank={idx + 1}
                           hasPrefs={!!prefsById[user._id]}
+                          isExcluded={excludedSet.has(user._id)}
                         />
                       ))}
                     </>
@@ -1187,6 +1228,7 @@ export default function ManageScoutsPage() {
                           }
                           hasSubmissions={false}
                           hasPrefs={!!prefsById[user._id]}
+                          isExcluded={excludedSet.has(user._id)}
                         />
                       ))}
                     </>
@@ -1371,6 +1413,88 @@ export default function ManageScoutsPage() {
                 {/* Submissions list */}
                 <ScrollArea style={{ flex: 1 }}>
                   <div style={{ padding: "14px 18px 20px", display: "flex", flexDirection: "column", gap: 8 }}>
+
+                    {/* ── Exclude from Schedule toggle ── */}
+                    <div style={{
+                      borderRadius: 13,
+                      background: excludedSet.has(selectedUser._id)
+                        ? "oklch(0.55 0.18 30 / 10%)"
+                        : "oklch(1 0 0 / 3%)",
+                      border: excludedSet.has(selectedUser._id)
+                        ? "1px solid oklch(0.55 0.18 30 / 35%)"
+                        : "1px solid oklch(1 0 0 / 8%)",
+                      overflow: "hidden",
+                      marginBottom: 4,
+                      transition: "all 0.2s",
+                    }}>
+                      <div style={{
+                        display: "flex", alignItems: "center", gap: 10,
+                        padding: "12px 14px",
+                      }}>
+                        <div style={{
+                          width: 32, height: 32, borderRadius: 9, flexShrink: 0,
+                          background: excludedSet.has(selectedUser._id)
+                            ? "oklch(0.55 0.18 30 / 20%)"
+                            : "oklch(1 0 0 / 6%)",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          transition: "background 0.2s",
+                        }}>
+                          <Ban size={15} style={{
+                            color: excludedSet.has(selectedUser._id)
+                              ? "oklch(0.72 0.18 30)"
+                              : "var(--muted-foreground)",
+                            transition: "color 0.2s",
+                          }} />
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{
+                            fontSize: 13, fontWeight: 700,
+                            color: excludedSet.has(selectedUser._id)
+                              ? "oklch(0.75 0.18 30)"
+                              : "var(--foreground)",
+                          }}>
+                            Exclude from Schedule
+                          </div>
+                          <div style={{ fontSize: 11, color: "var(--muted-foreground)", lineHeight: 1.4, marginTop: 1 }}>
+                            {excludedSet.has(selectedUser._id)
+                              ? "This scout is excluded from auto-generated schedules."
+                              : "Toggle to skip this scout during schedule generation."}
+                          </div>
+                        </div>
+                        {/* Toggle switch */}
+                        <button
+                          onClick={() => handleToggleExclude(selectedUser._id)}
+                          disabled={togglingExclude}
+                          style={{
+                            width: 44, height: 24, borderRadius: 12, flexShrink: 0,
+                            background: excludedSet.has(selectedUser._id)
+                              ? "oklch(0.55 0.18 30)"
+                              : "oklch(1 0 0 / 12%)",
+                            border: excludedSet.has(selectedUser._id)
+                              ? "1.5px solid oklch(0.55 0.18 30 / 60%)"
+                              : "1.5px solid oklch(1 0 0 / 15%)",
+                            cursor: togglingExclude ? "wait" : "pointer",
+                            position: "relative",
+                            transition: "all 0.2s",
+                            padding: 0,
+                            opacity: togglingExclude ? 0.5 : 1,
+                          }}
+                          title={excludedSet.has(selectedUser._id) ? "Include in schedule" : "Exclude from schedule"}
+                        >
+                          <div style={{
+                            width: 18, height: 18, borderRadius: "50%",
+                            background: excludedSet.has(selectedUser._id)
+                              ? "white"
+                              : "oklch(1 0 0 / 35%)",
+                            position: "absolute",
+                            top: 1.5, 
+                            left: excludedSet.has(selectedUser._id) ? 22 : 2,
+                            transition: "left 0.2s, background 0.2s",
+                            boxShadow: "0 1px 3px oklch(0 0 0 / 20%)",
+                          }} />
+                        </button>
+                      </div>
+                    </div>
 
                     {/* Preferences section */}
                     {selectedPrefs && (

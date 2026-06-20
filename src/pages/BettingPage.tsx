@@ -361,7 +361,8 @@ function MarketCard({
   const [resolveOpen, setResolveOpen] = useState(false);
   const [resolveOption, setResolveOption] = useState(market.options[0]?.id ?? "");
 
-  const poolData = useQuery(api.betting.getMarketPool, { marketId: market._id });
+  const poolDataLive = useQuery(api.betting.getMarketPool, { marketId: market._id });
+  const poolData = useCached(poolDataLive, `betting_pool_${market._id}`);
   const realBets: Record<string, number> = poolData ?? {};
 
   const resolveMarket = useMutation(api.betting.resolveMarket);
@@ -1291,7 +1292,8 @@ function MarketsTab({
   const [didAutoGenerate, setDidAutoGenerate] = useState(false);
   const [wiping, setWiping] = useState(false);
 
-  const marketsLive = useQuery(api.betting.listMarkets, { eventKey });
+  const marketsQuery = useQuery(api.betting.listMarkets, { eventKey });
+  const marketsLive = useCached(marketsQuery, `betting_markets_${eventKey}`);
   const batchCreateRandom = useMutation(api.betting.batchCreateRandomMarkets);
   const clearAll = useMutation(api.betting.clearAllMarkets);
 
@@ -1442,7 +1444,8 @@ function MarketsTab({
   }
 
   const markets = (marketsLive ?? []) as Market[];
-  const myBetsLive = useQuery(api.betting.listMyBets, { eventKey });
+  const myBetsQuery = useQuery(api.betting.listMyBets, { eventKey });
+  const myBetsLive = useCached(myBetsQuery, `betting_my_bets_${eventKey}`);
   const bettedMarketIds = new Set((myBetsLive ?? []).map((b) => b.marketId));
 
   const filtered = useMemo(() => {
@@ -1582,9 +1585,12 @@ function MarketsTab({
 // -- My Bets Tab ---------------------------------------------------------------
 
 function MyBetsTab({ eventKey }: { eventKey: string }) {
-  const balanceLive = useQuery(api.betting.getMyBalance, { eventKey });
-  const myBetsLive = useQuery(api.betting.listMyBets, { eventKey });
-  const marketsLive = useQuery(api.betting.listMarkets, { eventKey });
+  const balanceQuery2 = useQuery(api.betting.getMyBalance, { eventKey });
+  const balanceLive = useCached(balanceQuery2, `betting_balance_${eventKey}`);
+  const myBetsQuery2 = useQuery(api.betting.listMyBets, { eventKey });
+  const myBetsLive = useCached(myBetsQuery2, `betting_my_bets_${eventKey}`);
+  const marketsQuery2 = useQuery(api.betting.listMarkets, { eventKey });
+  const marketsLive = useCached(marketsQuery2, `betting_markets_${eventKey}`);
   const getOrCreate = useMutation(api.betting.getOrCreateBalance);
   const beg = useMutation(api.betting.beg);
   const [begging, setBegging] = useState(false);
@@ -1774,7 +1780,8 @@ function MyBetsTab({ eventKey }: { eventKey: string }) {
 // -- Leaderboard Tab -----------------------------------------------------------
 
 function LeaderboardTab({ eventKey }: { eventKey: string }) {
-  const leaderboard = useQuery(api.betting.getLeaderboard, { eventKey });
+  const leaderboardLive = useQuery(api.betting.getLeaderboard, { eventKey });
+  const leaderboard = useCached(leaderboardLive, `betting_leaderboard_${eventKey}`);
 
   if (!leaderboard) {
     return (
@@ -4855,7 +4862,8 @@ export default function BettingPage() {
   const eventKey = currentEvent?.eventKey ?? "";
   const { isAdminMode } = useUIStore();
 
-  const balanceLive = useQuery(api.betting.getMyBalance, eventKey ? { eventKey } : "skip");
+  const balanceQuery = useQuery(api.betting.getMyBalance, eventKey ? { eventKey } : "skip");
+  const balanceLive = useCached(balanceQuery, `betting_balance_${eventKey}`);
   const getOrCreate = useMutation(api.betting.getOrCreateBalance);
 
   // Ensure the user has a balance record

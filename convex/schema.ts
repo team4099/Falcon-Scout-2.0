@@ -145,6 +145,14 @@ export default defineSchema({
   })
     .index("by_scout_event", ["scoutId", "eventKey"])
     .index("by_event",       ["eventKey"]),
+  // Admin-set schedule exclusions — scouts permanently excluded from
+  // auto-generated schedules for a given event.
+  scheduleExclusions: defineTable({
+    eventKey: v.string(),
+    excludedScoutIds: v.array(v.id("users")),
+    updatedAt: v.number(),
+  }).index("by_event", ["eventKey"]),
+
   // Pre-competition pit scouting teams — groups of scouts assigned to
   // scout specific teams' pits before quals start.
   pitScoutingTeams: defineTable({

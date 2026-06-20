@@ -269,3 +269,36 @@ export const listAllPreferences = query({
       .collect();
   },
 });
+
+// ── Schedule Exclusions ───────────────────────────────────────────────────────
+
+/** Get the permanently excluded scout IDs for an event */
+export const getScheduleExclusions = query({
+  args: { eventKey: v.string() },
+  handler: async (ctx, { eventKey }) => {
+    const row = await ctx.db
+      .query("scheduleExclusions")
+      .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
+      .first();
+    return row?.excludedScoutIds ?? [];
+  },
+});
+
+/** Set the excluded scout IDs for an event (admin action — replaces the full list) */
+export const setScheduleExclusions = mutation({
+  args: {
+    eventKey: v.string(),
+    excludedScoutIds: v.array(v.id("users")),
+  },
+  handler: async (ctx, { eventKey, excludedScoutIds }) => {
+    const existing = await ctx.db
+      .query("scheduleExclusions")
+      .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
+      .first();
+    if (existing) {
+      await ctx.db.patch(existing._id, { excludedScoutIds, updatedAt: Date.now() });
+    } else {
+      await ctx.db.insert("scheduleExclusions", { eventKey, excludedScoutIds, updatedAt: Date.now() });
+    }
+  },
+});

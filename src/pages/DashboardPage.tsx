@@ -309,7 +309,7 @@ function SubmissionsReviewDialog({
                           return (
                             <span className="flex items-center gap-1 shrink-0">
                               {u.image
-                                ? <img src={u.image} alt={displayName} className="h-4 w-4 rounded-full object-cover" />
+                                ? <img src={u.image} alt={displayName} referrerPolicy="no-referrer" className="h-4 w-4 rounded-full object-cover" />
                                 : <span className="h-4 w-4 rounded-full bg-primary/20 text-primary text-[9px] flex items-center justify-center font-bold">
                                     {displayName.charAt(0).toUpperCase()}
                                   </span>
@@ -409,7 +409,7 @@ function SubmissionsReviewDialog({
                 <div className="flex items-center gap-2 pt-2 mt-1 border-t border-border/50 text-sm">
                   <span className="text-xs text-muted-foreground">Scouted by:</span>
                   {u.image
-                    ? <img src={u.image} alt={displayName} className="h-5 w-5 rounded-full object-cover" />
+                    ? <img src={u.image} alt={displayName} referrerPolicy="no-referrer" className="h-5 w-5 rounded-full object-cover" />
                     : <span className="h-5 w-5 rounded-full bg-primary/20 text-primary text-[10px] flex items-center justify-center font-bold shrink-0">
                         {displayName.charAt(0).toUpperCase()}
                       </span>

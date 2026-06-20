@@ -317,7 +317,7 @@ function PreCompetitionCard({
                     color: PS_COLOR,
                   }}>
                     {u?.image && (
-                      <img src={u.image} alt="" style={{ width: 13, height: 13, borderRadius: "50%", objectFit: "cover" }} />
+                      <img src={u.image} alt="" referrerPolicy="no-referrer" style={{ width: 13, height: 13, borderRadius: "50%", objectFit: "cover" }} />
                     )}
                     {getFirst(u)}
                   </span>
@@ -509,7 +509,7 @@ function avatarLetter(u: UserRecord) { return displayName(u).charAt(0).toUpperCa
 
 function MiniAvatar({ user, size = 24 }: { user: UserRecord; size?: number }) {
   if (user.image) {
-    return <img src={user.image} alt={displayName(user)} style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />;
+    return <img src={user.image} alt={displayName(user)} referrerPolicy="no-referrer" style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />;
   }
   return (
     <div style={{
@@ -837,17 +837,21 @@ export default function MySchedulePage() {
     api.checklists.getMyChecklistSubmissions,
     eventKey ? { eventKey } : "skip"
   );
+  const myChecklistSubs = useCached(myChecklistSubsLive, `my_checklist_subs_${eventKey || "none"}`);
   const completedChecklistSet = useMemo<Set<string>>(() => {
     const s = new Set<string>();
-    for (const sub of myChecklistSubsLive ?? []) {
+    for (const sub of myChecklistSubs ?? []) {
       s.add(`${sub.matchNumber}-${sub.templateId}`);
     }
     return s;
-  }, [myChecklistSubsLive]);
+  }, [myChecklistSubs]);
 
-  const myPreferences  = useQuery(
-    api.schedules.getMyPreferences,
-    eventKey ? { eventKey } : "skip"
+  const myPreferences = useCached(
+    useQuery(
+      api.schedules.getMyPreferences,
+      eventKey ? { eventKey } : "skip"
+    ),
+    `my_preferences_${eventKey || "none"}`
   );
 
 

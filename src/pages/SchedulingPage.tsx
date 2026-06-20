@@ -7,6 +7,7 @@ import { useUIStore } from "@/store/uiStore";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { fetchTBAEventMatches, fetchTBAEventTeams } from "@/lib/api";
 import type { TBAMatch, TBATeam } from "@/lib/api";
+import { lsGet, lsGetStale } from "@/lib/persistentCache";
 import {
   Users, ShieldAlert, Lock, CalendarDays, Wrench, Loader2,
   AlertCircle, Plus, Trash2, Pencil, Check,
@@ -109,6 +110,7 @@ function Avatar({ user, size = 36 }: { user: User; size?: number }) {
   if (user.image) {
     return (
       <img src={user.image} alt={displayName(user)}
+        referrerPolicy="no-referrer"
         style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
     );
   }
@@ -1458,7 +1460,7 @@ function PitScoutingTab({
                   }}
                 >
                   {u.image
-                    ? <img src={u.image} alt="" style={{ width: 14, height: 14, borderRadius: "50%", objectFit: "cover" }} />
+                    ? <img src={u.image} alt="" referrerPolicy="no-referrer" style={{ width: 14, height: 14, borderRadius: "50%", objectFit: "cover" }} />
                     : <span style={{ width: 14, height: 14, borderRadius: "50%", background: pinned ? G_TXT+"30" : G_MED, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 800, color: pinned ? G_TXT : G, flexShrink: 0 }}>{avatarLetter(u)}</span>
                   }
                   {firstName(u)}
@@ -1700,19 +1702,42 @@ export default function SchedulingPage() {
   const stackLayout      = vp.mobile && !vp.landscape;                   // portrait phone → stack vertically
 
   const currentEvent = useCached(useQuery(api.events.getCurrentEvent), "current_event");
-  const allUsers     = useQuery(api.users.listUsers) as User[] | undefined;
-  const allAssignments = useQuery(
-    api.schedules.listMatchAssignments,
-    currentEvent ? { eventKey: currentEvent.eventKey } : "skip"
+  const eventKey = currentEvent?.eventKey ?? "";
+
+  const allUsers = useCached(
+    useQuery(api.users.listUsers) as User[] | undefined,
+    "all_users"
+  ) as User[] | undefined;
+
+  const allAssignments = useCached(
+    useQuery(
+      api.schedules.listMatchAssignments,
+      eventKey ? { eventKey } : "skip"
+    ) as MatchAssignment[] | undefined,
+    `sched_match_assignments_${eventKey || "none"}`
   ) as MatchAssignment[] | undefined;
-  const pitRotations = useQuery(
-    api.schedules.listPitRotations,
-    currentEvent ? { eventKey: currentEvent.eventKey } : "skip"
+
+  const pitRotations = useCached(
+    useQuery(
+      api.schedules.listPitRotations,
+      eventKey ? { eventKey } : "skip"
+    ) as PitRotation[] | undefined,
+    `sched_pit_rotations_${eventKey || "none"}`
   ) as PitRotation[] | undefined;
-  const allPreferences = useQuery(
-    api.schedules.listAllPreferences,
-    currentEvent ? { eventKey: currentEvent.eventKey } : "skip"
+
+  const allPreferences = useCached(
+    useQuery(
+      api.schedules.listAllPreferences,
+      eventKey ? { eventKey } : "skip"
+    ),
+    `sched_all_preferences_${eventKey || "none"}`
   );
+
+  const dbExcludedScoutIds = useQuery(
+    api.schedules.getScheduleExclusions,
+    eventKey ? { eventKey } : "skip"
+  ) as string[] | undefined;
+  const dbExcludedSet = useMemo(() => new Set(dbExcludedScoutIds ?? []), [dbExcludedScoutIds]);
 
   const setMatchAssignment       = useMutation(api.schedules.setMatchAssignment);
   const clearMatchAssignment     = useMutation(api.schedules.clearMatchAssignment);
@@ -1724,9 +1749,12 @@ export default function SchedulingPage() {
   const clearAllPitScouting      = useMutation(api.pitScouting.clearAllPitScoutingAssignments);
   const batchUpsertPitScouting   = useMutation(api.pitScouting.batchUpsertPitScoutingAssignments);
 
-  const pitScoutingTeams = useQuery(
-    api.pitScouting.listPitScoutingTeams,
-    currentEvent ? { eventKey: currentEvent.eventKey } : "skip"
+  const pitScoutingTeams = useCached(
+    useQuery(
+      api.pitScouting.listPitScoutingTeams,
+      eventKey ? { eventKey } : "skip"
+    ) as PitScoutingTeam[] | undefined,
+    `sched_pit_scouting_teams_${eventKey || "none"}`
   ) as PitScoutingTeam[] | undefined;
 
   // TBA event teams (for pit scouting tab)
@@ -1735,16 +1763,21 @@ export default function SchedulingPage() {
   const [tbaTeamsError, setTbaTeamsError] = useState(false);
 
   useEffect(() => {
-    if (activeTab !== "pitScouting" || !currentEvent?.eventKey) return;
+    if (activeTab !== "pitScouting" || !eventKey) return;
+    // Seed from cache for instant / offline rendering
+    const cached = lsGet<TBATeam[]>(`tba_teams_${eventKey}`)
+                ?? lsGetStale<TBATeam[]>(`tba_teams_${eventKey}`);
+    if (cached) setTbaTeams([...cached].sort((a, b) => a.team_number - b.team_number));
+
     setTbaTeamsLoading(true); setTbaTeamsError(false);
-    fetchTBAEventTeams(currentEvent.eventKey)
+    fetchTBAEventTeams(eventKey)
       .then(data => {
         if (Array.isArray(data)) setTbaTeams([...data].sort((a, b) => a.team_number - b.team_number));
         else setTbaTeamsError(true);
       })
       .catch(() => setTbaTeamsError(true))
       .finally(() => setTbaTeamsLoading(false));
-  }, [activeTab, currentEvent?.eventKey]);
+  }, [activeTab, eventKey]);
 
   // Map teamNumber -> scoutIds from Convex pitScoutingTeams
   const pitAssignmentsMap = useMemo(() => {
@@ -1834,18 +1867,23 @@ export default function SchedulingPage() {
     });
   }
 
-  // Load TBA matches
+  // Seed TBA matches from cache immediately, then refresh in background
   useEffect(() => {
-    if (!currentEvent?.eventKey) { setMatches([]); return; }
+    if (!eventKey) { setMatches([]); return; }
+    // Seed from cache so the grid appears instantly / offline
+    const cached = lsGet<TBAMatch[]>(`tba_matches_full_${eventKey}`)
+                ?? lsGetStale<TBAMatch[]>(`tba_matches_full_${eventKey}`);
+    if (cached) setMatches([...cached].sort((a, b) => matchSortKey(a) - matchSortKey(b)));
+
     setMatchesLoading(true); setMatchesError(false);
-    fetchTBAEventMatches(currentEvent.eventKey)
+    fetchTBAEventMatches(eventKey)
       .then(data => {
         if (Array.isArray(data)) setMatches([...data].sort((a, b) => matchSortKey(a) - matchSortKey(b)));
         else setMatchesError(true);
       })
       .catch(() => setMatchesError(true))
       .finally(() => setMatchesLoading(false));
-  }, [currentEvent?.eventKey]);
+  }, [eventKey]);
 
   const userMap = useMemo(() => Object.fromEntries((allUsers ?? []).map(u => [u._id, u])), [allUsers]);
 
@@ -1975,14 +2013,14 @@ export default function SchedulingPage() {
         preferences: prefs,
         existingPitRotations: existingPit,
         existingMatchAssignments: existingAssigns,
-        excludedScoutIds: [...excludedScoutIds],
+        excludedScoutIds: [...new Set([...excludedScoutIds, ...dbExcludedSet])],
       });
 
       setAutoGenResult(result);
     } finally {
       setAutoGenRunning(false);
     }
-  }, [currentEvent, allUsers, matches, allPreferences, allAssignments, pitRotations, excludedScoutIds]);
+  }, [currentEvent, allUsers, matches, allPreferences, allAssignments, pitRotations, excludedScoutIds, dbExcludedSet]);
 
   const handleAutoApply = useCallback(async () => {
     if (!autoGenResult || !currentEvent) return;
@@ -2096,20 +2134,22 @@ export default function SchedulingPage() {
                 </button>
               )}
               {/* Exclude scouts toggle button */}
-              {allUsers && allUsers.length > 0 && matches.length > 0 && (
+              {allUsers && allUsers.length > 0 && matches.length > 0 && (() => {
+                const totalExcluded = new Set([...excludedScoutIds, ...dbExcludedSet]).size;
+                return (
                 <button
                   onClick={() => setShowExcludePanel(v => !v)}
                   title="Select scouts to exclude from auto-schedule generation"
                   style={{
                     display: "flex", alignItems: "center", gap: 6,
                     padding: "8px 14px", borderRadius: 10, fontSize: 13, fontWeight: 700,
-                    background: excludedScoutIds.size > 0
+                    background: totalExcluded > 0
                       ? "oklch(0.55 0.18 30 / 15%)"
                       : SURF_HVR,
-                    color: excludedScoutIds.size > 0
+                    color: totalExcluded > 0
                       ? "oklch(0.75 0.18 30)"
                       : MUTED,
-                    border: excludedScoutIds.size > 0
+                    border: totalExcluded > 0
                       ? "1.5px solid oklch(0.55 0.18 30 / 40%)"
                       : `1.5px solid ${SURF_BORD}`,
                     cursor: "pointer", flexShrink: 0,
@@ -2118,17 +2158,18 @@ export default function SchedulingPage() {
                 >
                   <Users size={13} />
                   Exclude
-                  {excludedScoutIds.size > 0 && (
+                  {totalExcluded > 0 && (
                     <span style={{
                       background: "oklch(0.55 0.18 30 / 25%)",
                       borderRadius: 20, padding: "0 6px", fontSize: 11, fontWeight: 800,
                       color: "oklch(0.75 0.18 30)",
                     }}>
-                      {excludedScoutIds.size}
+                      {totalExcluded}
                     </span>
                   )}
                 </button>
-              )}
+                );
+              })()}
               {filledSlots > 0 && (
                 <button
                   onClick={handleClearAll}
@@ -2208,27 +2249,33 @@ export default function SchedulingPage() {
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                   {(allUsers ?? []).map(u => {
                     const excluded = excludedScoutIds.has(u._id);
+                    const dbExcluded = dbExcludedSet.has(u._id);
                     return (
                       <button
                         key={u._id}
-                        onClick={() => toggleExcluded(u._id)}
+                        onClick={() => !dbExcluded && toggleExcluded(u._id)}
+                        disabled={dbExcluded}
                         style={{
                           display: "inline-flex", alignItems: "center", gap: 6,
                           padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600,
-                          cursor: "pointer", transition: "all 0.12s",
-                          background: excluded ? "oklch(0.55 0.18 30 / 18%)" : SURF_HVR,
-                          color: excluded ? "oklch(0.75 0.18 30)" : MUTED,
-                          border: excluded
+                          cursor: dbExcluded ? "not-allowed" : "pointer", transition: "all 0.12s",
+                          background: dbExcluded
+                            ? "oklch(0.55 0.18 30 / 12%)"
+                            : excluded ? "oklch(0.55 0.18 30 / 18%)" : SURF_HVR,
+                          color: (dbExcluded || excluded)
+                            ? "oklch(0.75 0.18 30)" : MUTED,
+                          border: (dbExcluded || excluded)
                             ? "1.5px solid oklch(0.55 0.18 30 / 50%)"
                             : `1.5px solid ${SURF_BORD}`,
+                          opacity: dbExcluded ? 0.7 : 1,
                         }}
                       >
                         {u.image
-                          ? <img src={u.image} alt="" style={{ width: 16, height: 16, borderRadius: "50%", objectFit: "cover" }} />
+                          ? <img src={u.image} alt="" referrerPolicy="no-referrer" style={{ width: 16, height: 16, borderRadius: "50%", objectFit: "cover" }} />
                           : <span style={{
                               width: 16, height: 16, borderRadius: "50%", flexShrink: 0,
-                              background: excluded ? "oklch(0.55 0.18 30 / 40%)" : G_MED,
-                              color: excluded ? "oklch(0.75 0.18 30)" : G,
+                              background: (dbExcluded || excluded) ? "oklch(0.55 0.18 30 / 40%)" : G_MED,
+                              color: (dbExcluded || excluded) ? "oklch(0.75 0.18 30)" : G,
                               display: "flex", alignItems: "center", justifyContent: "center",
                               fontSize: 9, fontWeight: 800,
                             }}>
@@ -2236,12 +2283,20 @@ export default function SchedulingPage() {
                             </span>
                         }
                         <span style={{
-                          textDecoration: excluded ? "line-through" : "none",
-                          opacity: excluded ? 0.75 : 1,
+                          textDecoration: (dbExcluded || excluded) ? "line-through" : "none",
+                          opacity: (dbExcluded || excluded) ? 0.75 : 1,
                         }}>
                           {firstName(u)}
                         </span>
-                        {excluded && (
+                        {dbExcluded && (
+                          <span style={{
+                            fontSize: 9, fontWeight: 800, textTransform: "uppercase",
+                            letterSpacing: "0.05em", color: "oklch(0.6 0.18 30)",
+                            background: "oklch(0.55 0.18 30 / 15%)",
+                            padding: "1px 5px", borderRadius: 8,
+                          }}>Permanent</span>
+                        )}
+                        {!dbExcluded && excluded && (
                           <span style={{
                             fontSize: 9, fontWeight: 800, textTransform: "uppercase",
                             letterSpacing: "0.05em", color: "oklch(0.72 0.18 30)",
