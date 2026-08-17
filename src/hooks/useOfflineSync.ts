@@ -63,8 +63,16 @@ export function useOfflineSync() {
         });
         dequeueOfflineSubmission(sub.id);
         anySynced = true;
-      } catch {
-        break; // stop on first failure; retry next cycle
+      } catch (err: unknown) {
+        // Permanent rejection (e.g. team not at event) — dequeue so we don't
+        // keep retrying a submission that will never succeed.
+        const msg = err instanceof Error ? err.message : "";
+        if (msg.includes("not registered at this event")) {
+          dequeueOfflineSubmission(sub.id);
+          anySynced = true;
+          continue;
+        }
+        break; // stop on first transient failure; retry next cycle
       }
     }
 

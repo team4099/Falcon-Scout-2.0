@@ -98,6 +98,14 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_key", ["key"]),
 
+  // Cached event team rosters — populated by the frontend when TBA data is
+  // fetched, used by the backend to validate team numbers on form submission.
+  eventTeamRosters: defineTable({
+    eventKey: v.string(),
+    teamNumbers: v.array(v.number()),
+    updatedAt: v.number(),
+  }).index("by_event", ["eventKey"]),
+
   // Per-match scouting slots — 6 positions per match (red1-3, blue1-3)
   matchAssignments: defineTable({
     eventKey: v.string(),

@@ -184,9 +184,14 @@ export default function ScannerPage() {
         });
         updateScannedStatus(sub.id, "uploaded");
         toast.success(`Uploaded: Match ${sub.matchNumber} · Team ${sub.teamNumber} ✅`);
-      } catch (err) {
+      } catch (err: unknown) {
         updateScannedStatus(sub.id, "failed");
-        toast.error(`Upload failed for Match ${sub.matchNumber} — will retry when online.`);
+        const msg = err instanceof Error ? err.message : "";
+        if (msg.includes("not registered at this event")) {
+          toast.error(`Team ${sub.teamNumber} is not at this event — submission rejected.`);
+        } else {
+          toast.error(`Upload failed for Match ${sub.matchNumber} — will retry when online.`);
+        }
         console.error("[Scanner] upload failed:", err);
       }
       reload();

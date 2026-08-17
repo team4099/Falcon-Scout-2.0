@@ -162,6 +162,20 @@ export const submitForm = mutation({
       if (existing) return existing._id;
     }
 
+    // ── Event team roster validation ──────────────────────────────────────
+    // Reject submissions whose team number is not in the cached event roster.
+    if (args.teamNumber > 0) {
+      const roster = await ctx.db
+        .query("eventTeamRosters")
+        .withIndex("by_event", (q) => q.eq("eventKey", args.eventKey))
+        .first();
+      if (roster && !roster.teamNumbers.includes(args.teamNumber)) {
+        throw new Error(
+          `Team ${args.teamNumber} is not registered at this event. Submission rejected.`
+        );
+      }
+    }
+
     return await ctx.db.insert("formSubmissions", {
       templateId: args.templateId,
       eventKey: args.eventKey,
@@ -207,5 +221,48 @@ export const deleteSubmission = mutation({
   handler: async (ctx, { id }) => {
     await getAuthUserId(ctx); // must be signed in
     await ctx.db.delete(id);
+  },
+});
+
+// ──────────────────────────────────────────────
+// Event Team Roster (validation cache)
+// ──────────────────────────────────────────────
+
+/**
+ * Sync the event team roster from the frontend (populated from TBA data).
+ * Called whenever the frontend fetches teams for an event so the backend
+ * can validate team numbers on form submission.
+ */
+export const syncEventTeamRoster = mutation({
+  args: {
+    eventKey: v.string(),
+    teamNumbers: v.array(v.number()),
+  },
+  handler: async (ctx, { eventKey, teamNumbers }) => {
+    const existing = await ctx.db
+      .query("eventTeamRosters")
+      .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
+      .first();
+    if (existing) {
+      await ctx.db.patch(existing._id, { teamNumbers, updatedAt: Date.now() });
+    } else {
+      await ctx.db.insert("eventTeamRosters", {
+        eventKey,
+        teamNumbers,
+        updatedAt: Date.now(),
+      });
+    }
+  },
+});
+
+/** Query the cached event team roster (used by frontend for validation). */
+export const getEventTeamRoster = query({
+  args: { eventKey: v.string() },
+  handler: async (ctx, { eventKey }) => {
+    const roster = await ctx.db
+      .query("eventTeamRosters")
+      .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
+      .first();
+    return roster?.teamNumbers ?? null;
   },
 });

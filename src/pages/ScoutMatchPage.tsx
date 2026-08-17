@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
@@ -24,6 +24,7 @@ import {
 } from "@/lib/offlineQueue";
 import { saveMySubmission } from "@/lib/submissionStore";
 import { useOfflineSync } from "@/hooks/useOfflineSync";
+import { fetchTBAEventTeams, type TBATeam } from "@/lib/api";
 
 // ──────────────────────────────────────────────
 // Counter widget
@@ -132,6 +133,7 @@ function FieldRenderer({
       );
     }
     case "teamNumber":
+      // Free entry — validated against the event roster at submit (client + server).
       return (
         <Input
           type="number"
@@ -274,6 +276,7 @@ export default function ScoutMatchPage() {
   const currentEvent = useCached(currentEventLive, "current_event");
 
   const submitForm = useMutation(api.forms.submitForm);
+  const syncRoster = useMutation(api.forms.syncEventTeamRoster);
 
   const { queueLength, refreshCounts } = useOfflineSync();
   const isOnline = typeof navigator !== "undefined" ? navigator.onLine : true;
@@ -285,6 +288,36 @@ export default function ScoutMatchPage() {
   const [matchPrefix, setMatchPrefix] = useState<"qm" | "elim">("qm");
   const [formData, setFormData] = useState<FormData>({});
   const [submitting, setSubmitting] = useState(false);
+
+  // Teams registered for the current event, used to validate the teamNumber
+  // field on submit. Preloaded here so the check at submit time is instant;
+  // re-fetched at submit time too in case this hasn't resolved yet.
+  const [eventTeams, setEventTeams] = useState<TBATeam[] | null>(null);
+  const eventTeamNumbers = useMemo(
+    () => (eventTeams ? new Set(eventTeams.map((t) => t.team_number)) : null),
+    [eventTeams]
+  );
+  useEffect(() => {
+    const eventKey = currentEvent?.eventKey;
+    if (!eventKey) {
+      setEventTeams(null);
+      return;
+    }
+    let cancelled = false;
+    fetchTBAEventTeams(eventKey).then((teams) => {
+      if (cancelled) return;
+      if (Array.isArray(teams)) {
+        setEventTeams(teams);
+        // Sync the roster to Convex so the backend can validate team numbers
+        syncRoster({ eventKey, teamNumbers: teams.map((t) => t.team_number) }).catch(() => {});
+      } else {
+        setEventTeams(null);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentEvent?.eventKey]);
 
   // Auto-select if only one active template
   useEffect(() => {
@@ -333,6 +366,35 @@ export default function ScoutMatchPage() {
     if (!currentEvent?.eventKey) {
       toast.error("No event selected. Please set an event in Settings.");
       return;
+    }
+
+    // Reject team numbers that aren't registered for the current event.
+    // Re-fetch (cache-first, so this is instant once loaded — including
+    // offline via stale cache) rather than trusting only the state set by
+    // the background effect, since that may not have resolved yet.
+    if (teamNumberFields.length > 0) {
+      let roster = eventTeamNumbers;
+      if (!roster) {
+        const teams = await fetchTBAEventTeams(currentEvent.eventKey);
+        if (Array.isArray(teams)) {
+          setEventTeams(teams);
+          roster = new Set(teams.map((t) => t.team_number));
+        } else {
+          roster = null;
+        }
+      }
+      if (!roster) {
+        toast.error(
+          "Couldn't verify the team roster for this event. Connect online once (or check the TBA API key in Settings) so the roster can sync, then try again."
+        );
+        return;
+      }
+      if (!roster.has(primaryTeamNumber)) {
+        toast.error(
+          `Team ${primaryTeamNumber} is not registered at this event. Please enter a different team number.`
+        );
+        return;
+      }
     }
 
     // Validate other required fields (teamNumber fields are always required when present)

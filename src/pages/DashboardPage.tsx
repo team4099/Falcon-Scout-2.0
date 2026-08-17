@@ -1614,6 +1614,7 @@ function FalconBetsWidget({ eventKey }: { eventKey: string }) {
 // ── Dashboard Page ─────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
+  const syncRoster = useMutation(api.forms.syncEventTeamRoster);
   const currentEventLive = useQuery(api.events.getCurrentEvent);
   const currentEvent = useCached(currentEventLive, "current_event");
   const eventKey = currentEvent?.eventKey ?? "";
@@ -1815,6 +1816,8 @@ export default function DashboardPage() {
         const nums = (tbaTeamData as Array<{ team_number: number }>).map((t) => t.team_number);
         setTbaTeams(nums);
         lsSet(`dash_tbaTeams_${eventKey}`, nums, TTL.MEDIUM);
+        // Sync the roster to Convex so the backend can validate team numbers
+        syncRoster({ eventKey, teamNumbers: nums }).catch(() => {});
         // Prime avatar memory cache for all event teams in the background
         for (const num of nums) primeAvatar(num, eventYear);
       }
