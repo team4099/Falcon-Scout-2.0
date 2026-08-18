@@ -189,7 +189,8 @@ function SubmissionsReviewDialog({
   isAdminMode: boolean;
 }) {
   const deleteSubmission = useMutation(api.forms.deleteSubmission);
-  const allUsers = useQuery(api.users.listUsers);
+  const allUsersLive = useQuery(api.users.listUsers);
+  const allUsers = useCached(allUsersLive, "all_users");
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -1519,9 +1520,10 @@ function formatCoinsShort(n: number): string {
 
 function FalconBetsWidget({ eventKey }: { eventKey: string }) {
   const navigate = useNavigate();
-  const balance = useQuery(api.betting.getMyBalance, { eventKey });
-  const markets = useQuery(api.betting.listMarkets, { eventKey });
-  const myBets = useQuery(api.betting.listMyBets, { eventKey });
+  // useCached so the widget still renders from localStorage when offline
+  const balance = useCached(useQuery(api.betting.getMyBalance, { eventKey }), `bet_balance_${eventKey}`);
+  const markets = useCached(useQuery(api.betting.listMarkets, { eventKey }), `bet_markets_${eventKey}`);
+  const myBets  = useCached(useQuery(api.betting.listMyBets,  { eventKey }), `bet_mybets_${eventKey}`);
 
   const openMarkets = (markets ?? []).filter((m) => m.status === "open");
   const pendingBets = (myBets ?? []).filter((b) => !b.settled);

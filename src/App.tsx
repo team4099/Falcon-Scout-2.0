@@ -1,7 +1,7 @@
 import { Routes, Route, NavLink, useNavigate, useLocation } from "react-router";
 import { useTheme } from "next-themes";
 import { useQuery } from "convex/react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useCached } from "@/hooks/useCached";
 import { useAuthActions, useConvexAuth } from "@convex-dev/auth/react";
 import { api } from "../convex/_generated/api";
@@ -446,15 +446,28 @@ function AuthenticatedApp() {
 
 
 // ─── Offline auth helpers ─────────────────────────────────────────────────────
-// When offline, Convex's WebSocket never connects so useConvexAuth stays in
-// isLoading=true and useQuery never resolves. We bypass both by:
-//   1. Reading the JWT directly from localStorage to determine auth status.
-//   2. Caching the viewer record in localStorage and serving it as a fallback.
+// A scout at a competition is regularly on a network that is "connected" but
+// useless: venue wifi with no uplink, a captive portal, saturated LTE. In that
+// state navigator.onLine still reports true, Convex's WebSocket never finishes
+// its handshake, and useConvexAuth / useQuery stay pending forever — so the app
+// hangs on a spinner even though the service worker already has every asset.
+//
+// We therefore keep two independent escape hatches into the cached session:
+//   1. The browser reports offline → trust the cache outright.
+//   2. The browser reports online but Convex never answered within
+//      BACKEND_TIMEOUT_MS → trust the cache too, but only while auth is
+//      genuinely unresolved; an explicit "signed out" from Convex still wins.
+//
+// Both require a stored JWT *and* a cached viewer, i.e. this device really did
+// complete a sign-in at some point.
 
 const CONVEX_URL       = (import.meta.env.VITE_CONVEX_URL ?? "") as string;
 const _escapedNs       = CONVEX_URL.replace(/[^a-zA-Z0-9]/g, "");
 const _JWT_KEY         = `__convexAuthJWT_${_escapedNs}`;
 const VIEWER_CACHE_KEY = "falconscout_viewer_cache";
+
+/** How long to wait for Convex before assuming the backend is unreachable. */
+const BACKEND_TIMEOUT_MS = 4_000;
 
 function hasStoredJwt(): boolean {
   try { return !!localStorage.getItem(_JWT_KEY); } catch { return false; }
@@ -471,22 +484,61 @@ function setCachedViewer(v: Record<string, unknown>): void {
   try { localStorage.setItem(VIEWER_CACHE_KEY, JSON.stringify(v)); } catch {}
 }
 
+/** navigator.onLine, but reactive — re-renders when connectivity flips. */
+function useOnlineStatus(): boolean {
+  const [online, setOnline] = useState(() => navigator.onLine);
+  useEffect(() => {
+    const goOnline  = () => setOnline(true);
+    const goOffline = () => setOnline(false);
+    window.addEventListener("online",  goOnline);
+    window.addEventListener("offline", goOffline);
+    return () => {
+      window.removeEventListener("online",  goOnline);
+      window.removeEventListener("offline", goOffline);
+    };
+  }, []);
+  return online;
+}
+
+/** Becomes true `ms` after mount — used to spot a backend that never replies. */
+function useElapsed(ms: number): boolean {
+  const [elapsed, setElapsed] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setElapsed(true), ms);
+    return () => clearTimeout(t);
+  }, [ms]);
+  return elapsed;
+}
+
 export default function App() {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const viewer = useQuery(api.users.viewer);
+  const online = useOnlineStatus();
+  const backendTimedOut = useElapsed(BACKEND_TIMEOUT_MS);
 
   // Persist the viewer to localStorage whenever it arrives from Convex
   useEffect(() => {
     if (viewer) setCachedViewer(viewer as Record<string, unknown>);
   }, [viewer]);
 
-  // ── Offline short-circuit ───────────────────────────────────────────────
-  // If the browser is offline and we still have a JWT + cached viewer, skip
-  // all the Convex loading states and go straight to the authenticated shell.
-  const offline = !navigator.onLine;
-  const cachedViewer = getCachedViewer();
+  // Read the cached session once per mount rather than on every render.
+  const offlineReady = useMemo(
+    () => hasStoredJwt() && getCachedViewer() !== null,
+    [],
+  );
 
-  if ((isLoading || viewer === undefined) && offline && hasStoredJwt() && cachedViewer) {
+  // ── Escape hatch 1: the browser knows it is offline ─────────────────────
+  // Render straight from cache. This deliberately ignores isAuthenticated:
+  // offline, Convex cannot refresh the token and may report "signed out",
+  // which must never lock a scout out of their data mid-event.
+  if (!online && offlineReady) {
+    return <AuthenticatedApp />;
+  }
+
+  // ── Escape hatch 2: online, but the backend never answered ──────────────
+  const explicitlySignedOut = !isLoading && !isAuthenticated;
+  const authUnresolved      = isLoading || viewer === undefined;
+  if (!explicitlySignedOut && authUnresolved && backendTimedOut && offlineReady) {
     return <AuthenticatedApp />;
   }
 
