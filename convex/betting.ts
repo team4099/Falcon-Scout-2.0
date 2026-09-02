@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
+import { requireAdmin } from "./adminAuth";
 import { getBoostForUser } from "./retention";
 
 const STARTING_BALANCE = 1000;
@@ -51,13 +52,18 @@ export const getMyBalance = query({
  * The legendary "pls beg" button. Grants exactly +10 coins.
  * 3-second cooldown enforced on the frontend. Pure desperation energy.
  */
+/** Cooldown between begs. Mirrored in the UI, but enforced here. */
+const BEG_COOLDOWN_MS = 3_000;
+
 export const beg = mutation({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
 
-    let bal = await ctx.db
+    const now = Date.now();
+
+    const bal = await ctx.db
       .query("userBalances")
       .withIndex("by_user_event", (q) => q.eq("userId", userId).eq("eventKey", eventKey))
       .first();
@@ -71,13 +77,23 @@ export const beg = mutation({
         totalLost: 0,
         totalBet:  0,
         totalBegs: 1,
+        lastBegAt: now,
       });
       return { newBalance: STARTING_BALANCE + 10, totalBegs: 1 };
+    }
+
+    // The 3s cooldown used to live only in BettingPage, so it constrained the
+    // button and not the mutation — a loop could mint unlimited coins.
+    const since = now - (bal.lastBegAt ?? 0);
+    if (since < BEG_COOLDOWN_MS) {
+      const wait = Math.ceil((BEG_COOLDOWN_MS - since) / 1000);
+      throw new Error(`Slow down — you can beg again in ${wait}s.`);
     }
 
     await ctx.db.patch(bal._id, {
       balance:   bal.balance + 10,
       totalBegs: (bal.totalBegs ?? 0) + 1,
+      lastBegAt: now,
     });
     return { newBalance: bal.balance + 10, totalBegs: (bal.totalBegs ?? 0) + 1 };
   },
@@ -164,10 +180,10 @@ export const createMarket = mutation({
       label:    v.string(),
       seedPool: v.number(),
     })),
+    adminKey: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
+  handler: async (ctx, { adminKey, ...args }) => {
+    const userId = await requireAdmin(ctx, adminKey);
 
     return await ctx.db.insert("bettingMarkets", {
       ...args,
@@ -197,10 +213,10 @@ export const batchCreateRandomMarkets = mutation({
       seedBlue:        v.number(),
       predictedMargin: v.number(),
     })),
+    adminKey: v.optional(v.string()),
   },
-  handler: async (ctx, { eventKey, limit, matches }) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
+  handler: async (ctx, { eventKey, limit, matches, adminKey }) => {
+    const userId = await requireAdmin(ctx, adminKey);
 
     const existing = await ctx.db
       .query("bettingMarkets")
@@ -278,10 +294,10 @@ export const batchCreateMatchMarkets = mutation({
       seedRed:     v.number(), // 0–100 (Statbotics win% × 100)
       seedBlue:    v.number(), // 0–100
     })),
+    adminKey: v.optional(v.string()),
   },
-  handler: async (ctx, { eventKey, matches }) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
+  handler: async (ctx, { eventKey, matches, adminKey }) => {
+    const userId = await requireAdmin(ctx, adminKey);
 
     const existing = await ctx.db
       .query("bettingMarkets")
@@ -319,18 +335,18 @@ export const batchCreateMatchMarkets = mutation({
 
 /** Lock a market (no more bets accepted). */
 export const lockMarket = mutation({
-  args: { marketId: v.id("bettingMarkets") },
-  handler: async (ctx, { marketId }) => {
-    await getAuthUserId(ctx);
+  args: { marketId: v.id("bettingMarkets"), adminKey: v.optional(v.string()) },
+  handler: async (ctx, { marketId, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
     await ctx.db.patch(marketId, { status: "locked" });
   },
 });
 
 /** Unlock a market back to open. */
 export const unlockMarket = mutation({
-  args: { marketId: v.id("bettingMarkets") },
-  handler: async (ctx, { marketId }) => {
-    await getAuthUserId(ctx);
+  args: { marketId: v.id("bettingMarkets"), adminKey: v.optional(v.string()) },
+  handler: async (ctx, { marketId, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
     await ctx.db.patch(marketId, { status: "open" });
   },
 });
@@ -348,10 +364,10 @@ export const resolveMarket = mutation({
   args: {
     marketId:        v.id("bettingMarkets"),
     resolvedOptionId: v.string(),
+    adminKey: v.optional(v.string()),
   },
-  handler: async (ctx, { marketId, resolvedOptionId }) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
+  handler: async (ctx, { marketId, resolvedOptionId, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
 
     const market = await ctx.db.get(marketId);
     if (!market) throw new Error("Market not found");
@@ -421,14 +437,16 @@ export const resolveMarket = mutation({
  * Cancel a market and refund all bets.
  */
 export const cancelMarket = mutation({
-  args: { marketId: v.id("bettingMarkets") },
-  handler: async (ctx, { marketId }) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
+  args: { marketId: v.id("bettingMarkets"), adminKey: v.optional(v.string()) },
+  handler: async (ctx, { marketId, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
 
     const market = await ctx.db.get(marketId);
     if (!market) throw new Error("Market not found");
+    // Both terminal states must be rejected: without the "cancelled" check a
+    // second call refunds every bet again, minting coins out of nothing.
     if (market.status === "resolved") throw new Error("Market already resolved");
+    if (market.status === "cancelled") throw new Error("Market already cancelled");
 
     const allBets = await ctx.db
       .query("bets")
@@ -469,6 +487,7 @@ export const placeBet = mutation({
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
 
+    if (!Number.isInteger(amount)) throw new Error("Bet must be a whole number of coins");
     if (amount < 10) throw new Error("Minimum bet is 10 coins");
 
     const market = await ctx.db.get(marketId);
@@ -581,10 +600,9 @@ export const getLeaderboard = query({
  * (enforced in the UI; any authenticated user can call it from the backend).
  */
 export const clearAllMarkets = mutation({
-  args: { eventKey: v.string() },
-  handler: async (ctx, { eventKey }) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
+  args: { eventKey: v.string(), adminKey: v.optional(v.string()) },
+  handler: async (ctx, { eventKey, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
 
     // Delete all markets
     const markets = await ctx.db
@@ -1027,7 +1045,7 @@ export const crossyCashOut = mutation({
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
 
-    let bal = await ctx.db
+    const bal = await ctx.db
       .query("userBalances")
       .withIndex("by_user_event", (q) =>
         q.eq("userId", userId).eq("eventKey", eventKey)
@@ -1219,7 +1237,7 @@ export const minesCashOut = mutation({
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
 
-    let bal = await ctx.db
+    const bal = await ctx.db
       .query("userBalances")
       .withIndex("by_user_event", (q) =>
         q.eq("userId", userId).eq("eventKey", eventKey)

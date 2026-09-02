@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useMutation, useQuery } from "convex/react";
-import { useCached } from "@/hooks/useCached";
+import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { BrowserQRCodeReader } from "@zxing/browser";
@@ -132,8 +131,6 @@ function ScannedCard({
 
 export default function ScannerPage() {
   const submitForm = useMutation(api.forms.submitForm);
-  const activeTemplatesLive = useQuery(api.forms.listActiveTemplates);
-  const activeTemplates = useCached(activeTemplatesLive, "active_templates");
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const controlsRef = useRef<{ stop: () => void } | null>(null);
@@ -162,22 +159,25 @@ export default function ScannerPage() {
     async (sub: ScannedSubmission) => {
       if (!navigator.onLine) return;
 
-      // Find a template whose eventKey matches — fall back to first active template
-      const template =
-        activeTemplates?.find((t) => t.fields?.length > 0) ??
-        activeTemplates?.[0];
-
-      if (!template) {
+      // The QR envelope carries the template the submission was actually filled
+      // out against. Guessing here (previously: whichever active template came
+      // first) silently filed scanned data under the wrong form, so its field
+      // ids never matched and the Data Viewer showed blank columns.
+      if (!sub.templateId) {
         updateScannedStatus(sub.id, "failed");
+        toast.error(
+          `Match ${sub.matchNumber} has no form attached — rescan a freshly generated code.`
+        );
         reload();
         return;
       }
 
       try {
         await submitForm({
-          templateId: template._id as Id<"formTemplates">,
+          templateId: sub.templateId as Id<"formTemplates">,
           eventKey: sub.eventKey,
           matchNumber: sub.matchNumber,
+          compLevel: sub.compLevel,
           teamNumber: sub.teamNumber,
           data: JSON.stringify(sub.data),
           offlineId: sub.id, // idempotency key — server deduplicates by this
@@ -196,7 +196,7 @@ export default function ScannerPage() {
       }
       reload();
     },
-    [submitForm, activeTemplates, reload]
+    [submitForm, reload]
   );
 
   // ── Handle a decoded QR string ────────────────────────────────────────────
@@ -215,6 +215,28 @@ export default function ScannerPage() {
 
       if (result.status === "duplicate") {
         toast.info("Already scanned — skipped.", { duration: 1500 });
+        return;
+      }
+
+      if (result.status === "ignored") {
+        // Not a scouting code (or a checklist code) — stay quiet.
+        return;
+      }
+
+      if (result.status === "outdated") {
+        toast.error("This QR code is from an older app version.", {
+          description:
+            "Ask the scout to reopen My QR Codes and show the code again to regenerate it.",
+          duration: 5000,
+        });
+        return;
+      }
+
+      if (result.status === "corrupt") {
+        toast.error("That code didn't read cleanly — scan it again.", {
+          description: "Nothing was saved, so no data was lost.",
+          duration: 4000,
+        });
         return;
       }
 

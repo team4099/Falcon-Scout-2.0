@@ -10,6 +10,7 @@ export interface OfflineSubmission {
   templateId: string;
   eventKey: string;
   matchNumber: number;
+  compLevel?: "qm" | "elim";
   teamNumber: number;
   data: string;
 }

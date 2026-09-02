@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { requireAdmin } from "./adminAuth";
 
 export const getCurrentEvent = query({
   args: {},
@@ -15,8 +16,10 @@ export const setCurrentEvent = mutation({
   args: {
     eventKey: v.string(),
     eventName: v.string(),
+    adminKey: v.optional(v.string()),
   },
-  handler: async (ctx, { eventKey, eventName }) => {
+  handler: async (ctx, { eventKey, eventName, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
     const existing = await ctx.db
       .query("eventSettings")
       .withIndex("by_key", (q) => q.eq("key", "current_event"))

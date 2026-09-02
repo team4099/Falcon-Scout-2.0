@@ -397,10 +397,16 @@ export default function ScoutMatchPage() {
       }
     }
 
-    // Validate other required fields (teamNumber fields are always required when present)
+    // Validate other required fields (teamNumber fields are always required when present).
+    // Presence, not truthiness: 0 is a legitimate value for a counter, number or
+    // rating ("scored nothing" is an observation, not a blank). A required
+    // checkbox is the one type that must actually be ticked.
     const missing = fields.filter((f) => {
       if (f.type === "teamNumber") return !formData[f.id] || Number(formData[f.id]) <= 0;
-      return f.required && !formData[f.id];
+      if (!f.required) return false;
+      if (f.type === "checkbox") return formData[f.id] !== true;
+      const v = formData[f.id];
+      return v === undefined || v === null || v === "";
     });
     if (missing.length > 0) {
       toast.error(`Missing required fields: ${missing.map((f) => f.label).join(", ")}`);
@@ -409,12 +415,23 @@ export default function ScoutMatchPage() {
 
     const offlineId = crypto.randomUUID();
 
+    // Build the submitted data ONCE so the online path, the offline queue and the
+    // local QR copy all store the identical shape. Previously the queued payload
+    // omitted _matchPrefix/_matchNumber, so a row's shape depended on whether the
+    // network happened to be up when the scout hit submit.
+    const submittedData = {
+      _matchPrefix: matchPrefix,
+      _matchNumber: matchNumber,
+      ...formData,
+    };
+
     const payload = {
       templateId: template._id,
       eventKey: currentEvent.eventKey,
       matchNumber,
+      compLevel: matchPrefix,
       teamNumber: primaryTeamNumber,
-      data: JSON.stringify(formData),
+      data: JSON.stringify(submittedData),
     };
 
     // Always save locally so QR codes are available offline
@@ -425,11 +442,8 @@ export default function ScoutMatchPage() {
       templateId: template._id,
       templateName: template.name,
       eventKey: currentEvent.eventKey,
-      data: {
-        _matchPrefix: matchPrefix,
-        _matchNumber: matchNumber,
-        ...formData,
-      } as Record<string, unknown>,
+      compLevel: matchPrefix,
+      data: submittedData as Record<string, unknown>,
       // Build a fieldId → label map so the QR viewer shows real names
       fieldLabels: {
         _matchPrefix: "Match Prefix",
@@ -451,8 +465,9 @@ export default function ScoutMatchPage() {
           templateId: template._id as Id<"formTemplates">,
           eventKey: currentEvent.eventKey,
           matchNumber,
+          compLevel: matchPrefix,
           teamNumber: primaryTeamNumber,
-          data: JSON.stringify({ _matchPrefix: matchPrefix, _matchNumber: matchNumber, ...formData }),
+          data: payload.data,
           offlineId,
         });
         toast.success("Match scouted! ✅");

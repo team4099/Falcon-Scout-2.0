@@ -14,14 +14,24 @@
  * string that can be decoded independently once all chunks for an id are
  * collected.
  *
- * Envelope format (per chunk):
- *   { v:1, id:"<8-char>", m:<matchNum>, t:<teamNum>, e:"<eventKey>",
+ * Envelope format (per chunk), version 2:
+ *   { v:2, id:"<12-char>", tid:"<templateId>", cl:"qm"|"elim",
+ *     m:<matchNum>, t:<teamNum>, e:"<eventKey>",
  *     i:<chunkIndex>, n:<totalChunks>, d:"<chunkData>" }
+ *
+ * v2 adds `tid` and `cl`. Without `tid` the scanner had to guess which form a
+ * scanned submission belonged to, which silently mislabelled the data; without
+ * `cl` a qualification and an elimination match with the same number were
+ * indistinguishable. `id` is now a 12-char slice rather than a full 36-char
+ * UUID — it is repeated in every chunk, and 12 hex chars is ample to keep
+ * submissions distinct within one event.
  */
 
 export interface LocalSubmission {
   id: string;
   matchNumber: number;
+  /** Qualification or elimination — distinguishes qual 5 from elim 5. */
+  compLevel?: "qm" | "elim";
   teamNumber: number;
   templateId: string;
   templateName: string;
@@ -74,43 +84,63 @@ export interface QRChunk {
   payload: string; // the string to encode into the QR
 }
 
+/** Envelope version emitted by this build. */
+export const QR_VERSION = 2;
+
+/** Short id carried in every chunk — see the note on `id` above. */
+export function shortId(id: string): string {
+  return id.replace(/-/g, "").slice(0, 12);
+}
+
 /**
  * Serialise a LocalSubmission into one or more QR-code-safe strings.
- * The data payload is split if it exceeds MAX_CHUNK_CHARS.
+ * The data payload is split so that each *encoded* payload fits within
+ * MAX_CHUNK_CHARS.
  */
 export function toQRChunks(sub: LocalSubmission): QRChunk[] {
-  // Compact data serialisation — fieldId:value pairs joined by ~
   const dataStr = JSON.stringify(sub.data);
+  const id = shortId(sub.id);
 
-  // Fixed envelope header (without the data segment or chunk indices)
-  // We'll measure how much space the header takes and fill the rest with data.
-  const headerTemplate = (i: number, n: number) =>
-    JSON.stringify({ v: 1, id: sub.id, m: sub.matchNumber, t: sub.teamNumber,
-                     e: sub.eventKey, i, n, d: "" });
+  const envelope = (i: number, n: number, d: string) =>
+    JSON.stringify({
+      v: QR_VERSION,
+      id,
+      tid: sub.templateId,
+      cl: sub.compLevel,
+      m: sub.matchNumber,
+      t: sub.teamNumber,
+      e: sub.eventKey,
+      i,
+      n,
+      d,
+    });
 
-  // Calculate available space for data in each chunk
-  const headerLen = headerTemplate(99, 99).length; // worst-case header size
-  const dataPerChunk = MAX_CHUNK_CHARS - headerLen - 4; // 4 bytes margin
-
-  // Split dataStr into segments
+  // Measure the ENCODED payload, not the raw slice. JSON.stringify escapes every
+  // quote inside `d`, so a slice sized against the raw budget produced payloads
+  // well over MAX_CHUNK_CHARS once embedded (~870 chars against an 800 budget on
+  // a typical 40-field form). Shrink the slice until the real payload fits.
   const segments: string[] = [];
-  for (let pos = 0; pos < dataStr.length; pos += dataPerChunk) {
-    segments.push(dataStr.slice(pos, pos + dataPerChunk));
+  let pos = 0;
+  // Optimistic starting width, corrected per chunk by the loop below.
+  const nominal = Math.max(1, MAX_CHUNK_CHARS - envelope(99, 99, "").length - 4);
+
+  while (pos < dataStr.length) {
+    let width = Math.min(nominal, dataStr.length - pos);
+    // Chunk count is not known until we finish, so size against a worst-case
+    // 3-digit i/n. Overestimating the header only costs a few characters.
+    while (width > 1 && envelope(999, 999, dataStr.slice(pos, pos + width)).length > MAX_CHUNK_CHARS) {
+      // Shrink proportionally to the overshoot rather than one char at a time.
+      const over = envelope(999, 999, dataStr.slice(pos, pos + width)).length - MAX_CHUNK_CHARS;
+      width = Math.max(1, width - Math.max(1, Math.ceil(over / 2)));
+    }
+    segments.push(dataStr.slice(pos, pos + width));
+    pos += width;
   }
   if (segments.length === 0) segments.push("");
 
   return segments.map((seg, i) => ({
     index: i,
     total: segments.length,
-    payload: JSON.stringify({
-      v: 1,
-      id: sub.id,
-      m: sub.matchNumber,
-      t: sub.teamNumber,
-      e: sub.eventKey,
-      i,
-      n: segments.length,
-      d: seg,
-    }),
+    payload: envelope(i, segments.length, seg),
   }));
 }

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useUIStore } from "@/store/uiStore";
-import { useMutation, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
+import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import type { FormField, FieldType, FormType } from "@/types";
@@ -613,11 +614,11 @@ export default function FormBuilderPage() {
 /** The actual builder — rendered only when admin mode is active */
 function FormBuilderContent() {
   const templates = useQuery(api.forms.listTemplates);
-  const createTemplate = useMutation(api.forms.createTemplate);
-  const updateTemplate = useMutation(api.forms.updateTemplate);
-  const deleteTemplate = useMutation(api.forms.deleteTemplate);
-  const activateTemplate = useMutation(api.forms.activateTemplate);
-  const deactivateTemplate = useMutation(api.forms.deactivateTemplate);
+  const createTemplate = useAdminMutation(api.forms.createTemplate);
+  const updateTemplate = useAdminMutation(api.forms.updateTemplate);
+  const deleteTemplate = useAdminMutation(api.forms.deleteTemplate);
+  const activateTemplate = useAdminMutation(api.forms.activateTemplate);
+  const deactivateTemplate = useAdminMutation(api.forms.deactivateTemplate);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [name, setName] = useState("New Scouting Form");

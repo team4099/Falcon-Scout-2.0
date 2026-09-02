@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { getAuthUserId } from "@convex-dev/auth/server";
+import { requireAdmin, requireUser } from "./adminAuth";
 
 // Shared field-type validator (keep in sync with schema.ts)
 const fieldTypeValidator = v.union(
@@ -77,8 +77,10 @@ export const createTemplate = mutation({
     formType: formTypeValidator,
     fields: v.array(fieldValidator),
     isActive: v.boolean(),
+    adminKey: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, { adminKey, ...args }) => {
+    await requireAdmin(ctx, adminKey);
     return await ctx.db.insert("formTemplates", args);
   },
 });
@@ -91,8 +93,10 @@ export const updateTemplate = mutation({
     formType: formTypeValidator,
     fields: v.optional(v.array(fieldValidator)),
     isActive: v.optional(v.boolean()),
+    adminKey: v.optional(v.string()),
   },
-  handler: async (ctx, { id, ...updates }) => {
+  handler: async (ctx, { id, adminKey, ...updates }) => {
+    await requireAdmin(ctx, adminKey);
     await ctx.db.patch(id, updates);
   },
 });
@@ -102,8 +106,9 @@ export const updateTemplate = mutation({
  * Checklist forms are exempt — any number can be active simultaneously.
  */
 export const activateTemplate = mutation({
-  args: { id: v.id("formTemplates") },
-  handler: async (ctx, { id }) => {
+  args: { id: v.id("formTemplates"), adminKey: v.optional(v.string()) },
+  handler: async (ctx, { id, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
     const template = await ctx.db.get(id);
     if (!template) throw new Error("Template not found");
     const myType = template.formType ?? "default";
@@ -124,15 +129,17 @@ export const activateTemplate = mutation({
 });
 
 export const deactivateTemplate = mutation({
-  args: { id: v.id("formTemplates") },
-  handler: async (ctx, { id }) => {
+  args: { id: v.id("formTemplates"), adminKey: v.optional(v.string()) },
+  handler: async (ctx, { id, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
     await ctx.db.patch(id, { isActive: false });
   },
 });
 
 export const deleteTemplate = mutation({
-  args: { id: v.id("formTemplates") },
-  handler: async (ctx, { id }) => {
+  args: { id: v.id("formTemplates"), adminKey: v.optional(v.string()) },
+  handler: async (ctx, { id, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
     await ctx.db.delete(id);
   },
 });
@@ -146,12 +153,13 @@ export const submitForm = mutation({
     templateId: v.id("formTemplates"),
     eventKey: v.string(),
     matchNumber: v.number(),
+    compLevel: v.optional(v.union(v.literal("qm"), v.literal("elim"))),
     teamNumber: v.number(),
     data: v.string(),
     offlineId: v.optional(v.string()), // idempotency key — set by offline queue
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await requireUser(ctx);
 
     // ── Idempotency check ─────────────────────────────────────────────────
     if (args.offlineId) {
@@ -180,6 +188,7 @@ export const submitForm = mutation({
       templateId: args.templateId,
       eventKey: args.eventKey,
       matchNumber: args.matchNumber,
+      compLevel: args.compLevel,
       teamNumber: args.teamNumber,
       data: args.data,
       scoutId: userId ?? undefined,
@@ -217,9 +226,9 @@ export const getTeamSubmissions = query({
 });
 
 export const deleteSubmission = mutation({
-  args: { id: v.id("formSubmissions") },
-  handler: async (ctx, { id }) => {
-    await getAuthUserId(ctx); // must be signed in
+  args: { id: v.id("formSubmissions"), adminKey: v.optional(v.string()) },
+  handler: async (ctx, { id, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
     await ctx.db.delete(id);
   },
 });
@@ -239,6 +248,9 @@ export const syncEventTeamRoster = mutation({
     teamNumbers: v.array(v.number()),
   },
   handler: async (ctx, { eventKey, teamNumbers }) => {
+    // Every scout's device calls this in the background, so this is
+    // signed-in-only rather than admin-only.
+    await requireUser(ctx);
     const existing = await ctx.db
       .query("eventTeamRosters")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
@@ -264,5 +276,53 @@ export const getEventTeamRoster = query({
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
       .first();
     return roster?.teamNumbers ?? null;
+  },
+});
+
+// ──────────────────────────────────────────────
+// One-off migration
+// ──────────────────────────────────────────────
+
+/**
+ * Backfill `compLevel` on rows written before the column existed.
+ *
+ * The value is recovered from `data._matchPrefix`, which the online submit path
+ * has always embedded in the JSON blob. Rows that synced through the offline
+ * queue never stored it (that inconsistency is fixed in ScoutMatchPage), so
+ * those are left undefined rather than guessed — an unknown comp level is
+ * honest, a wrong one silently corrupts averages.
+ *
+ * Safe to run repeatedly: rows that already have compLevel are skipped.
+ * Returns a tally so you can see how much was recoverable.
+ */
+export const backfillCompLevel = mutation({
+  args: { adminKey: v.optional(v.string()) },
+  handler: async (ctx, { adminKey }) => {
+    await requireAdmin(ctx, adminKey);
+
+    const all = await ctx.db.query("formSubmissions").collect();
+    let updated = 0;
+    let unrecoverable = 0;
+    let alreadySet = 0;
+
+    for (const row of all) {
+      if (row.compLevel) { alreadySet++; continue; }
+
+      let prefix: unknown;
+      try {
+        prefix = (JSON.parse(row.data) as Record<string, unknown>)._matchPrefix;
+      } catch {
+        prefix = undefined;
+      }
+
+      if (prefix === "qm" || prefix === "elim") {
+        await ctx.db.patch(row._id, { compLevel: prefix });
+        updated++;
+      } else {
+        unrecoverable++;
+      }
+    }
+
+    return { total: all.length, updated, alreadySet, unrecoverable };
   },
 });

@@ -9,7 +9,7 @@
 //   - Event data       → localStorage, 7-day TTL
 //   - Live data        → localStorage, 30-min TTL
 
-import { idbGet, idbSet, lsGet, lsGetStale, lsSet, TTL } from "./persistentCache";
+import { idbGetEntry, idbSet, lsGet, lsGetStale, lsSet, TTL } from "./persistentCache";
 
 const TBA_BASE        = "https://www.thebluealliance.com/api/v3";
 const STATBOTICS_BASE = "https://api.statbotics.io/v3";
@@ -202,9 +202,13 @@ export async function fetchTBATeamAvatar(teamNumber: number, year: number): Prom
   if (teamNumber <= 0) return null; // guard against invalid team numbers
   const cacheKey = `tba_avatar_${teamNumber}_${year}`;
 
-  // 1. Check IndexedDB first (fresh entry within TTL.LONG)
-  const cached = await idbGet<string | null>(cacheKey);
-  if (cached !== undefined && cached !== null) return cached;
+  // 1. Check IndexedDB first (fresh entry within TTL.LONG).
+  //    idbGetEntry distinguishes "no entry" from "entry whose value is null".
+  //    The old check rejected null, which is exactly the value stored to record
+  //    "this team has no avatar" — so the negative cache never hit and every
+  //    avatar-less team was re-fetched from TBA on every single page load.
+  const cached = await idbGetEntry<string | null>(cacheKey);
+  if (cached) return cached.value;
 
   // 2. Offline with no cache → nothing to show
   if (!navigator.onLine) return null;

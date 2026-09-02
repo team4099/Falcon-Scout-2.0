@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
+import { matchLabel, matchSortValue } from "@/lib/utils";
 import {
   fetchTBATeamInfo,
   fetchTBATeamAvatar,
@@ -52,6 +53,7 @@ interface Submission {
   templateId: string;
   teamNumber: number;
   matchNumber: number;
+  compLevel?: "qm" | "elim";
   scoutId?: string;
   syncedAt?: number;
   data: string;
@@ -171,7 +173,8 @@ function RadarStatsChart({
       // Enforce minimum 3 selected
       if (prev.has(id) && prev.size <= 3) return prev;
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   }
@@ -326,34 +329,49 @@ function MatchTrendChart({
     }).catch(() => {});
   }, [eventKey, teamNumber]);
 
-  const sorted = [...submissions].sort((a, b) => a.matchNumber - b.matchNumber);
+  // Sort quals before elims, each by number — a bare matchNumber sort
+  // interleaves elim 1 with qual 1.
+  const sorted = [...submissions].sort(
+    (a, b) =>
+      matchSortValue(a.matchNumber, a.compLevel) -
+      matchSortValue(b.matchNumber, b.compLevel),
+  );
 
   const data = sorted.map((s) => {
     const d = parseData(s);
-    const row: Record<string, number | undefined> = { match: s.matchNumber };
+    const row: Record<string, number | string | undefined> = {
+      match: matchLabel(s.matchNumber, s.compLevel),
+      __sort: matchSortValue(s.matchNumber, s.compLevel),
+    };
     for (const f of numericFields) {
       const v = d[f.id];
       if (typeof v === "number") row[f.id] = v;
     }
-    if (matchScores[s.matchNumber] !== undefined) {
+    // TBA scores are indexed by qual match number, so only attach them to
+    // qualification rows — an elim row would otherwise pick up an unrelated
+    // qual match's score.
+    if (s.compLevel !== "elim" && matchScores[s.matchNumber] !== undefined) {
       row["__tbaScore"] = matchScores[s.matchNumber];
     }
     return row;
   });
 
-  // Add matches with TBA scores but no submission
+  // Add matches with TBA scores but no submission. TBA's match_number here is
+  // a qualification number, so label these as quals to match the rows above.
   for (const [matchNum, score] of Object.entries(matchScores)) {
     const mn = Number(matchNum);
-    if (!data.find((d) => d.match === mn)) {
-      data.push({ match: mn, __tbaScore: score });
+    const label = matchLabel(mn, "qm");
+    if (!data.find((d) => d.match === label)) {
+      data.push({ match: label, __sort: matchSortValue(mn, "qm"), __tbaScore: score });
     }
   }
-  data.sort((a, b) => (a.match ?? 0) - (b.match ?? 0));
+  data.sort((a, b) => (Number(a.__sort) || 0) - (Number(b.__sort) || 0));
 
   function toggle(id: string) {
     setSelected((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   }
@@ -620,7 +638,8 @@ function BoxPlotChart({ fields, submissions }: { fields: FormField[]; submission
   function toggle(id: string) {
     setSelected((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   }

@@ -40,6 +40,7 @@ import {
   DollarSign,
 } from "lucide-react";
 import { useOfflineSync } from "@/hooks/useOfflineSync";
+import { useBackendReachable } from "@/hooks/useBackendReachable";
 import { useUIStore } from "@/store/uiStore";
 
 import DashboardPage from "@/pages/DashboardPage";
@@ -204,7 +205,12 @@ function AuthenticatedApp() {
   const navigate = useNavigate();
   const currentEventLive = useQuery(api.events.getCurrentEvent);
   const currentEvent = useCached(currentEventLive, "current_event");
-  const { totalPending, lastSyncedAt, isOnline, markSynced } = useOfflineSync();
+  const { totalPending, lastSyncedAt, markSynced } = useOfflineSync();
+  // isOnline from useOfflineSync is navigator.onLine only, which reports
+  // "online" on a venue network that can't reach Convex. Use the real
+  // connection state for anything the scout reads as "my data is safe".
+  const { status: backendStatus, backendConnected } = useBackendReachable();
+  const isOnline = backendConnected;
   const { isAdminMode } = useUIStore();
 
   // Build nav dynamically — admin-only items shown/hidden based on isAdminMode
@@ -245,11 +251,13 @@ function AuthenticatedApp() {
     { to: "/settings", label: "Settings",  icon: Settings    },
   ];
 
-  // Stamp the sync time immediately when we know we're online
+  // Stamp the sync time only once the backend is genuinely connected — this
+  // used to fire on navigator.onLine, so "Synced now" appeared even when no
+  // query had ever resolved.
   useEffect(() => {
-    if (isOnline) markSynced();
+    if (backendConnected) markSynced();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOnline]);
+  }, [backendConnected]);
 
   // ── Sync TBA key from Convex → localStorage on every app load ──
   const userSettings = useQuery(api.users.getUserSettings);
@@ -315,8 +323,10 @@ function AuthenticatedApp() {
         <div className="p-2 space-y-1">
         {/* Sync status */}
           <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground">
-            {isOnline ? (
+            {backendStatus === "online" ? (
               <Wifi className="h-3.5 w-3.5 text-green-500" />
+            ) : backendStatus === "connecting" ? (
+              <Wifi className="h-3.5 w-3.5 text-amber-500" />
             ) : (
               <WifiOff className="h-3.5 w-3.5 text-yellow-500" />
             )}
@@ -324,7 +334,13 @@ function AuthenticatedApp() {
               {totalPending > 0 ? (
                 <span className="text-yellow-500 font-medium">{totalPending} pending sync</span>
               ) : (
-                <span>{isOnline ? "Online" : "Offline"}</span>
+                <span>
+                  {backendStatus === "online"
+                    ? "Online"
+                    : backendStatus === "connecting"
+                      ? "No connection to server"
+                      : "Offline"}
+                </span>
               )}
               <span className="text-[10px] opacity-60 truncate">Synced {formatAge(lastSyncedAt)}</span>
             </div>
@@ -375,9 +391,9 @@ function AuthenticatedApp() {
           <div className="flex items-center gap-1.5">
             {/* Offline / sync status */}
             <div className="flex items-center gap-1">
-              {!isOnline
+              {backendStatus === "offline"
                 ? <WifiOff className="h-3.5 w-3.5 text-amber-500" />
-                : <Wifi className="h-3.5 w-3.5 text-green-500" />
+                : <Wifi className={`h-3.5 w-3.5 ${backendStatus === "online" ? "text-green-500" : "text-amber-500"}`} />
               }
               {totalPending > 0 && (
                 <span className="text-[9px] font-bold bg-amber-500 text-white rounded-full px-1">{totalPending}</span>
@@ -398,7 +414,11 @@ function AuthenticatedApp() {
         {!isOnline && (
           <div className="sticky top-[49px] md:top-0 z-20 flex items-center gap-2 px-4 py-1.5 bg-amber-500/10 border-b border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs font-medium">
             <CloudOff className="h-3.5 w-3.5 shrink-0" />
-            <span>You&apos;re offline — changes are saved locally and will sync when you reconnect.</span>
+            <span>
+              {backendStatus === "offline"
+                ? "You're offline — changes are saved locally and will sync when you reconnect."
+                : "Can't reach the server — changes are saved locally and will sync once the connection comes back."}
+            </span>
             {lastSyncedAt && (
               <span className="ml-auto shrink-0 opacity-70">Last synced {formatAge(lastSyncedAt)}</span>
             )}

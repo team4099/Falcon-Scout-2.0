@@ -39,6 +39,10 @@ export default defineSchema({
     templateId: v.id("formTemplates"),
     eventKey: v.string(),
     matchNumber: v.number(),
+    // Qualification vs elimination. Optional because rows written before this
+    // field existed have no value — backfillCompLevel recovers what it can from
+    // data._matchPrefix. Treat undefined as "unknown", not as "qm".
+    compLevel: v.optional(v.union(v.literal("qm"), v.literal("elim"))),
     teamNumber: v.number(),
     scoutId: v.optional(v.id("users")),
     data: v.string(), // JSON stringified response map
@@ -256,6 +260,7 @@ export default defineSchema({
     totalLost:      v.number(),
     totalBet:       v.number(),
     totalBegs:      v.number(), // leaderboard of shame
+    lastBegAt:      v.optional(v.number()), // server-enforced beg cooldown
     totalPenalties: v.optional(v.number()), // coins lost for skipping markets
   })
     .index("by_user_event", ["userId", "eventKey"]),
@@ -271,4 +276,13 @@ export default defineSchema({
     updatedAt:           v.number(),
   })
     .index("by_user_event", ["userId", "eventKey"]),
+
+  // ── Admin credential ─────────────────────────────────────────────────────
+  // Single row holding the SHA-256 hash of the shared team admin password.
+  // Seeded from the ADMIN_PASSWORD_HASH env var on first use. Never exposed
+  // through any query — see convex/adminAuth.ts.
+  adminConfig: defineTable({
+    passwordHash: v.string(),
+    updatedAt:    v.number(),
+  }),
 });

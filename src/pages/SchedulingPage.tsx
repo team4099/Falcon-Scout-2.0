@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery } from "convex/react";
+import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
@@ -174,7 +175,7 @@ function ScoutSelector({ users, pinnedId, onPin, matchCounts, matches, onBatchAs
   const pinned = users.find(u => u._id === pinnedId) ?? null;
 
   function togglePos(p: Position) {
-    setBatchPos(prev => { const n = new Set(prev); n.has(p) ? n.delete(p) : n.add(p); return n; });
+    setBatchPos(prev => { const n = new Set(prev); if (n.has(p)) n.delete(p); else n.add(p); return n; });
   }
 
   async function handleBatch() {
@@ -837,7 +838,7 @@ function ElimsRotationPanel({ rotation, users, allUsers: allUsersRaw, onSave, on
   const othersElims = useMemo(() => (allUsersRaw ?? []).filter(u => !optedInElimsIds.has(u._id)), [allUsersRaw, optedInElimsIds]);
 
   function toggleScout(id: string) {
-    setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+    setSelected(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   }
 
   async function handleSave() {
@@ -1050,7 +1051,8 @@ function RotationForm({ users, allUsers: allUsersRaw, initial, onSave, onCancel,
   function toggleScout(id: string) {
     setForm(f => {
       const n = new Set(f.scoutIds);
-      n.has(id) ? n.delete(id) : n.add(id);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
       return { ...f, scoutIds: n };
     });
   }
@@ -1739,15 +1741,15 @@ export default function SchedulingPage() {
   ) as string[] | undefined;
   const dbExcludedSet = useMemo(() => new Set(dbExcludedScoutIds ?? []), [dbExcludedScoutIds]);
 
-  const setMatchAssignment       = useMutation(api.schedules.setMatchAssignment);
-  const clearMatchAssignment     = useMutation(api.schedules.clearMatchAssignment);
-  const clearAllMatchAssignments = useMutation(api.schedules.clearAllMatchAssignments);
-  const batchSet                 = useMutation(api.schedules.batchSetMatchAssignments);
-  const upsertRotation           = useMutation(api.schedules.upsertPitRotation);
-  const deleteRotation           = useMutation(api.schedules.deletePitRotation);
-  const togglePitScout           = useMutation(api.pitScouting.upsertPitScoutingAssignment);
-  const clearAllPitScouting      = useMutation(api.pitScouting.clearAllPitScoutingAssignments);
-  const batchUpsertPitScouting   = useMutation(api.pitScouting.batchUpsertPitScoutingAssignments);
+  const setMatchAssignment       = useAdminMutation(api.schedules.setMatchAssignment);
+  const clearMatchAssignment     = useAdminMutation(api.schedules.clearMatchAssignment);
+  const clearAllMatchAssignments = useAdminMutation(api.schedules.clearAllMatchAssignments);
+  const batchSet                 = useAdminMutation(api.schedules.batchSetMatchAssignments);
+  const upsertRotation           = useAdminMutation(api.schedules.upsertPitRotation);
+  const deleteRotation           = useAdminMutation(api.schedules.deletePitRotation);
+  const togglePitScout           = useAdminMutation(api.pitScouting.upsertPitScoutingAssignment);
+  const clearAllPitScouting      = useAdminMutation(api.pitScouting.clearAllPitScoutingAssignments);
+  const batchUpsertPitScouting   = useAdminMutation(api.pitScouting.batchUpsertPitScoutingAssignments);
 
   const pitScoutingTeams = useCached(
     useQuery(
@@ -1854,7 +1856,8 @@ export default function SchedulingPage() {
   function toggleExcluded(id: string) {
     setExcludedScoutIds(prev => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       if (currentEvent?.eventKey) {
         try {
           localStorage.setItem(

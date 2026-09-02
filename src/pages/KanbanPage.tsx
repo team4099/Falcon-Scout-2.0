@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
+import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import type { KanbanColumn, KanbanCard } from "@/types";
@@ -1180,11 +1181,11 @@ function BoardView({
     ?? (activeTemplates ?? [])[0]
     ?? null;
 
-  const updateColumns    = useMutation(api.kanban.updateBoardColumns);
+  const updateColumns    = useAdminMutation(api.kanban.updateBoardColumns);
   const moveCardMutation = useMutation(api.kanban.moveCard);
   const updateCardMutation = useMutation(api.kanban.updateCard);
   const removeCardMutation = useMutation(api.kanban.removeCard);
-  const seedTeamsMutation  = useMutation(api.kanban.seedTeams);
+  const seedTeamsMutation  = useAdminMutation(api.kanban.seedTeams);
 
   const [editingCard, setEditingCard]   = useState<KanbanCard | null>(null);
   const [editNotes, setEditNotes]       = useState("");

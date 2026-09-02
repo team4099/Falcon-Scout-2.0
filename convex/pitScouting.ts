@@ -1,6 +1,7 @@
 ﻿import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
+import { requireAdmin } from "./adminAuth";
 
 // -- Pit Scouting Assignments -------------------------------------------------
 // Maps individual TBA team numbers to the scouts assigned to pit-scout them.
@@ -40,8 +41,10 @@ export const upsertPitScoutingAssignment = mutation({
     eventKey:   v.string(),
     teamNumber: v.number(),
     scoutIds:   v.array(v.id("users")),
+    adminKey:   v.optional(v.string()),
   },
-  handler: async (ctx, { eventKey, teamNumber, scoutIds }) => {
+  handler: async (ctx, { eventKey, teamNumber, scoutIds, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
     const existing = await ctx.db
       .query("pitScoutingTeams")
       .withIndex("by_event_team", (q) =>
@@ -71,8 +74,10 @@ export const batchUpsertPitScoutingAssignments = mutation({
       teamNumber: v.number(),
       scoutIds:   v.array(v.id("users")),
     })),
+    adminKey: v.optional(v.string()),
   },
-  handler: async (ctx, { eventKey, assignments }) => {
+  handler: async (ctx, { eventKey, assignments, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
     for (const { teamNumber, scoutIds } of assignments) {
       const existing = await ctx.db
         .query("pitScoutingTeams")
@@ -94,8 +99,9 @@ export const batchUpsertPitScoutingAssignments = mutation({
 
 /** Clear all pit scouting assignments for an event */
 export const clearAllPitScoutingAssignments = mutation({
-  args: { eventKey: v.string() },
-  handler: async (ctx, { eventKey }) => {
+  args: { eventKey: v.string(), adminKey: v.optional(v.string()) },
+  handler: async (ctx, { eventKey, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
     const all = await ctx.db
       .query("pitScoutingTeams")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "convex/react";
+import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
@@ -365,9 +366,9 @@ function MarketCard({
   const poolData = useCached(poolDataLive, `betting_pool_${market._id}`);
   const realBets: Record<string, number> = poolData ?? {};
 
-  const resolveMarket = useMutation(api.betting.resolveMarket);
-  const lockMarket = useMutation(api.betting.lockMarket);
-  const unlockMarket = useMutation(api.betting.unlockMarket);
+  const resolveMarket = useAdminMutation(api.betting.resolveMarket);
+  const lockMarket = useAdminMutation(api.betting.lockMarket);
+  const unlockMarket = useAdminMutation(api.betting.unlockMarket);
 
   const TypeIcon = TYPE_ICONS[market.type];
   const sc = STATUS_CONFIG[market.status];
@@ -665,7 +666,7 @@ function CreateMarketPanel({
 
   const templatesLive = useQuery(api.forms.listActiveTemplates);
   const templates = useCached(templatesLive, "active_templates");
-  const createMarket = useMutation(api.betting.createMarket);
+  const createMarket = useAdminMutation(api.betting.createMarket);
 
   const isMultiMatch = type === "multi_match_numeric" || type === "multi_match_count";
 
@@ -1294,8 +1295,8 @@ function MarketsTab({
 
   const marketsQuery = useQuery(api.betting.listMarkets, { eventKey });
   const marketsLive = useCached(marketsQuery, `betting_markets_${eventKey}`);
-  const batchCreateRandom = useMutation(api.betting.batchCreateRandomMarkets);
-  const clearAll = useMutation(api.betting.clearAllMarkets);
+  const batchCreateRandom = useAdminMutation(api.betting.batchCreateRandomMarkets);
+  const clearAll = useAdminMutation(api.betting.clearAllMarkets);
 
   useEffect(() => {
     fetchTBAEventMatches(eventKey).then((m) => {
@@ -1390,7 +1391,7 @@ function MarketsTab({
     try {
       // Use ALL matches (including played) so you can test even post-event.
       // If TBA returned nothing at all, fall back to 5 synthetic dummy matches.
-      let pool = tbaMatches;
+      const pool = tbaMatches;
       if (pool.length === 0) {
         // Synthetic dummy matches: just need matchNumber + matchLabel + seeds
         const dummyList = [1, 2, 3, 4, 5].map((n) => ({
