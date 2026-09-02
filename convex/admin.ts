@@ -1,6 +1,6 @@
 import { v } from "convex/values";
-import { mutation } from "./_generated/server";
-import { getAdminHash, requireAdmin } from "./adminAuth";
+import { mutation, query } from "./_generated/server";
+import { getAdminHash, isUsingDefaultAdminPassword, requireAdmin } from "./adminAuth";
 
 /**
  * Change the shared admin password.
@@ -44,4 +44,16 @@ export const verifyAdminPassword = mutation({
     await requireAdmin(ctx, adminKey);
     return true;
   },
+});
+
+/**
+ * Whether the admin password is still the shipped default.
+ *
+ * Deliberately exposes only a boolean, never the hash. The Settings page uses
+ * it to warn that admin access is effectively open, since the default is
+ * public knowledge.
+ */
+export const adminPasswordIsDefault = query({
+  args: {},
+  handler: async (ctx) => isUsingDefaultAdminPassword(ctx),
 });

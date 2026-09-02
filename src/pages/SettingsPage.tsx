@@ -153,6 +153,9 @@ function AdminModeCard() {
   // wrong password fails here rather than on the first privileged action.
   const verifyAdminPassword = useMutation(api.admin.verifyAdminPassword);
   const setAdminPasswordRemote = useMutation(api.admin.setAdminPassword);
+  // The shipped default is public knowledge, so a deployment sitting on it has
+  // effectively open admin access. Say so rather than let it go unnoticed.
+  const usingDefaultPassword = useQuery(api.admin.adminPasswordIsDefault);
 
   // Enable flow
   const [showEnableForm, setShowEnableForm] = useState(false);
@@ -266,6 +269,23 @@ function AdminModeCard() {
           : "bg-card border-border"
       }`}
     >
+      {usingDefaultPassword === true && (
+        <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
+          <ShieldX className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-destructive">
+              Admin is using the default password
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              The default is published in this app&apos;s source, so anyone can turn on
+              Admin Mode. Change it below, or set{" "}
+              <code className="font-mono">ADMIN_PASSWORD_HASH</code> in the Convex
+              dashboard.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">

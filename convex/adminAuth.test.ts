@@ -159,6 +159,28 @@ describe("changing the admin password", () => {
   });
 });
 
+describe("default-password warning", () => {
+  test("reports true on a fresh deployment with no ADMIN_PASSWORD_HASH", async () => {
+    const t = convexTest(schema, modules);
+    expect(await t.query(api.admin.adminPasswordIsDefault, {})).toBe(true);
+  });
+
+  test("goes false once the password is changed", async () => {
+    const t = convexTest(schema, modules);
+    await t.withIdentity(scout).mutation(api.admin.setAdminPassword, {
+      newHash: "b".repeat(64),
+      adminKey: DEFAULT_HASH,
+    });
+    expect(await t.query(api.admin.adminPasswordIsDefault, {})).toBe(false);
+  });
+
+  test("never exposes the hash itself", async () => {
+    const t = convexTest(schema, modules);
+    const result = await t.query(api.admin.adminPasswordIsDefault, {});
+    expect(typeof result).toBe("boolean");
+  });
+});
+
 describe("scout-level mutations stay usable by non-admins", () => {
   test("a signed-in scout can submit a form and move a picklist card", async () => {
     const t = convexTest(schema, modules);

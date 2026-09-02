@@ -6,8 +6,38 @@ on:
       - main
 
 jobs:
+  # ── Gate ────────────────────────────────────────────────────────────────
+  # Nothing used to stand between a push to main and a production deploy.
+  # A type error or a failing test now stops the deploy instead of shipping.
+  #
+  # `npm run lint` is deliberately NOT a gate yet: it still reports errors
+  # from the react-hooks v7 rules across BettingPage/DashboardPage. Add it
+  # here once those are cleared.
+  verify:
+    name: Typecheck & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc -b
+
+      - name: Test
+        run: npm test
+
   deploy:
     name: Deploy Backend & Frontend
+    needs: verify
     runs-on: ubuntu-latest
 
     steps:
@@ -17,7 +47,8 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
+          cache: npm
 
       # package-lock.json now records every platform's optional native binary
       # (the rolldown bindings), so a clean lockfile install resolves the right
@@ -47,6 +78,20 @@ jobs:
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      # Fail here rather than shipping a bundle with no backend URL. main.tsx
+      # renders an explicit "not configured" screen in that case, which beats a
+      # blank page, but a deploy that reaches it should never have gone out.
+      - name: Check required build secrets are present
+        run: |
+          missing=0
+          for var in VITE_CONVEX_URL VITE_CONVEX_SITE_URL; do
+            if [ -z "${!var}" ]; then echo "::error::$var is not set"; missing=1; fi
+          done
+          [ "$missing" -eq 0 ]
+        env:
+          VITE_CONVEX_URL: ${{ secrets.VITE_CONVEX_URL }}
+          VITE_CONVEX_SITE_URL: ${{ secrets.VITE_CONVEX_SITE_URL }}
 
       - name: Build with Vercel
         run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}

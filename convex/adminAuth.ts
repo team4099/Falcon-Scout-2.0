@@ -50,6 +50,18 @@ export async function peekAdminHash(ctx: QueryCtx): Promise<string> {
 }
 
 /**
+ * True when the admin credential is still the shipped default ("passw0rd").
+ *
+ * The default exists so an un-configured deployment keeps working, but it is
+ * public knowledge — it was hardcoded in the client for the whole life of the
+ * app. Anything relying on this must surface it loudly rather than let a
+ * deployment sit on it unnoticed.
+ */
+export async function isUsingDefaultAdminPassword(ctx: QueryCtx): Promise<boolean> {
+  return safeEqual(await peekAdminHash(ctx), FALLBACK_HASH);
+}
+
+/**
  * Require that the caller is signed in. Returns the user id.
  * Use on anything that writes data but is not admin-only (scouts submitting
  * forms, syncing their own queue, moving picklist cards).
