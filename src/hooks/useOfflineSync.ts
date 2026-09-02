@@ -57,6 +57,7 @@ export function useOfflineSync() {
           templateId: sub.templateId as Id<"formTemplates">,
           eventKey:    sub.eventKey,
           matchNumber: sub.matchNumber,
+          compLevel:   sub.compLevel,
           teamNumber:  sub.teamNumber,
           data:        sub.data,
           offlineId:   sub.id, // idempotency key — server skips insert if already stored

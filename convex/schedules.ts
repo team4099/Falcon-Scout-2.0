@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
+import { requireAdmin } from "./adminAuth";
 
 const positionValidator = v.union(
   v.literal("red1"), v.literal("red2"), v.literal("red3"),
@@ -41,8 +42,10 @@ export const setMatchAssignment = mutation({
     matchLabel: v.string(),
     position: positionValidator,
     scoutId: v.id("users"),
+    adminKey: v.optional(v.string()),
   },
-  handler: async (ctx, { eventKey, matchNumber, matchLabel, position, scoutId }) => {
+  handler: async (ctx, { eventKey, matchNumber, matchLabel, position, scoutId, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
     const existing = await ctx.db
       .query("matchAssignments")
       .withIndex("by_event_match", (q) =>
@@ -67,8 +70,10 @@ export const clearMatchAssignment = mutation({
     eventKey: v.string(),
     matchNumber: v.number(),
     position: positionValidator,
+    adminKey: v.optional(v.string()),
   },
-  handler: async (ctx, { eventKey, matchNumber, position }) => {
+  handler: async (ctx, { eventKey, matchNumber, position, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
     const existing = await ctx.db
       .query("matchAssignments")
       .withIndex("by_event_match", (q) =>
@@ -94,8 +99,10 @@ export const batchSetMatchAssignments = mutation({
       position: positionValidator,
       scoutId: v.id("users"),
     })),
+    adminKey: v.optional(v.string()),
   },
-  handler: async (ctx, { eventKey, assignments }) => {
+  handler: async (ctx, { eventKey, assignments, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
     for (const { matchNumber, matchLabel, position, scoutId } of assignments) {
       const existing = await ctx.db
         .query("matchAssignments")
@@ -118,8 +125,9 @@ export const batchSetMatchAssignments = mutation({
 
 /** Delete every match assignment for an event — used by the "Clear All" button */
 export const clearAllMatchAssignments = mutation({
-  args: { eventKey: v.string() },
-  handler: async (ctx, { eventKey }) => {
+  args: { eventKey: v.string(), adminKey: v.optional(v.string()) },
+  handler: async (ctx, { eventKey, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
     const all = await ctx.db
       .query("matchAssignments")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
@@ -170,8 +178,10 @@ export const upsertPitRotation = mutation({
     endMatch: v.optional(v.number()),
     isElims: v.optional(v.boolean()),
     scoutIds: v.array(v.id("users")),
+    adminKey: v.optional(v.string()),
   },
-  handler: async (ctx, { id, eventKey, label, startMatch, endMatch, isElims, scoutIds }) => {
+  handler: async (ctx, { id, eventKey, label, startMatch, endMatch, isElims, scoutIds, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
     // ── Determine which scouts are being newly added ───────────────────────────
     let prevScoutIds: string[] = [];
     if (id) {
@@ -213,8 +223,9 @@ export const upsertPitRotation = mutation({
 
 /** Delete a pit rotation */
 export const deletePitRotation = mutation({
-  args: { id: v.id("pitRotations") },
-  handler: async (ctx, { id }) => {
+  args: { id: v.id("pitRotations"), adminKey: v.optional(v.string()) },
+  handler: async (ctx, { id, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
     await ctx.db.delete(id);
   },
 });
@@ -289,8 +300,10 @@ export const setScheduleExclusions = mutation({
   args: {
     eventKey: v.string(),
     excludedScoutIds: v.array(v.id("users")),
+    adminKey: v.optional(v.string()),
   },
-  handler: async (ctx, { eventKey, excludedScoutIds }) => {
+  handler: async (ctx, { eventKey, excludedScoutIds, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
     const existing = await ctx.db
       .query("scheduleExclusions")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))

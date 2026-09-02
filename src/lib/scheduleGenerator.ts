@@ -244,10 +244,26 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
       const ideal = Math.round((w / numWindows) * (B - 1));
       windowStarts.push(Math.max(0, Math.min(ideal, B - 2)));
     }
-    // Prevent overlap: each window start must be >= previous + 2
+    // Prevent overlap: each window start must be >= previous + 2.
+    // The clamp to B-2 means that when there are more windows than the schedule
+    // can hold, several collapse onto the same start — stacking "Auto Pit"
+    // rotations on the same blocks and putting more than the documented maximum
+    // of 6 scouts on pit at once. Detect that and warn rather than emitting a
+    // schedule that quietly breaks its own rules.
     for (let i = 1; i < windowStarts.length; i++) {
       if (windowStarts[i] <= windowStarts[i - 1])
         windowStarts[i] = Math.min(windowStarts[i - 1] + 2, B - 2);
+    }
+
+    const distinctStarts = new Set(windowStarts).size;
+    if (distinctStarts < numWindows) {
+      const capacity = distinctStarts * 6;
+      warnings.push(
+        `${pitWanters.length} scouts asked for pit duty but this schedule only has room for ` +
+        `about ${capacity} (${distinctStarts} non-overlapping window${distinctStarts === 1 ? "" : "s"} ` +
+        `across ${B} blocks). Some pit rotations overlap, so more than 6 scouts may be on pit ` +
+        `at the same time — review the pit rotations before publishing.`
+      );
     }
 
     let pitIdx = 0;

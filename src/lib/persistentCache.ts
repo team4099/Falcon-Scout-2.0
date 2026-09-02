@@ -49,7 +49,15 @@ export async function idbSet<T>(key: string, data: T, ttl: number): Promise<void
   } catch { /* ignore */ }
 }
 
-export async function idbGet<T>(key: string): Promise<T | null> {
+/**
+ * Read a live cache entry, wrapped so callers can tell "no entry" (null) apart
+ * from "entry whose stored value is null" ({ value: null }).
+ *
+ * The distinction matters for negative caching — storing null to record
+ * "TBA has no avatar for this team" is only useful if reading it back counts
+ * as a hit.
+ */
+export async function idbGetEntry<T>(key: string): Promise<{ value: T } | null> {
   try {
     const db    = await openDb();
     const tx    = db.transaction(IDB_STORE, "readonly");
@@ -60,11 +68,17 @@ export async function idbGet<T>(key: string): Promise<T | null> {
         const entry = req.result as CacheEntry<T> | undefined;
         if (!entry) { resolve(null); return; }
         if (Date.now() - entry.ts > entry.ttl) { resolve(null); return; }
-        resolve(entry.data);
+        resolve({ value: entry.data });
       };
       req.onerror = () => resolve(null);
     });
   } catch { return null; }
+}
+
+/** Convenience wrapper — collapses "missing" and "stored null" into null. */
+export async function idbGet<T>(key: string): Promise<T | null> {
+  const entry = await idbGetEntry<T>(key);
+  return entry ? entry.value : null;
 }
 
 export async function idbDelete(key: string): Promise<void> {
@@ -141,14 +155,45 @@ export function lsEvictExpired(): void {
   }
 }
 
+/**
+ * Keys that hold user-generated data rather than re-fetchable cache.
+ * Clearing any of these loses work: queued submissions never reach Convex,
+ * QR codes can no longer be regenerated, and dropping the viewer cache
+ * disables the offline sign-in path in App.tsx.
+ *
+ * These all happen to share the `falconscout_` prefix with the cache keys,
+ * so the wipe below matches on cache prefixes only and treats this list as a
+ * second, explicit guard.
+ */
+const NEVER_CLEAR = new Set([
+  "falconscout_offline_queue",        // scouting submissions awaiting sync
+  "falconscout_kanban_queue",         // picklist ops awaiting sync
+  "falconscout_my_submissions",       // local submissions backing My QR Codes
+  "falconscout_scanned_submissions",  // data scanned off other scouts' phones
+  "falconscout_chunk_buffers",        // partially scanned multi-code submissions
+  "falconscout_viewer_cache",         // required for offline sign-in
+  "falconscout_ui",                   // admin mode and other UI prefs
+]);
+
+/** Prefixes that only ever hold re-fetchable cached responses. */
+const CACHE_PREFIXES = [
+  LS_PREFIX,               // falconscout_cache_*  — TBA / Statbotics
+  "falconscout_convex_",   // cached Convex query results
+];
+
+/**
+ * Clear cached API and Convex responses. Deliberately leaves anything the
+ * scout has produced but not yet synced — see NEVER_CLEAR.
+ */
 export function clearAllCache(): void {
-  // Clear localStorage
+  // Clear localStorage — cache prefixes only
   for (const k of Object.keys(localStorage)) {
-    if (k.startsWith(LS_PREFIX) || k.startsWith("falconscout_")) {
+    if (NEVER_CLEAR.has(k)) continue;
+    if (CACHE_PREFIXES.some((p) => k.startsWith(p))) {
       localStorage.removeItem(k);
     }
   }
-  // Clear IDB
+  // Clear IDB (team avatars and other large cached blobs)
   openDb().then((db) => {
     db.transaction(IDB_STORE, "readwrite").objectStore(IDB_STORE).clear();
   }).catch(() => {});

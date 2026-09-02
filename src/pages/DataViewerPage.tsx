@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { matchLabel, matchSortValue } from "@/lib/utils";
 import { useQuery } from "convex/react";
 import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
@@ -38,7 +39,7 @@ function useIsMobile(breakpoint = 640) {
 // ─────────────────────────────── Types ────────────────────────────────────────
 
 interface FormField { id: string; type: string; label: string; }
-interface Submission { _id: string; teamNumber: number; matchNumber: number; data: string; }
+interface Submission { _id: string; teamNumber: number; matchNumber: number; compLevel?: "qm" | "elim"; data: string; }
 type ChartType = "bar" | "scatter" | "line" | "radar" | "histogram" | "boxplot";
 
 interface AxisOpt { id: string; label: string; group: "scouting" | "epa" | "match"; }
@@ -111,7 +112,10 @@ function buildRows(
     const row: Record<string, unknown> = {
       _team: s.teamNumber,
       _teamStr: String(s.teamNumber),
-      _match: s.matchNumber,
+      // Labelled, not bare: qual 5 and elim 5 are different matches.
+      _match: matchLabel(s.matchNumber, s.compLevel),
+      _matchNum: s.matchNumber,
+      _matchSort: matchSortValue(s.matchNumber, s.compLevel),
     };
 
     for (const f of fields) {
@@ -868,6 +872,15 @@ function BoxPlotRenderer({
     if (s) boxes.push({ teamLabel: t, s, color: clr(i) });
   });
 
+  // Declared before the early returns below: hooks must run in the same order
+  // on every render, and these used to sit after them. Going from "no numeric
+  // data" to having data changed the hook count mid-life and threw
+  // "Rendered fewer hooks than expected".
+  const handleMouseMove = useCallback((e: React.MouseEvent, box: BoxEntry) => {
+    setTooltip({ box, x: e.clientX, y: e.clientY });
+  }, []);
+  const handleMouseLeave = useCallback(() => setTooltip(null), []);
+
   if (!srcTeams.length) return <Empty msg={isEpaY ? "No EPA data" : "No scouting submissions"} />;
   if (!boxes.length) return <Empty msg="No numeric data for selected teams" />;
 
@@ -897,11 +910,6 @@ function BoxPlotRenderer({
   const tickCount = 6;
   const tickStep = (yMax - yMin) / (tickCount - 1 || 1);
   const yTicks = Array.from({ length: tickCount }, (_, i) => round2(yMin + tickStep * i));
-
-  const handleMouseMove = useCallback((e: React.MouseEvent, box: BoxEntry) => {
-    setTooltip({ box, x: e.clientX, y: e.clientY });
-  }, []);
-  const handleMouseLeave = useCallback(() => setTooltip(null), []);
 
   return (
     <div ref={containerRef} style={{ width: "100%", height: "100%", minHeight: 200, position: "relative" }}>

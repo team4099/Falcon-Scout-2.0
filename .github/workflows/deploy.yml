@@ -19,10 +19,13 @@ jobs:
         with:
           node-version: "20"
 
+      # package-lock.json now records every platform's optional native binary
+      # (the rolldown bindings), so a clean lockfile install resolves the right
+      # one on Linux. It previously only contained the win32 binding, which is
+      # why this step used to delete the lockfile and re-resolve from scratch —
+      # making every deploy pull unpinned transitive versions.
       - name: Install dependencies
-        run: |
-          rm -f package-lock.json
-          npm install
+        run: npm ci
 
       # ── Step 1: Deploy Convex backend ────────────────────────────────────
       # npx convex deploy pushes schema + functions to the production deployment

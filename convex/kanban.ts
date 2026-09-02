@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
+import { requireAdmin, requireUser } from "./adminAuth";
 
 // ──────────────────────────────────────────────
 // Kanban Boards
@@ -45,7 +46,7 @@ export const createBoard = mutation({
     ),
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await requireUser(ctx);
     return await ctx.db.insert("kanbanBoards", {
       ...args,
       ownerId: args.type === "personal" && userId ? userId : undefined,
@@ -63,8 +64,10 @@ export const updateBoardColumns = mutation({
         color: v.optional(v.string()),
       })
     ),
+    adminKey: v.optional(v.string()),
   },
-  handler: async (ctx, { boardId, columns }) => {
+  handler: async (ctx, { boardId, columns, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
     await ctx.db.patch(boardId, { columns });
   },
 });
@@ -93,6 +96,7 @@ export const addCard = mutation({
     position: v.number(),
   },
   handler: async (ctx, args) => {
+    await requireUser(ctx);
     return await ctx.db.insert("kanbanCards", args);
   },
 });
@@ -104,6 +108,7 @@ export const moveCard = mutation({
     position: v.number(),
   },
   handler: async (ctx, { cardId, columnId, position }) => {
+    await requireUser(ctx);
     await ctx.db.patch(cardId, { columnId, position });
   },
 });
@@ -114,6 +119,7 @@ export const updateCard = mutation({
     notes: v.optional(v.string()),
   },
   handler: async (ctx, { cardId, notes }) => {
+    await requireUser(ctx);
     await ctx.db.patch(cardId, { notes });
   },
 });
@@ -121,6 +127,7 @@ export const updateCard = mutation({
 export const removeCard = mutation({
   args: { cardId: v.id("kanbanCards") },
   handler: async (ctx, { cardId }) => {
+    await requireUser(ctx);
     await ctx.db.delete(cardId);
   },
 });
@@ -135,8 +142,10 @@ export const seedTeams = mutation({
     eventKey: v.string(),
     columnId: v.string(),       // id of the "unsorted" / first column
     teamNumbers: v.array(v.number()),
+    adminKey: v.optional(v.string()),
   },
-  handler: async (ctx, { boardId, eventKey, columnId, teamNumbers }) => {
+  handler: async (ctx, { boardId, eventKey, columnId, teamNumbers, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
     // Fetch all existing cards on this board to avoid duplicates
     const existing = await ctx.db
       .query("kanbanCards")

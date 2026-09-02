@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery } from "convex/react";
+import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
 import { useUIStore } from "@/store/uiStore";
@@ -416,7 +417,7 @@ function SubmissionDetailModal({
   onClose: () => void;
   onDeleted: () => void;
 }) {
-  const deleteSubmission = useMutation(api.forms.deleteSubmission);
+  const deleteSubmission = useAdminMutation(api.forms.deleteSubmission);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -839,9 +840,9 @@ export default function ManageScoutsPage() {
   ) as string[] | undefined;
 
   // Mutations
-  const clearMatchAssignment = useMutation(api.schedules.clearMatchAssignment);
-  const upsertPitRotation    = useMutation(api.schedules.upsertPitRotation);
-  const setScheduleExclusions = useMutation(api.schedules.setScheduleExclusions);
+  const clearMatchAssignment = useAdminMutation(api.schedules.clearMatchAssignment);
+  const upsertPitRotation    = useAdminMutation(api.schedules.upsertPitRotation);
+  const setScheduleExclusions = useAdminMutation(api.schedules.setScheduleExclusions);
 
   // Saving state
   const [clearingSlot, setClearingSlot]   = useState<string | null>(null);

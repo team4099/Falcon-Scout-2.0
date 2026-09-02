@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate } from "react-router";
 import { useUIStore } from "@/store/uiStore";
 import { useQuery } from "convex/react";
+import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
 import { Input } from "@/components/ui/input";
@@ -188,7 +189,7 @@ function SubmissionsReviewDialog({
   fields: FormField[];
   isAdminMode: boolean;
 }) {
-  const deleteSubmission = useMutation(api.forms.deleteSubmission);
+  const deleteSubmission = useAdminMutation(api.forms.deleteSubmission);
   const allUsersLive = useQuery(api.users.listUsers);
   const allUsers = useCached(allUsersLive, "all_users");
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -210,7 +211,8 @@ function SubmissionsReviewDialog({
   function toggleExpand(id: string) {
     setExpandedIds((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   }
@@ -1706,7 +1708,8 @@ export default function DashboardPage() {
   function toggleColumn(id: string) {
     setHiddenColumns((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       persistHidden(next);
       return next;
     });

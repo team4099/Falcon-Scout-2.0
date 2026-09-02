@@ -10,9 +10,14 @@
  *   3. Upload tracking   — each record carries a status so the UI can
  *      show pending / uploaded / failed states.
  *
- * QR envelope format (per chunk, as JSON string):
- *   { v:1, id:"<8-char>", m:<matchNum>, t:<teamNum>, e:"<eventKey>",
+ * QR envelope format (per chunk, as JSON string), version 2:
+ *   { v:2, id:"<12-char>", tid:"<templateId>", cl:"qm"|"elim",
+ *     m:<matchNum>, t:<teamNum>, e:"<eventKey>",
  *     i:<chunkIndex>, n:<totalChunks>, d:"<dataChunk>" }
+ *
+ * v1 codes carried no templateId, so the scanner had to guess which form the
+ * data belonged to. Rather than keep guessing, v1 is rejected with a message
+ * telling the scout to regenerate the code from their My QR Codes tab.
  */
 
 import { getMySubmissions } from "./submissionStore";
@@ -22,6 +27,8 @@ import { getMySubmissions } from "./submissionStore";
 export interface QREnvelope {
   v: number;
   id: string;
+  tid: string;             // templateId the submission was filled out against
+  cl?: "qm" | "elim";      // comp level
   m: number;  // matchNumber
   t: number;  // teamNumber
   e: string;  // eventKey
@@ -34,7 +41,9 @@ export type UploadStatus = "pending" | "uploaded" | "failed";
 
 export interface ScannedSubmission {
   id: string;           // same as QR envelope id — used as offlineId
+  templateId: string;   // which form this was filled out against
   matchNumber: number;
+  compLevel?: "qm" | "elim";
   teamNumber: number;
   eventKey: string;
   data: Record<string, unknown>;
@@ -47,7 +56,9 @@ export interface ScannedSubmission {
 // Partial scan buffer for multi-chunk submissions
 interface ChunkBuffer {
   id: string;
+  templateId: string;
   matchNumber: number;
+  compLevel?: "qm" | "elim";
   teamNumber: number;
   eventKey: string;
   chunks: Record<number, string>; // chunkIndex → dataChunk
@@ -135,8 +146,14 @@ function isDuplicate(id: string): boolean {
 
 export type IngestResult =
   | { status: "duplicate" }
+  | { status: "ignored" }                                  // not a FalconScout code
+  | { status: "outdated" }                                 // v1 code — must be regenerated
+  | { status: "corrupt" }                                  // chunks did not reassemble
   | { status: "buffering"; chunksReceived: number; chunksNeeded: number }
   | { status: "complete"; submission: ScannedSubmission };
+
+/** Envelope version this build understands. */
+const SUPPORTED_VERSION = 2;
 
 /**
  * Parse a raw QR string and ingest it.
@@ -146,26 +163,37 @@ export function ingestQRPayload(raw: string): IngestResult {
   let env: QREnvelope;
   try {
     env = JSON.parse(raw) as QREnvelope;
-    if (env.v !== 1 || !env.id || env.i === undefined || env.n === undefined) {
+    if (!env.id || env.i === undefined || env.n === undefined) {
       throw new Error("bad envelope");
     }
   } catch {
-    return { status: "duplicate" }; // not a FalconScout QR — treat as skip
+    return { status: "ignored" }; // not a FalconScout QR at all
   }
+
+  // A v1 code has no templateId, so its data cannot be attributed to a form.
+  // Say so instead of guessing and mislabelling the submission.
+  if (env.v !== SUPPORTED_VERSION) return { status: "outdated" };
+  if (!env.tid) return { status: "outdated" };
 
   // ── Single-chunk fast path ──────────────────────────────────────────────
   if (env.n === 1) {
     if (isDuplicate(env.id)) return { status: "duplicate" };
 
-    let data: Record<string, unknown> = {};
-    try { data = JSON.parse(env.d) as Record<string, unknown>; } catch { /* ignore */ }
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(env.d) as Record<string, unknown>;
+    } catch {
+      return { status: "corrupt" };
+    }
 
     // Checklist QR codes are not scouting data — silently skip them
-    if (data._checklist === true) return { status: "duplicate" };
+    if (data._checklist === true) return { status: "ignored" };
 
     const sub: ScannedSubmission = {
       id: env.id,
+      templateId: env.tid,
       matchNumber: env.m,
+      compLevel: env.cl,
       teamNumber: env.t,
       eventKey: env.e,
       data,
@@ -182,7 +210,9 @@ export function ingestQRPayload(raw: string): IngestResult {
   const bufs = getChunkBuffers();
   const buf: ChunkBuffer = bufs[env.id] ?? {
     id: env.id,
+    templateId: env.tid,
     matchNumber: env.m,
+    compLevel: env.cl,
     teamNumber: env.t,
     eventKey: env.e,
     chunks: {},
@@ -198,23 +228,33 @@ export function ingestQRPayload(raw: string): IngestResult {
     return { status: "buffering", chunksReceived: received, chunksNeeded: buf.total };
   }
 
-  // All chunks received — reassemble
+  // All chunks received — reassemble.
   const fullDataStr = Array.from({ length: buf.total }, (_, i) => buf.chunks[i] ?? "").join("");
-  let data: Record<string, unknown> = {};
-  try { data = JSON.parse(fullDataStr) as Record<string, unknown>; } catch { /* ignore */ }
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(fullDataStr) as Record<string, unknown>;
+  } catch {
+    // A chunk was misread. Previously this was swallowed and an EMPTY
+    // submission was stored and uploaded under a real match and team number,
+    // with the scanner reporting success. Keep the buffer so a rescan of the
+    // bad code can still complete it, and tell the user.
+    return { status: "corrupt" };
+  }
 
-  // Remove from buffer
+  // Reassembled cleanly — drop the buffer.
   delete bufs[env.id];
   saveChunkBuffers(bufs);
 
   if (isDuplicate(env.id)) return { status: "duplicate" };
 
   // Checklist QR codes are not scouting data — silently skip them
-  if (data._checklist === true) return { status: "duplicate" };
+  if (data._checklist === true) return { status: "ignored" };
 
   const sub: ScannedSubmission = {
     id: env.id,
+    templateId: buf.templateId,
     matchNumber: buf.matchNumber,
+    compLevel: buf.compLevel,
     teamNumber: buf.teamNumber,
     eventKey: buf.eventKey,
     data,

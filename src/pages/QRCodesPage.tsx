@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { matchKey, matchLabel, matchSortValue } from "@/lib/utils";
 import QRCode from "react-qr-code";
 import {
   getMySubmissions,
@@ -40,12 +41,15 @@ function formatTime(ts: number) {
   return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function groupByMatch(subs: LocalSubmission[]): Map<number, LocalSubmission[]> {
-  const map = new Map<number, LocalSubmission[]>();
+function groupByMatch(subs: LocalSubmission[]): Map<string, LocalSubmission[]> {
+  // Keyed by comp level + number so a qualification and an elimination match
+  // with the same number don't land in the same group.
+  const map = new Map<string, LocalSubmission[]>();
   for (const s of subs) {
-    const arr = map.get(s.matchNumber) ?? [];
+    const k = matchKey(s.matchNumber, s.compLevel);
+    const arr = map.get(k) ?? [];
     arr.push(s);
-    map.set(s.matchNumber, arr);
+    map.set(k, arr);
   }
   return map;
 }
@@ -77,7 +81,7 @@ function QRViewer({
         <DialogHeader className="px-4 pt-4 pb-2">
           <DialogTitle className="flex items-center gap-2 text-base">
             <QrCode className="h-4 w-4 text-primary shrink-0" />
-            Match {sub.matchNumber} · Team {sub.teamNumber || "—"}
+            Match {matchLabel(sub.matchNumber, sub.compLevel)} · Team {sub.teamNumber || "—"}
           </DialogTitle>
           {chunks.length > 1 && (
             <p className="text-xs text-muted-foreground">
@@ -274,7 +278,16 @@ export default function QRCodesPage() {
   }
 
   const byMatch = groupByMatch(subs);
-  const matchNums = Array.from(byMatch.keys()).sort((a, b) => b - a); // newest match first
+  // Newest match first; quals and elims are separate groups, elims listed above
+  // quals since they come later in the event.
+  const matchKeys = Array.from(byMatch.keys()).sort((a, b) => {
+    const va = byMatch.get(a)![0];
+    const vb = byMatch.get(b)![0];
+    return (
+      matchSortValue(vb.matchNumber, vb.compLevel) -
+      matchSortValue(va.matchNumber, va.compLevel)
+    );
+  });
 
   return (
     <div className="h-full flex flex-col">
@@ -322,14 +335,15 @@ export default function QRCodesPage() {
       {/* Submissions grouped by match */}
       <ScrollArea className="flex-1 -mx-1 px-1">
         <div className="space-y-6 pb-4">
-          {matchNums.map((matchNum) => {
-            const matchSubs = byMatch.get(matchNum)!;
+          {matchKeys.map((key) => {
+            const matchSubs = byMatch.get(key)!;
+            const head = matchSubs[0];
             return (
-              <div key={matchNum}>
+              <div key={key}>
                 {/* Match header */}
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-xs font-bold text-primary uppercase tracking-wider">
-                    Match {matchNum}
+                    Match {matchLabel(head.matchNumber, head.compLevel)}
                   </span>
                   <div className="flex-1 h-px bg-border" />
                   <span className="text-xs text-muted-foreground">

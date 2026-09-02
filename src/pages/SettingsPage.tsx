@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "convex/react";
+import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
 import { Button } from "@/components/ui/button";
@@ -24,11 +25,22 @@ import {
   RefreshCw,
   ShieldX,
 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { getTBAKey, setTBAKey, clearApiCache } from "@/lib/api";
 import { useUIStore } from "@/store/uiStore";
 import {
   checkAdminPassword,
-  changeAdminPassword,
+  setAdminPwHash,
+  sha256Hex,
 } from "@/lib/adminAuth";
 
 // ── API Key field ─────────────────────────────────────────────────────────────
@@ -137,6 +149,11 @@ function ApiKeyField({
 function AdminModeCard() {
   const { isAdminMode, setAdminMode } = useUIStore();
 
+  // The server holds the authoritative hash; these confirm against it so a
+  // wrong password fails here rather than on the first privileged action.
+  const verifyAdminPassword = useMutation(api.admin.verifyAdminPassword);
+  const setAdminPasswordRemote = useMutation(api.admin.setAdminPassword);
+
   // Enable flow
   const [showEnableForm, setShowEnableForm] = useState(false);
   const [enablePw, setEnablePw] = useState("");
@@ -167,8 +184,22 @@ function AdminModeCard() {
     if (!enablePw) return;
     setEnableLoading(true);
     try {
-      const ok = await checkAdminPassword(enablePw);
+      const hash = await sha256Hex(enablePw);
+      // Confirm with the server, which owns the real credential. Falls back to
+      // the local check when offline so admin mode still works at an event.
+      let ok: boolean;
+      if (navigator.onLine) {
+        try {
+          ok = await verifyAdminPassword({ adminKey: hash }) === true;
+        } catch {
+          ok = false;
+        }
+      } else {
+        ok = await checkAdminPassword(enablePw);
+      }
+
       if (ok) {
+        setAdminPwHash(hash);
         setAdminMode(true);
         setShowEnableForm(false);
         setEnablePw("");
@@ -198,16 +229,30 @@ function AdminModeCard() {
     }
     setChangeLoading(true);
     try {
-      const ok = await changeAdminPassword(oldPw, newPw);
-      if (ok) {
-        setShowChangeForm(false);
-        setOldPw("");
-        setNewPw("");
-        setConfirmPw("");
-        toast.success("Admin password changed successfully.");
-      } else {
-        toast.error("Current password is incorrect.");
+      const oldHash = await sha256Hex(oldPw);
+      const newHash = await sha256Hex(newPw);
+
+      // The server is the source of truth, so change it there first. Only
+      // mirror into localStorage once that succeeds, otherwise the device
+      // would hold a key the backend rejects.
+      try {
+        await setAdminPasswordRemote({ newHash, adminKey: oldHash });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "";
+        toast.error(
+          msg.includes("Admin access required")
+            ? "Current password is incorrect."
+            : "Couldn't change the password — you need to be online to do this."
+        );
+        return;
       }
+
+      setAdminPwHash(newHash);
+      setShowChangeForm(false);
+      setOldPw("");
+      setNewPw("");
+      setConfirmPw("");
+      toast.success("Admin password changed for the whole team.");
     } finally {
       setChangeLoading(false);
     }
@@ -414,11 +459,12 @@ export default function SettingsPage() {
 
   const currentEventLive = useQuery(api.events.getCurrentEvent);
   const currentEvent = useCached(currentEventLive, "current_event");
-  const setCurrentEvent = useMutation(api.events.setCurrentEvent);
+  const setCurrentEvent = useAdminMutation(api.events.setCurrentEvent);
 
   const [eventKey, setEventKey] = useState("");
   const [eventName, setEventName] = useState("");
   const [saving, setSaving] = useState(false);
+  const [clearCacheConfirm, setClearCacheConfirm] = useState(false);
 
   // ── TBA key: sourced from Convex (cross-device) with localStorage as fallback ──
   const userSettings = useQuery(api.users.getUserSettings);
@@ -469,6 +515,7 @@ export default function SettingsPage() {
 
   function handleClearCache() {
     clearApiCache();
+    setClearCacheConfirm(false);
     toast.success("Cache cleared — data will refresh on next load.");
   }
 
@@ -611,13 +658,35 @@ export default function SettingsPage() {
           <div>
             <p className="text-sm font-medium">Clear data cache</p>
             <p className="text-xs text-muted-foreground">
-              Forces all external API data to refresh on next load.
+              Forces team lists, rankings and match data to refresh on next load.
+              Your scouting data and anything waiting to sync is kept.
             </p>
           </div>
-          <Button variant="outline" size="sm" onClick={handleClearCache}>
+          <Button variant="outline" size="sm" onClick={() => setClearCacheConfirm(true)}>
             Clear Cache
           </Button>
         </div>
+
+        <AlertDialog open={clearCacheConfirm} onOpenChange={setClearCacheConfirm}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Clear the data cache?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This deletes cached team lists, rankings, match schedules and team
+                avatars. They re-download the next time you&apos;re online.
+                <br /><br />
+                Your scouting submissions, QR codes, scanned data and anything
+                waiting to sync are not touched.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={handleClearCache}>
+                Clear cache
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </div>
   );

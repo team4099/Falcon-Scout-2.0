@@ -1,6 +1,14 @@
 // ── Admin Auth Utilities ───────────────────────────────────────────────────────
 // Passwords are hashed client-side with SHA-256 (Web Crypto API) before storing
-// in localStorage. This is a UI-level protection suitable for a scouting app.
+// in localStorage.
+//
+// The stored hash is also the credential sent to Convex as `adminKey` on every
+// privileged mutation, where it is compared against the hash held in the
+// adminConfig table (see convex/adminAuth.ts). Enabling admin mode in the UI is
+// therefore no longer sufficient on its own — the server checks independently,
+// so editing localStorage by hand gets you the admin menu items and nothing else.
+//
+// The plaintext password is never stored and never leaves the browser.
 
 const ADMIN_PW_KEY = "falconscout_admin_pw_hash";
 
@@ -26,6 +34,14 @@ export function getAdminPwHash(): string {
   }
 }
 
+/**
+ * The credential to send with privileged Convex mutations.
+ * Pass as `adminKey` — the server rejects the call if it doesn't match.
+ */
+export function getAdminKey(): string {
+  return getAdminPwHash();
+}
+
 /** Persist a new hashed password to localStorage. */
 export function setAdminPwHash(hash: string): void {
   try {
@@ -40,19 +56,4 @@ export function setAdminPwHash(hash: string): void {
 export async function checkAdminPassword(attempt: string): Promise<boolean> {
   const hash = await sha256Hex(attempt);
   return hash === getAdminPwHash();
-}
-
-/**
- * Change the admin password.
- * Returns true on success, false if the old password is wrong.
- */
-export async function changeAdminPassword(
-  oldPassword: string,
-  newPassword: string
-): Promise<boolean> {
-  const valid = await checkAdminPassword(oldPassword);
-  if (!valid) return false;
-  const newHash = await sha256Hex(newPassword);
-  setAdminPwHash(newHash);
-  return true;
 }

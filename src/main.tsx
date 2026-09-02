@@ -57,7 +57,11 @@ import App from './App.tsx'
 // tokens on mount instead of trying to re-exchange a code.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const CONVEX_URL = import.meta.env.VITE_CONVEX_URL as string;
+// Guarded with ?? "" — this module runs before React mounts, so an unset var
+// used to throw at module evaluation and leave a blank white page with no
+// error boundary and no message. A deploy that lost its env var looked exactly
+// like a dead site. renderConfigError below says what's actually wrong.
+const CONVEX_URL = (import.meta.env.VITE_CONVEX_URL ?? "") as string;
 
 // Must match the library's key-escaping logic exactly:
 // namespace = client.address (the Convex URL)
@@ -132,6 +136,32 @@ const router = createBrowserRouter([
 ])
 
 const rootEl = document.getElementById('root')!;
+
+// Without a backend URL nothing below can work. Say so plainly rather than
+// rendering an app that will hang on "Verifying session..." forever.
+if (!CONVEX_URL) {
+  rootEl.innerHTML = `
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;
+                padding:24px;background:#0f0a1a;color:#e8e4f0;
+                font-family:system-ui,-apple-system,sans-serif;text-align:center">
+      <div style="max-width:30rem">
+        <div style="font-size:2rem;margin-bottom:12px">⚙️</div>
+        <h1 style="font-size:1.25rem;font-weight:700;margin:0 0 10px">
+          FalconScout isn't configured
+        </h1>
+        <p style="margin:0 0 8px;line-height:1.6;opacity:.85">
+          The <code style="font-family:ui-monospace,monospace">VITE_CONVEX_URL</code>
+          environment variable is missing, so the app can't reach its backend.
+        </p>
+        <p style="margin:0;line-height:1.6;opacity:.6;font-size:.875rem">
+          If you're running locally, add it to <code
+          style="font-family:ui-monospace,monospace">.env.local</code>. If you're
+          seeing this on the deployed site, the build didn't receive the variable.
+        </p>
+      </div>
+    </div>`;
+  throw new Error('VITE_CONVEX_URL is not set');
+}
 
 // Guard against HMR re-executing this module and calling createRoot() twice
 // on the same container (which corrupts React's fiber tree).

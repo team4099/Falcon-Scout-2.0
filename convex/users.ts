@@ -1,6 +1,7 @@
 import { query, mutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
+import { requireUser } from "./adminAuth";
 
 export const viewer = query({
   args: {},
@@ -14,6 +15,7 @@ export const viewer = query({
 export const getUser = query({
   args: { id: v.id("users") },
   handler: async (ctx, { id }) => {
+    await requireUser(ctx);
     return await ctx.db.get(id);
   },
 });
@@ -21,6 +23,7 @@ export const getUser = query({
 export const listUsers = query({
   args: {},
   handler: async (ctx) => {
+    await requireUser(ctx);
     return await ctx.db.query("users").collect();
   },
 });
