@@ -25,3 +25,6 @@ dev-dist
 *.sw?
 
 .vercel
+
+# Local Claude Code settings (launch.json is shared, settings.local.json isn't)
+.claude/settings.local.json
