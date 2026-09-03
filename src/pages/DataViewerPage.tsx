@@ -216,29 +216,34 @@ function RadarTip({ active, payload, label }: {
 
 // ─────────────────────────────── Chart renderers ──────────────────────────────
 
-const GRID_PROPS = { strokeDasharray: "3 3", stroke: "hsl(var(--border))", opacity: 0.5 };
+// Chart chrome inherits `color` from the chart container (see ChartInner's
+// wrapper), so `currentColor` resolves correctly in both light and dark themes.
+// Do NOT use `var(--token)` here: recharts passes most of these through as SVG
+// presentation attributes, which do not resolve CSS custom properties.
+const GRID_PROPS = { strokeDasharray: "3 3", stroke: "currentColor", opacity: 0.15 };
+const AXIS_LINE  = { stroke: "currentColor", opacity: 0.35 };
 const MARGIN = { top: 12, right: 16, left: 4, bottom: 56 };
 
 // Bottom-axis tick: dy=10 pushes label clearly below the tick line
-function WhiteTickX({ x, y, payload, textAnchor }: {
+function AxisTickX({ x, y, payload, textAnchor }: {
   x?: number; y?: number; payload?: { value: unknown }; textAnchor?: string;
 }) {
   return (
     <text x={x} y={y} textAnchor={(textAnchor ?? "middle") as "inherit" | "start" | "end" | "middle"}
-      style={{ fill: "white", fontSize: 11 }} dy={10}>
+      style={{ fill: "currentColor", fontSize: 11, opacity: 0.75 }} dy={10}>
       {String(payload?.value ?? "")}
     </text>
   );
 }
 
 // Left-axis tick: dominantBaseline keeps text vertically centered on its tick mark
-function WhiteTickY({ x, y, payload, textAnchor }: {
+function AxisTickY({ x, y, payload, textAnchor }: {
   x?: number; y?: number; payload?: { value: unknown }; textAnchor?: string;
 }) {
   return (
     <text x={x} y={y} textAnchor={(textAnchor ?? "end") as "inherit" | "start" | "end" | "middle"}
       dominantBaseline="middle"
-      style={{ fill: "white", fontSize: 11 }} dy={0}>
+      style={{ fill: "currentColor", fontSize: 11, opacity: 0.75 }} dy={0}>
       {String(payload?.value ?? "")}
     </text>
   );
@@ -293,10 +298,10 @@ function ChartInner({ cfg, rows, teamRows, matchEpaRows, fields, axes }: {
       <ResponsiveContainer width="100%" height="100%">
         <ReBarChart data={data} margin={MARGIN}>
           <CartesianGrid {...GRID_PROPS} />
-          <XAxis dataKey="team" tick={<WhiteTickX />} angle={-35} textAnchor="end" interval={0}
-            tickLine={{ stroke: "white" }} axisLine={{ stroke: "white" }} />
-          <YAxis tick={<WhiteTickY />} tickLine={{ stroke: "white" }} axisLine={{ stroke: "white" }}
-            label={{ value: yLabel, angle: -90, position: "insideLeft", fill: "white", fontSize: 11 }} />
+          <XAxis dataKey="team" tick={<AxisTickX />} angle={-35} textAnchor="end" interval={0}
+            tickLine={AXIS_LINE} axisLine={AXIS_LINE} />
+          <YAxis tick={<AxisTickY />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
+            label={{ value: yLabel, angle: -90, position: "insideLeft", fill: "currentColor", fontSize: 11 }} />
           <Tooltip
             cursor={{ fill: "rgba(255,255,255,0.05)" }}
             content={({ active, payload }) => {
@@ -359,17 +364,17 @@ function ChartInner({ cfg, rows, teamRows, matchEpaRows, fields, axes }: {
           <CartesianGrid {...GRID_PROPS} />
           <XAxis
             type="number" dataKey="x" name={xLabel}
-            tick={<WhiteTickX />}
-            tickLine={{ stroke: "white" }}
-            axisLine={{ stroke: "white" }}
-            label={{ value: xLabel, position: "insideBottom", offset: -36, fill: "white", fontSize: 11 }}
+            tick={<AxisTickX />}
+            tickLine={AXIS_LINE}
+            axisLine={AXIS_LINE}
+            label={{ value: xLabel, position: "insideBottom", offset: -36, fill: "currentColor", fontSize: 11 }}
           />
           <YAxis
             type="number" dataKey="y" name={yLabel}
-            tick={<WhiteTickY />}
-            tickLine={{ stroke: "white" }}
-            axisLine={{ stroke: "white" }}
-            label={{ value: yLabel, angle: -90, position: "insideLeft", fill: "white", fontSize: 11 }}
+            tick={<AxisTickY />}
+            tickLine={AXIS_LINE}
+            axisLine={AXIS_LINE}
+            label={{ value: yLabel, angle: -90, position: "insideLeft", fill: "currentColor", fontSize: 11 }}
           />
           <Tooltip
             cursor={{ strokeDasharray: "3 3" }}
@@ -429,10 +434,10 @@ function ChartInner({ cfg, rows, teamRows, matchEpaRows, fields, axes }: {
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={data} margin={MARGIN}>
                 <CartesianGrid {...GRID_PROPS} />
-                <XAxis dataKey="x" tick={<WhiteTickX />} tickLine={{ stroke: "white" }} axisLine={{ stroke: "white" }}
-                  label={{ value: xLabel, position: "insideBottom", offset: -36, fill: "white", fontSize: 11 }} />
-                <YAxis tick={<WhiteTickY />} tickLine={{ stroke: "white" }} axisLine={{ stroke: "white" }}
-                  label={{ value: yLabel, angle: -90, position: "insideLeft", fill: "white", fontSize: 11 }} />
+                <XAxis dataKey="x" tick={<AxisTickX />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
+                  label={{ value: xLabel, position: "insideBottom", offset: -36, fill: "currentColor", fontSize: 11 }} />
+                <YAxis tick={<AxisTickY />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
+                  label={{ value: yLabel, angle: -90, position: "insideLeft", fill: "currentColor", fontSize: 11 }} />
                 <Tooltip content={({ active, payload, label: xVal }) => {
                   if (!active || !payload?.length) return null;
                   const entries = payload.filter((p) => p.value !== undefined && p.value !== null);
@@ -473,10 +478,10 @@ function ChartInner({ cfg, rows, teamRows, matchEpaRows, fields, axes }: {
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={data} margin={MARGIN}>
               <CartesianGrid {...GRID_PROPS} />
-              <XAxis dataKey="x" tick={<WhiteTickX />} tickLine={{ stroke: "white" }} axisLine={{ stroke: "white" }}
-                label={{ value: xLabel, position: "insideBottom", offset: -36, fill: "white", fontSize: 11 }} />
-              <YAxis tick={<WhiteTickY />} tickLine={{ stroke: "white" }} axisLine={{ stroke: "white" }}
-                label={{ value: yLabel, angle: -90, position: "insideLeft", fill: "white", fontSize: 11 }} />
+              <XAxis dataKey="x" tick={<AxisTickX />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
+                label={{ value: xLabel, position: "insideBottom", offset: -36, fill: "currentColor", fontSize: 11 }} />
+              <YAxis tick={<AxisTickY />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
+                label={{ value: yLabel, angle: -90, position: "insideLeft", fill: "currentColor", fontSize: 11 }} />
               <Tooltip
                 content={({ active, payload, label: xVal }) => {
                   if (!active || !payload?.length) return null;
@@ -522,10 +527,10 @@ function ChartInner({ cfg, rows, teamRows, matchEpaRows, fields, axes }: {
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={pts} margin={MARGIN}>
             <CartesianGrid {...GRID_PROPS} />
-            <XAxis dataKey="x" tick={<WhiteTickX />} tickLine={{ stroke: "white" }} axisLine={{ stroke: "white" }}
-              label={{ value: xLabel, position: "insideBottom", offset: -36, fill: "white", fontSize: 11 }} />
-            <YAxis tick={<WhiteTickY />} tickLine={{ stroke: "white" }} axisLine={{ stroke: "white" }}
-              label={{ value: yLabel, angle: -90, position: "insideLeft", fill: "white", fontSize: 11 }} />
+            <XAxis dataKey="x" tick={<AxisTickX />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
+              label={{ value: xLabel, position: "insideBottom", offset: -36, fill: "currentColor", fontSize: 11 }} />
+            <YAxis tick={<AxisTickY />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
+              label={{ value: yLabel, angle: -90, position: "insideLeft", fill: "currentColor", fontSize: 11 }} />
             <Tooltip
               content={({ active, payload }) => {
                 if (!active || !payload?.[0]) return null;
@@ -543,9 +548,9 @@ function ChartInner({ cfg, rows, teamRows, matchEpaRows, fields, axes }: {
               stroke="#6366f1" strokeWidth={2.5}
               dot={(props: { cx?: number; cy?: number; index?: number }) => (
                 <circle key={props.index} cx={props.cx ?? 0} cy={props.cy ?? 0} r={4}
-                  fill="#6366f1" stroke="white" strokeWidth={1} />
+                  fill="#6366f1" style={{ stroke: "var(--card)" }} strokeWidth={1} />
               )}
-              activeDot={{ r: 6, stroke: "white", strokeWidth: 1.5, fill: "#6366f1" }}
+              activeDot={{ r: 6, stroke: "#6366f1", strokeWidth: 1.5, fill: "#6366f1" }}
             />
           </LineChart>
         </ResponsiveContainer>
@@ -571,10 +576,10 @@ function ChartInner({ cfg, rows, teamRows, matchEpaRows, fields, axes }: {
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data} margin={MARGIN}>
           <CartesianGrid {...GRID_PROPS} />
-          <XAxis dataKey="x" tick={<WhiteTickX />} tickLine={{ stroke: "white" }} axisLine={{ stroke: "white" }}
-            label={{ value: xLabel, position: "insideBottom", offset: -36, fill: "white", fontSize: 11 }} />
-          <YAxis tick={<WhiteTickY />} tickLine={{ stroke: "white" }} axisLine={{ stroke: "white" }}
-            label={{ value: yLabel, angle: -90, position: "insideLeft", fill: "white", fontSize: 11 }} />
+          <XAxis dataKey="x" tick={<AxisTickX />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
+            label={{ value: xLabel, position: "insideBottom", offset: -36, fill: "currentColor", fontSize: 11 }} />
+          <YAxis tick={<AxisTickY />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
+            label={{ value: yLabel, angle: -90, position: "insideLeft", fill: "currentColor", fontSize: 11 }} />
           {/* No <Legend /> — team shown on hover */}
           <Tooltip
             content={({ active, payload, label: xVal }) => {
@@ -674,7 +679,7 @@ function ChartInner({ cfg, rows, teamRows, matchEpaRows, fields, axes }: {
           {/* Spoke labels — field names around the outside, white */}
           <PolarAngleAxis
             dataKey="field"
-            tick={{ fill: "white", fontSize: 11, fontWeight: 500 }}
+            tick={{ fill: "currentColor", fontSize: 11, fontWeight: 500 }}
             tickLine={{ stroke: "rgba(255,255,255,0.3)" }}
           />
 
@@ -683,7 +688,7 @@ function ChartInner({ cfg, rows, teamRows, matchEpaRows, fields, axes }: {
             angle={90}
             domain={[0, 100]}
             tickCount={5}
-            tick={{ fill: "white", fontSize: 9, opacity: 0.7 }}
+            tick={{ fill: "currentColor", fontSize: 9, opacity: 0.7 }}
             axisLine={{ stroke: "rgba(255,255,255,0.25)" }}
             tickLine={false}
             tickFormatter={(v: number) => `${v}%`}
@@ -692,7 +697,7 @@ function ChartInner({ cfg, rows, teamRows, matchEpaRows, fields, axes }: {
           <Tooltip content={<RadarTip />} />
           <Legend
             formatter={(v) => `Team #${v}`}
-            wrapperStyle={{ color: "white", fontSize: 11, paddingTop: 8 }}
+            wrapperStyle={{ color: "var(--foreground)", fontSize: 11, paddingTop: 8 }}
           />
 
           {radarTeamStrs.map((t, i) => (
@@ -756,12 +761,12 @@ function ChartInner({ cfg, rows, teamRows, matchEpaRows, fields, axes }: {
       <ResponsiveContainer width="100%" height="100%">
         <ReBarChart data={data} margin={{ top: 12, right: 16, left: 4, bottom: 56 }}>
           <CartesianGrid {...GRID_PROPS} />
-          <XAxis dataKey="bucket" tick={<WhiteTickX />} angle={-35} textAnchor="end" interval={0}
-            tickLine={{ stroke: "white" }} axisLine={{ stroke: "white" }}
-            label={{ value: yLabel, position: "insideBottom", offset: -44, fill: "white", fontSize: 11 }} />
-          <YAxis tick={<WhiteTickY />} tickLine={{ stroke: "white" }} axisLine={{ stroke: "white" }}
+          <XAxis dataKey="bucket" tick={<AxisTickX />} angle={-35} textAnchor="end" interval={0}
+            tickLine={AXIS_LINE} axisLine={AXIS_LINE}
+            label={{ value: yLabel, position: "insideBottom", offset: -44, fill: "currentColor", fontSize: 11 }} />
+          <YAxis tick={<AxisTickY />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
             allowDecimals={false}
-            label={{ value: "Count", angle: -90, position: "insideLeft", fill: "white", fontSize: 11 }} />
+            label={{ value: "Count", angle: -90, position: "insideLeft", fill: "currentColor", fontSize: 11 }} />
           <Tooltip
             content={({ active, payload, label: bktLabel }) => {
               if (!active || !payload?.length) return null;
@@ -781,7 +786,7 @@ function ChartInner({ cfg, rows, teamRows, matchEpaRows, fields, axes }: {
               );
             }}
           />
-          <Legend wrapperStyle={{ color: "white", fontSize: 11, paddingTop: 8 }} formatter={(v) => `#${v}`} />
+          <Legend wrapperStyle={{ color: "var(--foreground)", fontSize: 11, paddingTop: 8 }} formatter={(v) => `#${v}`} />
           {teamList.map((t, i) => (
             <Bar key={t} dataKey={t} name={t} stackId="hist" fill={histClr(i)} fillOpacity={0.9}
               radius={i === teamList.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]} />
@@ -925,7 +930,7 @@ function BoxPlotRenderer({
             <g key={v}>
               <line x1={marginLeft} y1={py} x2={svgW - marginRight} y2={py}
                 stroke="rgba(255,255,255,0.08)" strokeWidth={1} />
-              <text x={marginLeft - 6} y={py} fill="white" fontSize={10}
+              <text x={marginLeft - 6} y={py} fill="currentColor" fontSize={10}
                 textAnchor="end" dominantBaseline="middle">
                 {v}
               </text>
@@ -936,7 +941,7 @@ function BoxPlotRenderer({
         {/* Y axis label */}
         <text
           x={12} y={marginTop + plotH / 2}
-          fill="white" fontSize={11} textAnchor="middle"
+          fill="currentColor" fontSize={11} textAnchor="middle"
           transform={`rotate(-90, 12, ${marginTop + plotH / 2})`}
         >
           {yLabel}
@@ -972,11 +977,11 @@ function BoxPlotRenderer({
               <rect x={x1} y={pQ3} width={boxW} height={boxH}
                 fill={b.color} fillOpacity={0.2} stroke={b.color} strokeWidth={2} rx={3} />
               {/* Median line */}
-              <line x1={x1} y1={pMed} x2={x2} y2={pMed} stroke="white" strokeWidth={3} strokeLinecap="round" />
+              <line x1={x1} y1={pMed} x2={x2} y2={pMed} stroke="currentColor" strokeWidth={3} strokeLinecap="round" />
               {/* X label */}
               <text
                 x={cx} y={SVG_H - marginBottom + 14}
-                fill="white" fontSize={10} textAnchor="middle"
+                fill="currentColor" fontSize={10} textAnchor="middle"
                 transform={n > 5 ? `rotate(-35, ${cx}, ${SVG_H - marginBottom + 14})` : undefined}
               >
                 #{b.teamLabel}
@@ -1011,8 +1016,8 @@ function BoxPlotRenderer({
         >
           <div
             style={{
-              background: "hsl(var(--popover))",
-              border: "1px solid hsl(var(--border))",
+              background: "var(--popover)",
+              border: "1px solid var(--border)",
               borderRadius: 10,
               padding: "10px 14px",
               boxShadow: "0 8px 30px rgba(0,0,0,0.5)",
@@ -1029,7 +1034,7 @@ function BoxPlotRenderer({
               <span style={{ fontWeight: 700, fontSize: 13 }}>
                 Team #{tooltip.box.teamLabel}
               </span>
-              <span style={{ color: "hsl(var(--muted-foreground))", fontSize: 10, marginLeft: "auto" }}>
+              <span style={{ color: "var(--muted-foreground)", fontSize: 10, marginLeft: "auto" }}>
                 n={tooltip.box.s.n}
               </span>
             </div>
@@ -1050,7 +1055,7 @@ function BoxPlotRenderer({
                 paddingBottom: label === "Median" ? 4 : undefined,
               }}>
                 <span style={{
-                  color: label === "Median" ? "white" : "hsl(var(--muted-foreground))",
+                  color: label === "Median" ? "var(--foreground)" : "var(--muted-foreground)",
                   fontWeight: label === "Median" ? 700 : 400,
                 }}>
                   {label}
@@ -1058,7 +1063,7 @@ function BoxPlotRenderer({
                 <span style={{
                   fontFamily: "monospace",
                   fontWeight: label === "Median" ? 700 : 600,
-                  color: label === "Median" ? tooltip.box.color : "white",
+                  color: label === "Median" ? tooltip.box.color : "var(--foreground)",
                 }}>
                   {value.toFixed(2)}
                 </span>
@@ -1165,8 +1170,8 @@ function ChartCard({
         minHeight: 240,
         position: "relative",
         overflow: "hidden",
-        borderColor: isDragOver ? "hsl(var(--primary))" : "hsl(var(--border))",
-        boxShadow: isDragOver ? "inset 3px 0 0 hsl(var(--primary))" : undefined,
+        borderColor: isDragOver ? "var(--primary)" : "var(--border)",
+        boxShadow: isDragOver ? "inset 3px 0 0 var(--primary)" : undefined,
       }}
     >
       {/* Header — grip on the left activates drag */}
@@ -1206,8 +1211,10 @@ function ChartCard({
         </div>
       </div>
 
-      {/* Chart area — fills remaining space; minHeight guards against recharts -1 warning */}
-      <div className="flex-1 min-h-0 p-2" style={{ minHeight: 180 }}>
+      {/* Chart area — fills remaining space; minHeight guards against recharts -1 warning.
+          `color` here is what every `currentColor` in the chart chrome resolves against,
+          which is how axes and gridlines stay legible in both themes. */}
+      <div className="flex-1 min-h-0 p-2 text-foreground" style={{ minHeight: 180 }}>
         <div style={{ width: "100%", height: "100%", minHeight: 180 }}>
           <ChartInner cfg={cfg} rows={rows} teamRows={teamRows} matchEpaRows={matchEpaRows} fields={fields} axes={axes} />
         </div>
