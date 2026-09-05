@@ -95,13 +95,18 @@ describe("placeBet", () => {
   });
 });
 
+// Begging was nerfed to 1 coin on a 60s cooldown so that scouting, not
+// gambling or begging, is the way to earn. Kept as a constant so the intent of
+// these tests survives future rebalancing.
+const BEG_AMOUNT = 1;
+
 describe("beg", () => {
   test("cannot be looped to mint unlimited coins", async () => {
     const t = convexTest(schema, modules);
     const { as, bal } = await setup(t, 0);
 
     await as.mutation(api.betting.beg, { eventKey: EVENT });
-    expect(await bal()).toBe(10);
+    expect(await bal()).toBe(BEG_AMOUNT);
 
     // The 3s cooldown used to live only in the UI, so a scripted loop was free
     // money. Ten rapid calls should all be refused.
@@ -109,7 +114,7 @@ describe("beg", () => {
       await expect(as.mutation(api.betting.beg, { eventKey: EVENT }))
         .rejects.toThrow(/Slow down/i);
     }
-    expect(await bal()).toBe(10);
+    expect(await bal()).toBe(BEG_AMOUNT);
   });
 
   test("works again once the cooldown has elapsed", async () => {
@@ -123,11 +128,11 @@ describe("beg", () => {
         .query("userBalances")
         .withIndex("by_user_event", (q) => q.eq("userId", userId).eq("eventKey", EVENT))
         .first();
-      if (row) await ctx.db.patch(row._id, { lastBegAt: Date.now() - 10_000 });
+      if (row) await ctx.db.patch(row._id, { lastBegAt: Date.now() - 120_000 });
     });
 
     await as.mutation(api.betting.beg, { eventKey: EVENT });
-    expect(await bal()).toBe(20);
+    expect(await bal()).toBe(BEG_AMOUNT * 2);
   });
 });
 

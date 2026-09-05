@@ -1,10 +1,51 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import type { MutationCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { requireAdmin } from "./adminAuth";
 import { getBoostForUser } from "./retention";
 
 const STARTING_BALANCE = 1000;
+
+/** Coins paid for a submission whose template predates per-form rewards. */
+export const DEFAULT_SCOUT_REWARD = 50;
+
+/**
+ * Credit a scout for work done, creating their balance row if this is their
+ * first activity at the event. Winnings are tracked separately from gambling
+ * so the leaderboard can tell earned coins from lucky ones.
+ */
+export async function awardCoins(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  eventKey: string,
+  amount: number,
+): Promise<void> {
+  if (amount <= 0) return;
+  const bal = await ctx.db
+    .query("userBalances")
+    .withIndex("by_user_event", (q) => q.eq("userId", userId).eq("eventKey", eventKey))
+    .first();
+
+  if (!bal) {
+    await ctx.db.insert("userBalances", {
+      userId,
+      eventKey,
+      balance:   STARTING_BALANCE + amount,
+      totalWon:  0,
+      totalLost: 0,
+      totalBet:  0,
+      totalBegs: 0,
+      totalEarned: amount,
+    });
+    return;
+  }
+  await ctx.db.patch(bal._id, {
+    balance:     bal.balance + amount,
+    totalEarned: (bal.totalEarned ?? 0) + amount,
+  });
+}
 
 // ── Balance ───────────────────────────────────────────────────────────────────
 
@@ -53,7 +94,11 @@ export const getMyBalance = query({
  * 3-second cooldown enforced on the frontend. Pure desperation energy.
  */
 /** Cooldown between begs. Mirrored in the UI, but enforced here. */
-const BEG_COOLDOWN_MS = 3_000;
+// Begging is the fallback for a scout who is genuinely broke, not an income
+// stream. 1 coin on a 60s cooldown makes it a last resort rather than a way to
+// out-earn scouting.
+const BEG_COOLDOWN_MS = 60_000;
+const BEG_AMOUNT = 1;
 
 export const beg = mutation({
   args: { eventKey: v.string() },
@@ -72,14 +117,14 @@ export const beg = mutation({
       await ctx.db.insert("userBalances", {
         userId,
         eventKey,
-        balance:   STARTING_BALANCE + 10,
+        balance:   STARTING_BALANCE + BEG_AMOUNT,
         totalWon:  0,
         totalLost: 0,
         totalBet:  0,
         totalBegs: 1,
         lastBegAt: now,
       });
-      return { newBalance: STARTING_BALANCE + 10, totalBegs: 1 };
+      return { newBalance: STARTING_BALANCE + BEG_AMOUNT, totalBegs: 1 };
     }
 
     // The 3s cooldown used to live only in BettingPage, so it constrained the
@@ -91,11 +136,11 @@ export const beg = mutation({
     }
 
     await ctx.db.patch(bal._id, {
-      balance:   bal.balance + 10,
+      balance:   bal.balance + BEG_AMOUNT,
       totalBegs: (bal.totalBegs ?? 0) + 1,
       lastBegAt: now,
     });
-    return { newBalance: bal.balance + 10, totalBegs: (bal.totalBegs ?? 0) + 1 };
+    return { newBalance: bal.balance + BEG_AMOUNT, totalBegs: (bal.totalBegs ?? 0) + 1 };
   },
 });
 
@@ -586,8 +631,13 @@ export const getLeaderboard = query({
       })
     );
 
+    // Rank by coins held, not net profit: the headline number on the leaderboard
+    // is the balance, and a board sorted by a number it does not show reads as
+    // broken. Net profit breaks ties.
     return enriched.sort(
-      (a, b) => (b.totalWon - b.totalLost) - (a.totalWon - a.totalLost)
+      (a, b) =>
+        b.balance - a.balance ||
+        (b.totalWon - b.totalLost) - (a.totalWon - a.totalLost)
     );
   },
 });

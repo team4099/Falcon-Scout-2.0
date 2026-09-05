@@ -407,6 +407,8 @@ export default function MatchesPage() {
   const [rankByTeam,      setRankByTeam]      = useState<Record<number, number>>({});
   const [nowMs,           setNowMs]           = useState(Date.now());
   const [filterMine,      setFilterMine]      = useState(false);
+  // "played" / "upcoming" narrow the list by whether TBA has posted a result.
+  const [filterStatus,    setFilterStatus]    = useState<"all" | "played" | "upcoming">("all");
   const [selectedMatch,   setSelectedMatch]   = useState<TBAMatch | null>(null);
 
   // Simple total-EPA map for the list view
@@ -503,8 +505,12 @@ export default function MatchesPage() {
           m.alliances.blue.team_keys.includes(`frc${MY_TEAM}`)
       );
     }
+    if (filterStatus !== "all") {
+      const want = filterStatus === "played";
+      list = list.filter((m) => isPlayed(m) === want);
+    }
     return list;
-  }, [matches, filterMine]);
+  }, [matches, filterMine, filterStatus]);
 
   if (!eventKey) {
     return (
@@ -547,6 +553,26 @@ export default function MatchesPage() {
             <Shield className="h-3 w-3" />
             #{MY_TEAM} Only
           </button>
+          {/* Played / upcoming. Segmented so the active state is unambiguous. */}
+          <div className="flex items-center rounded-lg border border-border bg-muted/30 p-0.5 gap-0.5">
+            {([
+              { id: "all",      label: "All" },
+              { id: "upcoming", label: "Upcoming" },
+              { id: "played",   label: "Played" },
+            ] as const).map(({ id, label }) => (
+              <button
+                key={id}
+                onClick={() => setFilterStatus(id)}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${
+                  filterStatus === id
+                    ? "bg-background shadow text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <span className="text-xs text-muted-foreground ml-1">
             {sorted.length} match{sorted.length !== 1 ? "es" : ""}
           </span>
@@ -643,11 +669,22 @@ export default function MatchesPage() {
                       const allianceWon = played && m.winning_alliance === side;
                       const allianceTied = played && m.winning_alliance === "";
                       return (
-                        <div key={side} className="flex items-center gap-3">
+                        <div
+                          key={side}
+                          className={`flex items-center gap-3 rounded-lg -mx-1 px-1 py-0.5 transition-colors ${
+                            allianceWon
+                              ? side === "red"
+                                ? "bg-red-500/15 ring-1 ring-red-500/40"
+                                : "bg-blue-500/15 ring-1 ring-blue-500/40"
+                              : played && !allianceTied
+                              ? "opacity-55"
+                              : ""
+                          }`}
+                        >
                           <div
-                            className={`w-1 h-8 rounded-full shrink-0 ${
-                              side === "red" ? "bg-red-500" : "bg-blue-500"
-                            }`}
+                            className={`rounded-full shrink-0 transition-all ${
+                              allianceWon ? "w-1.5 h-8" : "w-1 h-8"
+                            } ${side === "red" ? "bg-red-500" : "bg-blue-500"}`}
                           />
                           <div className="flex-1 flex flex-wrap gap-2">
                             {m.alliances[side].team_keys.map((tk) => {
@@ -695,7 +732,11 @@ export default function MatchesPage() {
                           {played && (
                             <span
                               className={`text-xs font-bold ml-auto shrink-0 ${
-                                allianceWon ? "text-green-400" : allianceTied ? "text-yellow-400" : "text-muted-foreground/50"
+                                allianceWon
+                                  ? side === "red" ? "text-red-400" : "text-blue-400"
+                                  : allianceTied
+                                  ? "text-yellow-400"
+                                  : "text-muted-foreground/50"
                               }`}
                             >
                               {allianceWon ? "W" : allianceTied ? "T" : "L"}

@@ -33,6 +33,9 @@ export default defineSchema({
       section: v.optional(v.string()),
     })),
     isActive: v.boolean(),
+    // Coins paid to the scout for each accepted submission of this form.
+    // Optional: templates created before this field pay DEFAULT_SCOUT_REWARD.
+    coinReward: v.optional(v.number()),
   }),
 
   formSubmissions: defineTable({
@@ -260,6 +263,9 @@ export default defineSchema({
     totalLost:      v.number(),
     totalBet:       v.number(),
     totalBegs:      v.number(), // leaderboard of shame
+    // Coins earned by scouting (as opposed to won gambling). Optional because
+    // rows predate the payout; treat undefined as 0.
+    totalEarned:    v.optional(v.number()),
     lastBegAt:      v.optional(v.number()), // server-enforced beg cooldown
     totalPenalties: v.optional(v.number()), // coins lost for skipping markets
   })

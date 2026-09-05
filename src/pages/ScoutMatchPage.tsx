@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { useSearchParams } from "react-router";
 import { useQuery, useMutation } from "convex/react";
 import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
@@ -284,8 +285,20 @@ export default function ScoutMatchPage() {
   // Which form the scout picked (null = not yet chosen / only one)
   const [selectedTemplate, setSelectedTemplate] = useState<ActiveTemplate | null>(null);
 
-  const [matchNumber, setMatchNumber] = useState<number>(1);
-  const [matchPrefix, setMatchPrefix] = useState<"qm" | "elim">("qm");
+  // Deep-link prefill: /scout?match=39&prefix=qm&team=254 — used by the cards in
+  // My Schedule so tapping an assignment lands on a form that is already filled
+  // in. Read once on mount; after that the scout owns these fields.
+  const [searchParams] = useSearchParams();
+  // useState initialiser rather than a ref: this is read during render (and in
+  // an effect dependency), which a ref does not allow.
+  const [prefill] = useState(() => ({
+    match:  Number(searchParams.get("match")) || null,
+    prefix: searchParams.get("prefix") === "elim" ? ("elim" as const) : null,
+    team:   Number(searchParams.get("team")) || null,
+  }));
+
+  const [matchNumber, setMatchNumber] = useState<number>(prefill.match ?? 1);
+  const [matchPrefix, setMatchPrefix] = useState<"qm" | "elim">(prefill.prefix ?? "qm");
   const [formData, setFormData] = useState<FormData>({});
   const [submitting, setSubmitting] = useState(false);
 
@@ -326,10 +339,20 @@ export default function ScoutMatchPage() {
     }
   }, [activeTemplates]);
 
-  // Reset form data when template changes
+  // Reset form data when template changes. When the page was opened from a
+  // schedule assignment, seed the first teamNumber field instead of clearing to
+  // empty — the scout should land on a form that already knows who they have.
   useEffect(() => {
+    const tpl = selectedTemplate;
+    if (prefill.team && tpl) {
+      const tf = ((tpl.fields ?? []) as FormField[]).find((f) => f.type === "teamNumber");
+      if (tf) {
+        setFormData({ [tf.id]: prefill.team });
+        return;
+      }
+    }
     setFormData({});
-  }, [selectedTemplate?._id]);
+  }, [selectedTemplate, prefill.team]);
 
   const template = selectedTemplate;
   const fields: FormField[] = (template?.fields ?? []) as FormField[];
@@ -470,7 +493,12 @@ export default function ScoutMatchPage() {
           data: payload.data,
           offlineId,
         });
-        toast.success("Match scouted! ✅");
+        // Tell the scout what they earned — the payout is the point of the
+        // change, and a silent credit teaches nobody that scouting pays.
+        const reward = (template as { coinReward?: number } | null)?.coinReward ?? 50;
+        toast.success(
+          reward > 0 ? `Match scouted! +${reward} coins 🪙` : "Match scouted! ✅"
+        );
       }
       // Reset for next scout entry — bump match number, keep same form
       setFormData({});

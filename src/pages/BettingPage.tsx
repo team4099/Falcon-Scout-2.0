@@ -1614,7 +1614,7 @@ function MyBetsTab({ eventKey }: { eventKey: string }) {
     try {
       const result = await beg({ eventKey }) as { newBalance: number; totalBegs: number };
       setLastBegResult(result.newBalance);
-      toast("+10 coins. The humiliation is complete.", { duration: 2000 });
+      toast("+1 coin. The humiliation is complete.", { duration: 2000 });
       // Start 3-second cooldown
       setBegCooldown(3);
       const interval = setInterval(() => {
@@ -1674,11 +1674,11 @@ function MyBetsTab({ eventKey }: { eventKey: string }) {
             {begging ? "begging..." : begCooldown > 0 ? `wait ${begCooldown}s...` : "pls beg"}
             {lastBegResult !== null && (
               <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-amber-400 font-bold text-xs animate-bounce">
-                +10
+                +1
               </span>
             )}
           </Button>
-          <p className="text-[10px] text-muted-foreground/50 mt-1">grants +10 coins. 3s cooldown.</p>
+          <p className="text-[10px] text-muted-foreground/50 mt-1">grants +1 coin. 60s cooldown. Scout to actually earn.</p>
         </div>
       </div>
 
@@ -1843,11 +1843,12 @@ function LeaderboardTab({ eventKey }: { eventKey: string }) {
             </div>
 
             <div className="text-right shrink-0">
-              <p className={`font-mono font-bold text-lg ${netProfit >= 0 ? "text-amber-400" : "text-red-400"}`}>
-                {netProfit >= 0 ? "+" : ""}{formatCoins(netProfit)}
+              {/* Total coins is the headline; net profit is the footnote. */}
+              <p className="font-mono font-bold text-lg text-amber-400 flex items-center gap-1 justify-end">
+                {formatCoins(entry.balance)} <Coins className="h-4 w-4" />
               </p>
-              <p className="text-[10px] text-muted-foreground flex items-center gap-1 justify-end">
-                {formatCoins(entry.balance)} <Coins className="h-3 w-3" /> left
+              <p className={`text-[10px] flex items-center gap-1 justify-end ${netProfit >= 0 ? "text-muted-foreground" : "text-red-400/70"}`}>
+                {netProfit >= 0 ? "+" : ""}{formatCoins(netProfit)} net
               </p>
             </div>
           </div>
@@ -4853,10 +4854,12 @@ function MinesGame({
   );
 }
 
-type Tab = "markets" | "my-bets" | "leaderboard" | "slots" | "plinko" | "crossy" | "mines";
+type Tab = "markets" | "casino" | "my-bets" | "leaderboard";
+type CasinoGame = "slots" | "plinko" | "crossy" | "mines";
 
 export default function BettingPage() {
   const [activeTab, setActiveTab] = useState<Tab>("markets");
+  const [activeGame, setActiveGame] = useState<CasinoGame>("slots");
 
   const currentEventLive = useQuery(api.events.getCurrentEvent);
   const currentEvent = useCached(currentEventLive, "current_event");
@@ -4934,12 +4937,16 @@ export default function BettingPage() {
 
   const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
     { id: "markets",     label: "Markets",     icon: Swords },
-    { id: "slots",       label: "Slots",       icon: Dices },
-    { id: "plinko",      label: "Plinko",      icon: Circle },
-    { id: "crossy",      label: "Crossy",      icon: Bird },
-    { id: "mines",       label: "Mines",       icon: Bomb },
+    { id: "casino",      label: "Casino",      icon: Dices },
     { id: "my-bets",     label: "My Bets",     icon: Coins },
     { id: "leaderboard", label: "Leaderboard", icon: Trophy },
+  ];
+
+  const casinoGames: { id: CasinoGame; label: string; icon: React.ElementType }[] = [
+    { id: "slots",  label: "Slots",  icon: Dices },
+    { id: "plinko", label: "Plinko", icon: Circle },
+    { id: "crossy", label: "Crossy", icon: Bird },
+    { id: "mines",  label: "Mines",  icon: Bomb },
   ];
 
   return (
@@ -4988,17 +4995,31 @@ export default function BettingPage() {
       {activeTab === "markets" && (
         <MarketsTab eventKey={eventKey} myBalance={myBalance} isAdmin={isAdminMode} />
       )}
-      {activeTab === "slots" && (
-        <SlotMachine eventKey={eventKey} myBalance={myBalance} onBalanceOverride={setBalanceOverride} />
-      )}
-      {activeTab === "plinko" && (
-        <PlinkoGame eventKey={eventKey} myBalance={myBalance} onBalanceOverride={setBalanceOverride} />
-      )}
-      {activeTab === "crossy" && (
-        <CrossyRoadGame eventKey={eventKey} myBalance={myBalance} onBalanceOverride={setBalanceOverride} />
-      )}
-      {activeTab === "mines" && (
-        <MinesGame eventKey={eventKey} myBalance={myBalance} onBalanceOverride={setBalanceOverride} />
+      {activeTab === "casino" && (
+        <div className="space-y-4">
+          {/* Game picker — the four games used to be four top-level tabs, which
+              buried Markets and My Bets under a row of slot machines. */}
+          <div className="flex flex-wrap gap-2">
+            {casinoGames.map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                onClick={() => setActiveGame(id)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border ${
+                  activeGame === id
+                    ? "bg-card text-foreground border-border shadow-sm"
+                    : "bg-muted/40 text-muted-foreground border-transparent hover:text-foreground"
+                }`}
+              >
+                <Icon className="h-3.5 w-3.5 shrink-0" />
+                {label}
+              </button>
+            ))}
+          </div>
+          {activeGame === "slots"  && <SlotMachine     eventKey={eventKey} myBalance={myBalance} onBalanceOverride={setBalanceOverride} />}
+          {activeGame === "plinko" && <PlinkoGame      eventKey={eventKey} myBalance={myBalance} onBalanceOverride={setBalanceOverride} />}
+          {activeGame === "crossy" && <CrossyRoadGame  eventKey={eventKey} myBalance={myBalance} onBalanceOverride={setBalanceOverride} />}
+          {activeGame === "mines"  && <MinesGame       eventKey={eventKey} myBalance={myBalance} onBalanceOverride={setBalanceOverride} />}
+        </div>
       )}
       {activeTab === "my-bets" && <MyBetsTab eventKey={eventKey} />}
       {activeTab === "leaderboard" && <LeaderboardTab eventKey={eventKey} />}

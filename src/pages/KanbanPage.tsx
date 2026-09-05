@@ -1331,10 +1331,14 @@ function BoardView({
   }
 
   async function handleAddColumn() {
-    if (!newColName.trim()) return;
+    const title = newColName.trim();
+    if (!title) {
+      toast.error("Give the column a name first.");
+      return;
+    }
     const newCol: KanbanColumn = {
       id: crypto.randomUUID().slice(0, 8),
-      title: newColName.trim(),
+      title,
       color: "#EAB308",
     };
     // Insert before the unsorted column (always keep unsorted last)
@@ -1345,8 +1349,18 @@ function BoardView({
       newCol,
       ...columns.slice(insertBefore),
     ];
-    await updateColumns({ boardId, columns: next });
-    setNewColName("");
+    // updateColumns is admin-gated. Without this the mutation rejected silently
+    // and the column simply never appeared — the "add column doesn't work" report.
+    try {
+      await updateColumns({ boardId, columns: next });
+      setNewColName("");
+    } catch (err) {
+      toast.error(
+        err instanceof Error && /admin/i.test(err.message)
+          ? "Adding a column needs admin mode."
+          : "Couldn't add the column. Try again."
+      );
+    }
   }
 
   async function handleRemoveColumn(colId: string) {
@@ -1546,8 +1560,9 @@ function BoardView({
     <div className="flex flex-col gap-3 h-full">
       {/* Toolbar */}
       <div className="flex items-center gap-2 flex-wrap">
-        {/* Add column — hidden on mobile to save space */}
-        <div className="hidden sm:flex items-center gap-2">
+        {/* Add column — available on mobile too; it used to be hidden below sm,
+            which read as the feature being broken on a phone. */}
+        <div className="flex items-center gap-2">
           <Input
             className="w-36 h-8 text-sm"
             placeholder="Column name…"

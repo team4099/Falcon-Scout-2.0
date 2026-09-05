@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router";
 import { useQuery } from "convex/react";
 import { useMutation } from "convex/react";
 import { useCached } from "@/hooks/useCached";
@@ -97,12 +98,15 @@ function computeMyChecklistAssignments(
   const results: ChecklistAssignment[] = [];
 
   for (const matchNum of qualMatchNums) {
-    const lookback = Math.max(1, matchNum - 4);
     const pitScoutIds: string[] = [];
     const seen = new Set<string>();
     for (const rot of allPitRotations) {
       if (rot.isElims || rot.startMatch == null || rot.endMatch == null) continue;
-      if (lookback >= rot.startMatch && lookback <= rot.endMatch) {
+      // The match itself must fall inside the rotation window. This used to test
+      // `matchNum - 4`, which handed the checklist to whoever was on pit duty
+      // four matches earlier — someone rostered for 30-35 was getting checklists
+      // for matches 36-39, after their shift had ended.
+      if (matchNum >= rot.startMatch && matchNum <= rot.endMatch) {
         for (const sid of rot.scoutIds) {
           if (!seen.has(sid)) { seen.add(sid); pitScoutIds.push(sid); }
         }
@@ -151,14 +155,23 @@ function teamNumberForPosition(match: TBAMatch, position: Position): number | nu
 // ── Checklist card ────────────────────────────────────────────────────────────
 
 function ChecklistCard({ assignment }: { assignment: ChecklistAssignment }) {
+  const navigate = useNavigate();
+  function open() {
+    navigate(`/checklist?match=${assignment.matchNumber}&template=${assignment.templateId}`);
+  }
   return (
     <div
+      role="button"
+      tabIndex={0}
+      onClick={open}
+      onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } }}
+      title={`Open ${assignment.templateName} for match ${assignment.matchNumber}`}
       style={{
         display: "flex", alignItems: "center", gap: 12, padding: "11px 14px",
         borderRadius: 12,
         background: SURFACE,
         border: `1px solid ${SURF_BORD}`,
-        transition: "transform 0.1s ease", cursor: "default",
+        transition: "transform 0.1s ease", cursor: "pointer",
       }}
       onMouseEnter={e => (e.currentTarget.style.transform = "translateX(3px)")}
       onMouseLeave={e => (e.currentTarget.style.transform = "none")}
@@ -349,6 +362,7 @@ function localDateKey(ts: number): string {
 // ── Scouting match card ───────────────────────────────────────────────────────
 
 function ScoutingCard({ assignment, match }: { assignment: MatchAssignment; match: TBAMatch | null }) {
+  const navigate = useNavigate();
   const time = match ? formatTime(match) : null;
   const isRed = assignment.position.startsWith("red");
   const allianceColor = isRed ? "oklch(0.62 0.22 25)" : "oklch(0.55 0.22 255)";
@@ -356,12 +370,26 @@ function ScoutingCard({ assignment, match }: { assignment: MatchAssignment; matc
   const allianceBord  = isRed ? "oklch(0.62 0.22 25 / 35%)" : "oklch(0.55 0.22 255 / 35%)";
   const teamNumber = match ? teamNumberForPosition(match, assignment.position) : null;
 
+  // Tapping the card opens the scouting form with match, comp level and team
+  // already filled in — the whole point of the tab is to remove that typing.
+  const prefix = match && match.comp_level !== "qm" ? "elim" : "qm";
+  function open() {
+    const q = new URLSearchParams({ match: String(assignment.matchNumber), prefix });
+    if (teamNumber) q.set("team", String(teamNumber));
+    navigate(`/scout?${q.toString()}`);
+  }
+
   return (
     <div
+      role="button"
+      tabIndex={0}
+      onClick={open}
+      onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } }}
+      title={`Scout ${assignment.matchLabel}${teamNumber ? ` · team ${teamNumber}` : ""}`}
       style={{
         display: "flex", alignItems: "center", gap: 12, padding: "11px 14px",
         borderRadius: 12, background: SURFACE, border: `1px solid ${SURF_BORD}`,
-        transition: "transform 0.1s ease", cursor: "default",
+        transition: "transform 0.1s ease", cursor: "pointer",
       }}
       onMouseEnter={e => (e.currentTarget.style.transform = "translateX(3px)")}
       onMouseLeave={e => (e.currentTarget.style.transform = "none")}

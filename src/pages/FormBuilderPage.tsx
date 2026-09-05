@@ -624,6 +624,8 @@ function FormBuilderContent() {
   const [name, setName] = useState("New Scouting Form");
   const [description, setDescription] = useState("");
   const [formType, setFormType] = useState<FormType>("default");
+  // Coins paid per accepted submission of this form.
+  const [coinReward, setCoinReward] = useState<number>(50);
   const [fields, setFields] = useState<FormField[]>([]);
   const [sectionNames, setSectionNames] = useState<string[]>(["General"]);
   const [saving, setSaving] = useState(false);
@@ -643,6 +645,7 @@ function FormBuilderContent() {
     setName(t.name);
     setDescription(t.description ?? "");
     setFormType((t.formType as FormType) ?? "default");
+    setCoinReward((t as { coinReward?: number }).coinReward ?? 50);
     // Strip the auto team field from stored fields — it's always shown as pinned
     const userFields = (t.fields as FormField[]).filter((f) => f.id !== AUTO_TEAM_FIELD.id);
     setFields(userFields);
@@ -697,6 +700,7 @@ function FormBuilderContent() {
           name: safeName, description: description || undefined,
           formType,
           fields: savedFields,
+          coinReward,
         });
         toast.success("Form saved!");
       } else {
@@ -706,6 +710,7 @@ function FormBuilderContent() {
           name: safeName, description: description || undefined,
           formType,
           fields: savedFields,
+          coinReward,
           isActive: false,
         });
         setSelectedId(newId as string);
@@ -1100,6 +1105,19 @@ function FormBuilderContent() {
                 <div className="space-y-1.5">
                   <Label>Form Name</Label>
                   <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. 2025 Regional Scouting Form" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Coins per submission</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={coinReward}
+                    onChange={(e) => setCoinReward(Math.max(0, Number(e.target.value) || 0))}
+                    placeholder="50"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Paid to the scout each time this form is submitted. Set 0 to pay nothing.
+                  </p>
                 </div>
                 <div className="space-y-1.5">
                   <Label>Description (optional)</Label>

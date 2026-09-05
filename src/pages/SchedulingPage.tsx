@@ -82,6 +82,9 @@ const SURFACE   = "oklch(1 0 0 / 3%)";       // card surface
 const SURF_BORD = "oklch(1 0 0 / 8%)";       // card border
 const SURF_HVR  = "oklch(1 0 0 / 6%)";       // hover surface
 const MUTED     = "var(--muted-foreground)";
+
+/** Scouts rotate in blocks of this many matches. */
+const SCOUT_CYCLE = 5;
 const FG        = "var(--foreground)";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -512,16 +515,37 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, saving, isMobile
       {/* Rows */}
       <ScrollArea style={{ flex: 1 }}>
         <div style={{ padding: rowPad, display: "flex", flexDirection: "column", gap: isLandscapePhone ? 1 : 2 }}>
-          {matches.map(m => {
+          {matches.map((m, mi) => {
             const lbl = tbaMatchLabel(m);
             const row = assignMap[m.match_number] ?? {};
             const isQual = m.comp_level === "qm";
             const isExpanded = canExpand && expandedMatchKey === m.key;
             const redPositions: Position[]  = ["red1",  "red2",  "red3"];
             const bluePositions: Position[] = ["blue1", "blue2", "blue3"];
+            // Scouts rotate every 5 matches, so mark the boundary. Assigning a
+            // block is much easier to eyeball when the cycles are visible.
+            const cycleBreak = mi > 0 && mi % SCOUT_CYCLE === 0;
 
             return (
               <Fragment key={m.key}>
+                {cycleBreak && (
+                  <div
+                    aria-hidden
+                    style={{
+                      display: "flex", alignItems: "center", gap: 8,
+                      margin: "5px 0 3px", userSelect: "none",
+                    }}
+                  >
+                    <div style={{ flex: 1, height: 2, borderRadius: 2, background: G_MED }} />
+                    <span style={{
+                      fontSize: 9, fontWeight: 800, letterSpacing: "0.08em",
+                      textTransform: "uppercase", color: MUTED, whiteSpace: "nowrap",
+                    }}>
+                      Cycle {Math.floor(mi / SCOUT_CYCLE) + 1}
+                    </span>
+                    <div style={{ flex: 1, height: 2, borderRadius: 2, background: G_MED }} />
+                  </div>
+                )}
                 {/* Grid row */}
                 <div style={{
                   display: "grid", gridTemplateColumns: COL,

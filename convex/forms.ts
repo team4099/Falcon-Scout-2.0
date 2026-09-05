@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireAdmin, requireUser } from "./adminAuth";
+import { awardCoins, DEFAULT_SCOUT_REWARD } from "./betting";
 
 // Shared field-type validator (keep in sync with schema.ts)
 const fieldTypeValidator = v.union(
@@ -76,6 +77,7 @@ export const createTemplate = mutation({
     description: v.optional(v.string()),
     formType: formTypeValidator,
     fields: v.array(fieldValidator),
+    coinReward: v.optional(v.number()),
     isActive: v.boolean(),
     adminKey: v.optional(v.string()),
   },
@@ -92,6 +94,7 @@ export const updateTemplate = mutation({
     description: v.optional(v.string()),
     formType: formTypeValidator,
     fields: v.optional(v.array(fieldValidator)),
+    coinReward: v.optional(v.number()),
     isActive: v.optional(v.boolean()),
     adminKey: v.optional(v.string()),
   },
@@ -184,7 +187,7 @@ export const submitForm = mutation({
       }
     }
 
-    return await ctx.db.insert("formSubmissions", {
+    const submissionId = await ctx.db.insert("formSubmissions", {
       templateId: args.templateId,
       eventKey: args.eventKey,
       matchNumber: args.matchNumber,
@@ -195,6 +198,21 @@ export const submitForm = mutation({
       syncedAt: Date.now(),
       offlineId: args.offlineId,
     });
+
+    // ── Scouting payout ───────────────────────────────────────────────────
+    // Scouting is meant to be the primary way to earn coins, so every accepted
+    // submission pays out. This runs after the insert and the idempotency check
+    // above, so a replayed offline submission returns early and cannot be
+    // farmed for repeat payouts.
+    if (userId) {
+      const template = await ctx.db.get(args.templateId);
+      const reward = template?.coinReward ?? DEFAULT_SCOUT_REWARD;
+      if (reward > 0) {
+        await awardCoins(ctx, userId, args.eventKey, reward);
+      }
+    }
+
+    return submissionId;
   },
 });
 

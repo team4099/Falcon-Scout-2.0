@@ -25,7 +25,7 @@ import {
   fetchNexusTeamStatus,
 } from "@/lib/api";
 import type { TBAMatch, NexusTeamStatus } from "@/lib/api";
-import { ExternalLink, Search, FileText, TrendingUp, TrendingDown, ClipboardList, Trash2, AlertTriangle, ChevronDown, ChevronUp, Clock, SlidersHorizontal, KeyRound, CalendarCheck, Radio, Users2, DollarSign, ArrowRight } from "lucide-react";
+import { ExternalLink, Search, FileText, TrendingUp, TrendingDown, ClipboardList, Trash2, AlertTriangle, ChevronDown, ChevronUp, Clock, SlidersHorizontal, KeyRound, CalendarCheck, Radio, Users2, DollarSign, ArrowRight, Trophy, CalendarDays } from "lucide-react";
 import { getTBAKey } from "@/lib/api";
 import TeamDetailPanel from "@/pages/TeamDetailPanel";
 import { useMutation } from "convex/react";
@@ -555,7 +555,7 @@ function TeamRow({
 
   // Build the ordered stat chips data (shared between mobile + desktop)
   const allStats: { label: string; value: string; color: "default" | "primary" | "success" | "muted" }[] = [
-    { label: "Reports", value: String(submissions.length), color: submissions.length > 0 ? "default" : "muted" },
+    { label: "Rank", value: rank !== null ? `#${rank}` : "—", color: rank !== null ? "default" : "muted" },
     { label: "Avg Score", value: avgScore !== null ? Number(avgScore.toFixed(0)).toString() : "—", color: avgScore !== null ? "default" : "muted" },
     { label: "Event EPA", value: epa.event !== null ? String(epa.event) : "—", color: epa.event !== null ? "primary" : "muted" },
     { label: "Season EPA", value: epa.overall !== null ? String(epa.overall) : "—", color: epa.overall !== null ? "primary" : "muted" },
@@ -755,18 +755,50 @@ function StatChip({
 
 // ── Column header row ───────────────────────────────────────────────────────────────────
 
-function ColumnHeader({ fields, visibleColumns }: { fields: FormField[]; visibleColumns: Set<string> }) {
+function ColumnHeader({
+  fields, visibleColumns, sortKey, sortDir, onSort,
+}: {
+  fields: FormField[];
+  visibleColumns: Set<string>;
+  sortKey: string | null;
+  sortDir: "asc" | "desc";
+  onSort: (key: string) => void;
+}) {
   const numericFields = fields.filter((f) => (f.type === "number" || f.type === "counter" || f.type === "rating") && visibleColumns.has(f.id));
   const checkboxFields = fields.filter((f) => f.type === "checkbox" && visibleColumns.has(f.id));
   const selectFields = fields.filter((f) => f.type === "select" && visibleColumns.has(f.id));
 
+  // A header cell that sorts. The caret only renders on the active column, so
+  // the header stays quiet until you actually sort by something.
+  const Th = ({ id, label, title, className = "" }: {
+    id: string; label: string; title?: string; className?: string;
+  }) => {
+    const active = sortKey === id;
+    return (
+      <button
+        type="button"
+        onClick={() => onSort(id)}
+        title={title ?? `Sort by ${label}`}
+        aria-sort={active ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+        className={`flex items-center gap-0.5 text-left uppercase tracking-wider font-semibold transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-sm ${
+          active ? "text-foreground" : ""
+        } ${className}`}
+      >
+        <span className="truncate">{label}</span>
+        {active && <span aria-hidden className="shrink-0">{sortDir === "asc" ? "▲" : "▼"}</span>}
+      </button>
+    );
+  };
+
   return (
     <div className="flex items-center gap-3 px-4 py-2 bg-muted/40 border-b border-border text-[10px] font-semibold text-muted-foreground uppercase tracking-wider sticky top-0">
-      <div className="w-32 shrink-0">Team</div>
+      <div className="w-32 shrink-0">
+        <Th id="team" label="Team" />
+      </div>
       <div className="flex-1 grid gap-x-4"
         style={{
           gridTemplateColumns: [
-            "56px",   // Matches
+            "56px",   // Rank
             "64px",   // Avg Score
             "64px",   // Event EPA
             "64px",   // Season EPA
@@ -779,21 +811,21 @@ function ColumnHeader({ fields, visibleColumns }: { fields: FormField[]; visible
           ].join(" "),
         }}
       >
-        <span>Reports</span>
-        <span>Avg Score</span>
-        <span>Event EPA</span>
-        <span>Season EPA</span>
-        <span>Auto</span>
-        <span>Teleop</span>
-        <span>Endgame</span>
+        <Th id="rank"       label="Rank" title="Sort by event ranking" />
+        <Th id="avgScore"   label="Avg Score" />
+        <Th id="epaEvent"   label="Event EPA" />
+        <Th id="epaOverall" label="Season EPA" />
+        <Th id="epaAuto"    label="Auto" />
+        <Th id="epaTeleop"  label="Teleop" />
+        <Th id="epaEndgame" label="Endgame" />
         {numericFields.map((f) => (
-          <span key={f.id} className="truncate" title={`avg ${f.label}`}>⏀ {f.label}</span>
+          <Th key={f.id} id={`field:${f.id}`} label={`⏀ ${f.label}`} title={`Sort by avg ${f.label}`} />
         ))}
         {checkboxFields.map((f) => (
-          <span key={f.id} className="truncate" title={`% ${f.label}`}>% {f.label}</span>
+          <Th key={f.id} id={`field:${f.id}`} label={`% ${f.label}`} title={`Sort by % ${f.label}`} />
         ))}
         {selectFields.map((f) => (
-          <span key={f.id} className="truncate" title={f.label}>↑ {f.label}</span>
+          <Th key={f.id} id={`field:${f.id}`} label={`↑ ${f.label}`} title={`Sort by ${f.label}`} />
         ))}
       </div>
       <div className="w-14 text-right">Links</div>
@@ -1682,6 +1714,25 @@ export default function DashboardPage() {
   // Load once when eventKey is available. Save happens inside user actions (never on mount)
   // so there is no race where the initial empty state overwrites saved prefs.
   const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
+  // Active sort column, or null for the natural (team-number) order.
+  const [sortKey, setSortKey] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  // First click on a column sorts it descending (highest EPA, best rank first,
+  // which is what you almost always want); clicking the active column flips it;
+  // a third click clears back to team order.
+  function toggleSort(key: string) {
+    if (sortKey !== key) {
+      setSortKey(key);
+      setSortDir(key === "rank" || key === "team" ? "asc" : "desc");
+      return;
+    }
+    if (sortDir === (key === "rank" || key === "team" ? "asc" : "desc")) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+      return;
+    }
+    setSortKey(null);
+  }
 
   useEffect(() => {
     if (!eventKey) return;
@@ -1937,6 +1988,53 @@ export default function DashboardPage() {
     search ? String(t).includes(search) : true
   );
 
+  // Sorting. Built-in keys are resolved here; `field:<id>` keys defer to the
+  // same aggregate the row renders, so the column and its sort never disagree.
+  const sorted = useMemo(() => {
+    if (!sortKey) return filtered;
+
+    const rank = (tn: number) => {
+      const r = tbaRankings[tn] as { rank?: number } | undefined;
+      return r?.rank ?? null;
+    };
+    const parsedFor = (tn: number) => parseSubmissions(submissionsByTeam[tn] ?? []);
+
+    const value = (tn: number): number | string | null => {
+      if (sortKey === "team")       return tn;
+      if (sortKey === "rank")       return rank(tn);
+      if (sortKey === "avgScore")   return avgScoreByTeam[tn] ?? null;
+      if (sortKey === "epaEvent")   return epaMap[tn]?.event ?? null;
+      if (sortKey === "epaOverall") return epaMap[tn]?.overall ?? null;
+      if (sortKey === "epaAuto")    return epaMap[tn]?.auto ?? null;
+      if (sortKey === "epaTeleop")  return epaMap[tn]?.teleop ?? null;
+      if (sortKey === "epaEndgame") return epaMap[tn]?.endgame ?? null;
+
+      const fieldId = sortKey.startsWith("field:") ? sortKey.slice(6) : null;
+      if (!fieldId) return null;
+      const f = fields.find((x) => x.id === fieldId);
+      if (!f) return null;
+      const parsed = parsedFor(tn);
+      if (f.type === "checkbox") return pctChecked(parsed, fieldId);
+      if (f.type === "select")   return mostCommon(parsed, fieldId);
+      return avgNumeric(parsed, fieldId);
+    };
+
+    // Teams with no value for the active column sort to the bottom in BOTH
+    // directions — a missing EPA is not "the worst EPA", it is unknown, and
+    // flipping to ascending should not fill the top of the table with dashes.
+    return [...filtered].sort((a, b) => {
+      const va = value(a as number);
+      const vb = value(b as number);
+      if (va === null && vb === null) return (a as number) - (b as number);
+      if (va === null) return 1;
+      if (vb === null) return -1;
+      const cmp = typeof va === "string" || typeof vb === "string"
+        ? String(va).localeCompare(String(vb))
+        : (va as number) - (vb as number);
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+  }, [filtered, sortKey, sortDir, tbaRankings, avgScoreByTeam, epaMap, submissionsByTeam, fields]);
+
   const totalScouted = (allSubmissions ?? []).length;
   const scoutedUniqueTeams = scoutedTeams.size;
 
@@ -1949,6 +2047,29 @@ export default function DashboardPage() {
           <p className="text-muted-foreground text-sm">
             {currentEvent?.eventName ?? "No event selected"} · All team data
           </p>
+          {/* Straight to the source — the numbers here are derived, TBA is authoritative. */}
+          {eventKey && (
+            <div className="flex items-center gap-3 mt-1.5">
+              <a
+                href={`https://www.thebluealliance.com/event/${eventKey}#rankings`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors"
+              >
+                <Trophy className="h-3 w-3" /> TBA Rankings
+                <ExternalLink className="h-2.5 w-2.5" />
+              </a>
+              <a
+                href={`https://www.thebluealliance.com/event/${eventKey}#results`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors"
+              >
+                <CalendarDays className="h-3 w-3" /> TBA Schedule
+                <ExternalLink className="h-2.5 w-2.5" />
+              </a>
+            </div>
+          )}
         </div>
         <div className="flex gap-4 sm:gap-6">
           <div className="text-center">
@@ -2092,7 +2213,7 @@ export default function DashboardPage() {
             {/* Column header — desktop only (mobile uses card layout) */}
             <div className="hidden sm:block overflow-x-auto shrink-0">
               <div className="min-w-[540px]">
-                <ColumnHeader fields={fields} visibleColumns={visibleColumns} />
+                <ColumnHeader fields={fields} visibleColumns={visibleColumns} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               </div>
             </div>
 
@@ -2124,7 +2245,7 @@ export default function DashboardPage() {
                     {search ? "No teams match your search." : "No teams found for this event."}
                   </p>
                 ) : (
-                  filtered.map((teamNumber) => {
+                  sorted.map((teamNumber) => {
                     const teamEpa = epaMap[teamNumber as number] ?? {
                       event: null, overall: null, auto: null, teleop: null, endgame: null,
                     };
@@ -2172,7 +2293,7 @@ export default function DashboardPage() {
                     {search ? "No teams match your search." : "No teams found for this event."}
                   </p>
                 ) : (
-                  filtered.map((teamNumber) => {
+                  sorted.map((teamNumber) => {
                     const teamEpa = epaMap[teamNumber as number] ?? {
                       event: null, overall: null, auto: null, teleop: null, endgame: null,
                     };

@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { useSearchParams } from "react-router";
 import { useQuery, useMutation } from "convex/react";
 import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
@@ -125,14 +126,14 @@ function computeAssignments(
   const assignments: ChecklistAssignment[] = [];
 
   for (const matchNum of upcomingMatches) {
-    const lookbackMatch = Math.max(1, matchNum - 4);
-
     const pitScoutIds: string[] = [];
     const seen = new Set<string>();
     for (const rot of pitRotations) {
       if (rot.isElims) continue;
       if (rot.startMatch == null || rot.endMatch == null) continue;
-      if (lookbackMatch >= rot.startMatch && lookbackMatch <= rot.endMatch) {
+      // Must match MySchedulePage's rule exactly, or the two tabs disagree about
+      // who owns a checklist. See the note there.
+      if (matchNum >= rot.startMatch && matchNum <= rot.endMatch) {
         for (const sid of rot.scoutIds) {
           if (!seen.has(sid)) { seen.add(sid); pitScoutIds.push(sid); }
         }
@@ -716,6 +717,23 @@ export default function ChecklistPage() {
 
   // Dialog state
   const [activeAssignment, setActiveAssignment] = useState<ChecklistAssignment | null>(null);
+
+  // Deep link from My Schedule: /checklist?match=39&template=<id> opens straight
+  // into that checklist. Fires once, after assignments resolve — before that the
+  // list is empty and there is nothing to match against.
+  const [searchParams] = useSearchParams();
+  const deepLinkDone = useRef(false);
+  useEffect(() => {
+    if (deepLinkDone.current || assignments.length === 0) return;
+    const wantMatch = Number(searchParams.get("match"));
+    const wantTemplate = searchParams.get("template");
+    if (!wantMatch || !wantTemplate) return;
+    const hit = assignments.find(
+      (a) => a.matchNumber === wantMatch && String(a.templateId) === wantTemplate
+    );
+    deepLinkDone.current = true;
+    if (hit) setActiveAssignment(hit);
+  }, [assignments, searchParams]);
   const [viewingQR, setViewingQR] = useState<LocalSubmission | null>(null);
   // Track recently-submitted QR subs keyed by "matchNum-templateId" → { sub, completedByName }
   const [localSubs, setLocalSubs] = useState<Map<string, { sub: LocalSubmission; completedByName: string }>>(new Map());
