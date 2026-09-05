@@ -57,7 +57,8 @@ describe("requireAdmin", () => {
       eventName: "Chesapeake",
       adminKey: DEFAULT_HASH,
     });
-    const ev = await t.query(api.events.getCurrentEvent, {});
+    // Read back as the scout: getCurrentEvent is gated to signed-in callers.
+    const ev = await t.withIdentity(scout).query(api.events.getCurrentEvent, {});
     expect(ev?.eventKey).toBe("2025chcmp");
   });
 
@@ -69,7 +70,7 @@ describe("requireAdmin", () => {
       eventName: "Bethesda",
       adminKey: DEFAULT_HASH.toUpperCase(),
     });
-    expect((await t.query(api.events.getCurrentEvent, {}))?.eventKey).toBe("2025mdber");
+    expect((await t.withIdentity(scout).query(api.events.getCurrentEvent, {}))?.eventKey).toBe("2025mdber");
 
     // a prefix of the real hash is not
     await expect(
@@ -139,7 +140,7 @@ describe("changing the admin password", () => {
     await t.withIdentity(scout).mutation(api.events.setCurrentEvent, {
       eventKey: "2025new", eventName: "New", adminKey: NEW,
     });
-    expect((await t.query(api.events.getCurrentEvent, {}))?.eventKey).toBe("2025new");
+    expect((await t.withIdentity(scout).query(api.events.getCurrentEvent, {}))?.eventKey).toBe("2025new");
 
     await expect(
       t.withIdentity(scout).mutation(api.events.setCurrentEvent, {

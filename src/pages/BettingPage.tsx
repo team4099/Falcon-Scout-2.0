@@ -3364,6 +3364,7 @@ function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: 
     return () => { onBalanceOverride(null); };
   }, [onBalanceOverride]);
 
+  const crossyStart = useMutation(api.betting.crossyStart);
   const crossyStep = useMutation(api.betting.crossyStep);
   const crossyCashOut = useMutation(api.betting.crossyCashOut);
 
@@ -3380,25 +3381,34 @@ function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: 
     return newRows;
   }, [config.tilesPerRow]);
 
-  const startGame = useCallback(() => {
+  // The round is opened on the server, which deducts the stake and owns the
+  // board from here on. The client no longer tells it the row or multiplier.
+  const startGame = useCallback(async () => {
+    if (isProcessing) return;
     if (displayBalance < betAmount) {
       toast.error("Insufficient balance!");
       return;
     }
-    setGameState("playing");
-    setCurrentRow(0);
-    setCurrentMultiplier(1);
-    setRows(initRows());
-    setLastPayout(0);
-    setShowCoinShower(false);
-    setShakeBoard(false);
+    setIsProcessing(true);
+    try {
+      const { newBalance } = await crossyStart({ eventKey, betAmount, difficulty });
+      setGameState("playing");
+      setCurrentRow(0);
+      setCurrentMultiplier(1);
+      setRows(initRows());
+      setLastPayout(0);
+      setShowCoinShower(false);
+      setShakeBoard(false);
 
-    // Optimistically deduct bet from display
-    isAnimatingRef.current = true;
-    const newBal = displayBalance - betAmount;
-    setDisplayBalance(newBal);
-    onBalanceOverride(newBal);
-  }, [displayBalance, betAmount, initRows, onBalanceOverride]);
+      isAnimatingRef.current = true;
+      setDisplayBalance(newBalance);
+      onBalanceOverride(newBalance);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Couldn't start the round");
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [isProcessing, displayBalance, betAmount, crossyStart, eventKey, difficulty, initRows, onBalanceOverride]);
 
   const handleTileClick = useCallback(async (tileIndex: number) => {
     if (gameState !== "playing" || isProcessing) return;
@@ -3407,13 +3417,7 @@ function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: 
     setIsProcessing(true);
 
     try {
-      const result = await crossyStep({
-        eventKey,
-        betAmount,
-        difficulty,
-        tileIndex,
-        currentRow,
-      });
+      const result = await crossyStep({ eventKey, tileIndex });
 
       // Update row with results
       setRows(prev => {
@@ -3446,11 +3450,7 @@ function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: 
 
         if (result.gameOver) {
           // Completed all rows — auto cash out
-          const cashResult = await crossyCashOut({
-            eventKey,
-            betAmount,
-            multiplier: result.multiplier,
-          });
+          const cashResult = await crossyCashOut({ eventKey });
           setGameState("won");
           setLastPayout(cashResult.payout);
           setShowCoinShower(true);
@@ -3489,18 +3489,14 @@ function CrossyRoadGame({ eventKey, myBalance, onBalanceOverride }: { eventKey: 
     } finally {
       setIsProcessing(false);
     }
-  }, [gameState, isProcessing, config.tilesPerRow, crossyStep, eventKey, betAmount, difficulty, currentRow, crossyCashOut, onBalanceOverride, bestMultiplier]);
+  }, [gameState, isProcessing, config.tilesPerRow, crossyStep, eventKey, betAmount, currentRow, crossyCashOut, onBalanceOverride, bestMultiplier]);
 
   const handleCashOut = useCallback(async () => {
     if (gameState !== "playing" || isProcessing || currentRow === 0) return;
 
     setIsProcessing(true);
     try {
-      const result = await crossyCashOut({
-        eventKey,
-        betAmount,
-        multiplier: currentMultiplier,
-      });
+      const result = await crossyCashOut({ eventKey });
 
       setGameState("won");
       setLastPayout(result.payout);
@@ -4033,6 +4029,8 @@ function getMinesMultiplier(mineCount: number, gemsRevealed: number): number {
   if (gemsRevealed === 0) return 1;
   const HOUSE_EDGE = 0.97;
   const safeTotal = 25 - mineCount;
+  // Past the last safe tile the denominator is 0 and this reads "Infinityx".
+  if (gemsRevealed > safeTotal) return 1;
   return parseFloat(
     (
       HOUSE_EDGE *
@@ -4064,7 +4062,6 @@ function MinesGame({
   const [lastPayout, setLastPayout] = useState(0);
   const [showCoinShower, setShowCoinShower] = useState(false);
   const [shakeBoard, setShakeBoard] = useState(false);
-  const [gameSeed, setGameSeed] = useState("");
 
   // Session stats
   const [sessionRounds, setSessionRounds] = useState(0);
@@ -4088,37 +4085,42 @@ function MinesGame({
     };
   }, [onBalanceOverride]);
 
+  const minesStart = useMutation(api.betting.minesStart);
   const minesReveal = useMutation(api.betting.minesReveal);
   const minesCashOutMut = useMutation(api.betting.minesCashOut);
 
   const nextMultiplier = getMinesMultiplier(mineCount, gemsRevealed + 1);
 
-  const generateGameSeed = useCallback(() => {
-    return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  }, []);
-
-  const startGame = useCallback(() => {
+  // The server deals the board and deducts the stake. Mine positions used to be
+  // derived from a seed generated here, which meant losing a round revealed the
+  // layout and replaying the same seed walked the safe path every time.
+  const startGame = useCallback(async () => {
+    if (isProcessing) return;
     if (displayBalance < betAmount) {
       toast.error("Insufficient balance!");
       return;
     }
-    const seed = generateGameSeed();
-    setGameSeed(seed);
-    setGameState("playing");
-    setTiles(Array(25).fill("hidden"));
-    setMinePositions([]);
-    setGemsRevealed(0);
-    setCurrentMultiplier(1);
-    setLastPayout(0);
-    setShowCoinShower(false);
-    setShakeBoard(false);
+    setIsProcessing(true);
+    try {
+      const { newBalance } = await minesStart({ eventKey, betAmount, mineCount });
+      setGameState("playing");
+      setTiles(Array(25).fill("hidden"));
+      setMinePositions([]);
+      setGemsRevealed(0);
+      setCurrentMultiplier(1);
+      setLastPayout(0);
+      setShowCoinShower(false);
+      setShakeBoard(false);
 
-    // Optimistically deduct bet
-    isAnimatingRef.current = true;
-    const newBal = displayBalance - betAmount;
-    setDisplayBalance(newBal);
-    onBalanceOverride(newBal);
-  }, [displayBalance, betAmount, generateGameSeed, onBalanceOverride]);
+      isAnimatingRef.current = true;
+      setDisplayBalance(newBalance);
+      onBalanceOverride(newBalance);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Couldn't start the round");
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [isProcessing, displayBalance, betAmount, minesStart, eventKey, mineCount, onBalanceOverride]);
 
   const handleTileClick = useCallback(
     async (tileIndex: number) => {
@@ -4128,14 +4130,7 @@ function MinesGame({
       setIsProcessing(true);
 
       try {
-        const result = await minesReveal({
-          eventKey,
-          betAmount,
-          mineCount,
-          tileIndex,
-          revealedCount: gemsRevealed,
-          gameSeed,
-        });
+        const result = await minesReveal({ eventKey, tileIndex });
 
         if (result.safe) {
           // Reveal gem
@@ -4222,8 +4217,6 @@ function MinesGame({
       minesReveal,
       eventKey,
       betAmount,
-      mineCount,
-      gameSeed,
       bestMultiplier,
       onBalanceOverride,
     ]
@@ -4234,11 +4227,7 @@ function MinesGame({
 
     setIsProcessing(true);
     try {
-      const result = await minesCashOutMut({
-        eventKey,
-        betAmount,
-        multiplier: currentMultiplier,
-      });
+      const result = await minesCashOutMut({ eventKey });
 
       setGameState("won");
       setLastPayout(result.payout);

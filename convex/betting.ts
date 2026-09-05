@@ -3,13 +3,57 @@ import { mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { getAuthUserId } from "@convex-dev/auth/server";
-import { requireAdmin } from "./adminAuth";
+import { isSignedIn, requireAdmin } from "./adminAuth";
 import { getBoostForUser } from "./retention";
 
 const STARTING_BALANCE = 1000;
 
 /** Coins paid for a submission whose template predates per-form rewards. */
 export const DEFAULT_SCOUT_REWARD = 50;
+
+const MIN_BET = 10;
+/** Coins are whole and the economy starts at 1000; nothing legitimate stakes more. */
+const MAX_BET = 1_000_000;
+
+/**
+ * Validate a stake before it touches a balance.
+ *
+ * placeBet has always required a whole number, but the casino mutations only
+ * checked the floor — so a bet of 10.7777 left balances like 990.2223, and a
+ * non-finite stake propagated straight into the row. Coins are integers
+ * everywhere; enforce that in one place.
+ */
+function assertBet(betAmount: number): void {
+  if (!Number.isInteger(betAmount)) {
+    throw new Error("Bet must be a whole number of coins");
+  }
+  if (betAmount < MIN_BET) throw new Error(`Minimum bet is ${MIN_BET} coins`);
+  if (betAmount > MAX_BET) throw new Error("Bet is too large");
+}
+
+/** The caller's balance row for an event, created with the starting stake if absent. */
+async function getOrCreateBalanceRow(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  eventKey: string,
+) {
+  const existing = await ctx.db
+    .query("userBalances")
+    .withIndex("by_user_event", (q) => q.eq("userId", userId).eq("eventKey", eventKey))
+    .first();
+  if (existing) return existing;
+
+  const id = await ctx.db.insert("userBalances", {
+    userId,
+    eventKey,
+    balance:   STARTING_BALANCE,
+    totalWon:  0,
+    totalLost: 0,
+    totalBet:  0,
+    totalBegs: 0,
+  });
+  return (await ctx.db.get(id))!;
+}
 
 /**
  * Credit a scout for work done, creating their balance row if this is their
@@ -158,6 +202,7 @@ export const listMarkets = query({
     )),
   },
   handler: async (ctx, { eventKey, status }) => {
+    if (!(await isSignedIn(ctx))) return [];
     const all = await ctx.db
       .query("bettingMarkets")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
@@ -170,7 +215,8 @@ export const listMarkets = query({
 /** Get a single market by ID. */
 export const getMarket = query({
   args: { marketId: v.id("bettingMarkets") },
-  handler: async (ctx, { marketId }) => ctx.db.get(marketId),
+  handler: async (ctx, { marketId }) =>
+    (await isSignedIn(ctx)) ? ctx.db.get(marketId) : null,
 });
 
 /**
@@ -180,6 +226,7 @@ export const getMarket = query({
 export const getMarketPool = query({
   args: { marketId: v.id("bettingMarkets") },
   handler: async (ctx, { marketId }) => {
+    if (!(await isSignedIn(ctx))) return {};
     const bets = await ctx.db
       .query("bets")
       .withIndex("by_market", (q) => q.eq("marketId", marketId))
@@ -532,8 +579,7 @@ export const placeBet = mutation({
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
 
-    if (!Number.isInteger(amount)) throw new Error("Bet must be a whole number of coins");
-    if (amount < 10) throw new Error("Minimum bet is 10 coins");
+    assertBet(amount);
 
     const market = await ctx.db.get(marketId);
     if (!market) throw new Error("Market not found");
@@ -600,6 +646,7 @@ export const listMyBets = query({
 export const listMarketBets = query({
   args: { marketId: v.id("bettingMarkets") },
   handler: async (ctx, { marketId }) => {
+    if (!(await isSignedIn(ctx))) return [];
     return await ctx.db
       .query("bets")
       .withIndex("by_market", (q) => q.eq("marketId", marketId))
@@ -613,6 +660,7 @@ export const listMarketBets = query({
 export const getLeaderboard = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
+    if (!(await isSignedIn(ctx))) return [];
     const balances = (await ctx.db
       .query("userBalances")
       .collect()
@@ -725,7 +773,7 @@ export const spinSlot = mutation({
   handler: async (ctx, { eventKey, betAmount }) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
-    if (betAmount < 10) throw new Error("Minimum bet is 10 coins");
+    assertBet(betAmount);
 
     // Get or create balance
     let bal = await ctx.db
@@ -856,7 +904,7 @@ export const dropPlinko = mutation({
   handler: async (ctx, { eventKey, betAmount, risk }) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
-    if (betAmount < 10) throw new Error("Minimum bet is 10 coins");
+    assertBet(betAmount);
     if (!PLINKO_MULTIPLIERS[risk]) throw new Error("Invalid risk level");
 
     // Get or create balance
@@ -937,6 +985,116 @@ export const dropPlinko = mutation({
   },
 });
 
+// ── Multi-step casino games (Crossy Road, Mines) ──────────────────────────────
+//
+// Both games span several mutations: a start, one or more steps, then a
+// cash-out. Every piece of that state — the board, the progress, and the
+// multiplier to pay — is held in `casinoGames` and never accepted from the
+// caller. The client used to own all of it and hand the multiplier back at
+// cash-out, which meant `minesCashOut({betAmount, multiplier})` credited
+// whatever it was given: one console call could mint an unbounded balance.
+// The step and cash-out mutations below now take only the tile the player
+// touched and read everything else from the row.
+
+/** Find the caller's open round for a game, if any. */
+async function openGame(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  eventKey: string,
+  game: "crossy" | "mines",
+) {
+  return await ctx.db
+    .query("casinoGames")
+    .withIndex("by_user_event_game", (q) =>
+      q.eq("userId", userId).eq("eventKey", eventKey).eq("game", game)
+    )
+    .first();
+}
+
+/**
+ * Open a round: validate the stake, deduct it, and clear any round the player
+ * walked away from. An abandoned round's stake stays spent — that is what
+ * abandoning means — so this never refunds.
+ */
+async function startRound(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  eventKey: string,
+  game: "crossy" | "mines",
+  betAmount: number,
+  state: Record<string, unknown>,
+): Promise<number> {
+  assertBet(betAmount);
+
+  const stale = await openGame(ctx, userId, eventKey, game);
+  if (stale) await ctx.db.delete(stale._id);
+
+  const bal = await getOrCreateBalanceRow(ctx, userId, eventKey);
+  if (bal.balance < betAmount) throw new Error("Insufficient balance");
+
+  await ctx.db.patch(bal._id, {
+    balance:  bal.balance - betAmount,
+    totalBet: bal.totalBet + betAmount,
+  });
+
+  await ctx.db.insert("casinoGames", {
+    userId,
+    eventKey,
+    game,
+    betAmount,
+    multiplier: 1,
+    startedAt: Date.now(),
+    ...state,
+  });
+
+  return bal.balance - betAmount;
+}
+
+/** Pay out an open round at the multiplier the server computed, and close it. */
+async function settleRound(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  eventKey: string,
+  game: "crossy" | "mines",
+  minMultiplierSteps: number,
+): Promise<{ payout: number; newBalance: number; multiplier: number }> {
+  const round = await openGame(ctx, userId, eventKey, game);
+  if (!round) throw new Error("No game in progress");
+
+  const progress =
+    game === "mines" ? (round.revealed?.length ?? 0) : (round.rowsCleared ?? 0);
+  if (progress < minMultiplierSteps) {
+    throw new Error("Nothing to cash out yet");
+  }
+
+  const payout = Math.floor(round.betAmount * round.multiplier);
+  const bal = await getOrCreateBalanceRow(ctx, userId, eventKey);
+  await ctx.db.patch(bal._id, {
+    balance:  bal.balance + payout,
+    totalWon: bal.totalWon + Math.max(0, payout - round.betAmount),
+    ...(payout < round.betAmount
+      ? { totalLost: bal.totalLost + (round.betAmount - payout) }
+      : {}),
+  });
+  await ctx.db.delete(round._id);
+
+  return { payout, newBalance: bal.balance + payout, multiplier: round.multiplier };
+}
+
+/** Close a lost round and book the stake as a loss. */
+async function loseRound(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  eventKey: string,
+  roundId: Id<"casinoGames">,
+  betAmount: number,
+): Promise<number> {
+  const bal = await getOrCreateBalanceRow(ctx, userId, eventKey);
+  await ctx.db.patch(bal._id, { totalLost: bal.totalLost + betAmount });
+  await ctx.db.delete(roundId);
+  return bal.balance;
+}
+
 // ── Crossy Road (Chicken Cross) ───────────────────────────────────────────────
 
 /**
@@ -952,59 +1110,62 @@ const CROSSY_DIFFICULTIES: Record<string, { tilesPerRow: number; trapsPerRow: nu
 };
 
 const CROSSY_MAX_ROWS = 10;
+/** Row 0 pays under 1x — the hook that gets a player one row in. */
+const CROSSY_HOOK_MULTIPLIER = 0.9;
 
-/**
- * Process a single step in the Crossy Road game.
- * - On row 0 (first step): deducts the bet from balance.
- * - Randomly determines trap positions for the current row.
- * - Returns whether the chosen tile was safe or a trap.
- */
-export const crossyStep = mutation({
+/** Cash-out multiplier after `rowsCleared` safe rows. */
+function crossyMultiplier(rowsCleared: number, baseMultiplier: number): number {
+  if (rowsCleared <= 0) return 1;
+  if (rowsCleared === 1) return CROSSY_HOOK_MULTIPLIER;
+  return parseFloat(
+    (CROSSY_HOOK_MULTIPLIER * Math.pow(baseMultiplier, rowsCleared - 1)).toFixed(2)
+  );
+}
+
+/** Begin a Chicken Cross round. Deducts the stake and opens the server round. */
+export const crossyStart = mutation({
   args: {
     eventKey:   v.string(),
     betAmount:  v.number(),
-    difficulty: v.string(),   // "easy" | "medium" | "hard" | "expert"
-    tileIndex:  v.number(),   // which tile the player picked (0-based)
-    currentRow: v.number(),   // which row we're on (0-based, 0 = first step)
+    difficulty: v.string(),
   },
-  handler: async (ctx, { eventKey, betAmount, difficulty, tileIndex, currentRow }) => {
+  handler: async (ctx, { eventKey, betAmount, difficulty }) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
-    if (betAmount < 10) throw new Error("Minimum bet is 10 coins");
+    if (!CROSSY_DIFFICULTIES[difficulty]) throw new Error("Invalid difficulty");
 
-    const config = CROSSY_DIFFICULTIES[difficulty];
+    const newBalance = await startRound(ctx, userId, eventKey, "crossy", betAmount, {
+      difficulty,
+      rowsCleared: 0,
+    });
+    return { newBalance };
+  },
+});
+
+/**
+ * Step onto one tile of the current row. The row number, the stake and the
+ * difficulty all come from the open round, so the only thing the caller
+ * chooses is which tile to touch.
+ */
+export const crossyStep = mutation({
+  args: {
+    eventKey:  v.string(),
+    tileIndex: v.number(),
+  },
+  handler: async (ctx, { eventKey, tileIndex }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+
+    const round = await openGame(ctx, userId, eventKey, "crossy");
+    if (!round) throw new Error("No game in progress");
+
+    const config = CROSSY_DIFFICULTIES[round.difficulty ?? ""];
     if (!config) throw new Error("Invalid difficulty");
-    if (tileIndex < 0 || tileIndex >= config.tilesPerRow) throw new Error("Invalid tile index");
-    if (currentRow < 0 || currentRow >= CROSSY_MAX_ROWS) throw new Error("Invalid row");
 
-    // Get or create balance
-    let bal = await ctx.db
-      .query("userBalances")
-      .withIndex("by_user_event", (q) =>
-        q.eq("userId", userId).eq("eventKey", eventKey)
-      )
-      .first();
-
-    if (!bal) {
-      const id = await ctx.db.insert("userBalances", {
-        userId,
-        eventKey,
-        balance:   STARTING_BALANCE,
-        totalWon:  0,
-        totalLost: 0,
-        totalBet:  0,
-        totalBegs: 0,
-      });
-      bal = (await ctx.db.get(id))!;
-    }
-
-    // On first step, deduct the bet
-    if (currentRow === 0) {
-      if (bal.balance < betAmount) throw new Error("Insufficient balance");
-      await ctx.db.patch(bal._id, {
-        balance:  bal.balance - betAmount,
-        totalBet: bal.totalBet + betAmount,
-      });
+    const currentRow = round.rowsCleared ?? 0;
+    if (currentRow >= CROSSY_MAX_ROWS) throw new Error("Round already complete — cash out");
+    if (!Number.isInteger(tileIndex) || tileIndex < 0 || tileIndex >= config.tilesPerRow) {
+      throw new Error("Invalid tile index");
     }
 
     // Row 0 is a "hook" row: no traps, 0.9x multiplier to lure the player in
@@ -1020,8 +1181,8 @@ export const crossyStep = mutation({
     }
 
     // ── Retention mercy: chance to save player from trap ────────────────────
-    const crossyEffectiveBal = currentRow === 0 ? bal.balance - betAmount : bal.balance;
-    const crossyBoost = await getBoostForUser(ctx, userId, eventKey, crossyEffectiveBal);
+    const bal = await getOrCreateBalanceRow(ctx, userId, eventKey);
+    const crossyBoost = await getBoostForUser(ctx, userId, eventKey, bal.balance);
     if (crossyBoost > 0 && trapIndices.includes(tileIndex) && currentRow > 0) {
       const mercyChance = [0, 0.15, 0.25, 0.40][crossyBoost];
       if (Math.random() < mercyChance) {
@@ -1035,277 +1196,203 @@ export const crossyStep = mutation({
 
     const hitTrap = trapIndices.includes(tileIndex);
 
-    // Calculate current multiplier (compounding)
-    // Row 0 = 0.9x (hook), then rows 1+ compound: 0.9 * baseMultiplier^row
-    const rowsCompleted = hitTrap ? currentRow : currentRow + 1;
-    const HOOK_MULTIPLIER = 0.9;
-    const multiplier = rowsCompleted === 0
-      ? 1
-      : rowsCompleted === 1
-        ? HOOK_MULTIPLIER
-        : parseFloat((HOOK_MULTIPLIER * Math.pow(config.baseMultiplier, rowsCompleted - 1)).toFixed(2));
-
     if (hitTrap) {
-      // Player lost — record the loss
-      const updated = (await ctx.db.get(bal._id))!;
-      await ctx.db.patch(bal._id, {
-        totalLost: updated.totalLost + betAmount,
-      });
-      const final = (await ctx.db.get(bal._id))!;
-      const lostAtMult = currentRow === 0
-        ? 1
-        : currentRow === 1
-          ? HOOK_MULTIPLIER
-          : parseFloat((HOOK_MULTIPLIER * Math.pow(config.baseMultiplier, currentRow - 1)).toFixed(2));
+      const newBalance = await loseRound(ctx, userId, eventKey, round._id, round.betAmount);
       return {
         safe: false,
         trapIndices,
-        multiplier: lostAtMult,
+        multiplier: crossyMultiplier(currentRow, config.baseMultiplier),
         payout: 0,
-        newBalance: final.balance,
+        newBalance,
         gameOver: true,
       };
     }
 
-    // Safe tile
-    const payout = Math.floor(betAmount * multiplier);
-    const final = (await ctx.db.get(bal._id))!;
+    const rowsCleared = currentRow + 1;
+    const multiplier = crossyMultiplier(rowsCleared, config.baseMultiplier);
+    await ctx.db.patch(round._id, { rowsCleared, multiplier });
+
     return {
       safe: true,
       trapIndices,
       multiplier,
-      payout,
-      newBalance: final.balance,
-      gameOver: rowsCompleted >= CROSSY_MAX_ROWS,  // auto-cashout at max
+      payout: Math.floor(round.betAmount * multiplier),
+      newBalance: bal.balance,
+      // At max rows the round stops accepting steps; the client cashes out.
+      gameOver: rowsCleared >= CROSSY_MAX_ROWS,
     };
   },
 });
 
 /**
- * Cash out the current Crossy Road game.
- * Credits bet × multiplier to the player's balance.
+ * Cash out the open Chicken Cross round at the server-held multiplier.
+ * Takes no stake or multiplier — both come from the round.
  */
 export const crossyCashOut = mutation({
-  args: {
-    eventKey:   v.string(),
-    betAmount:  v.number(),
-    multiplier: v.number(),
-  },
-  handler: async (ctx, { eventKey, betAmount, multiplier }) => {
+  args: { eventKey: v.string() },
+  handler: async (ctx, { eventKey }) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
-
-    const bal = await ctx.db
-      .query("userBalances")
-      .withIndex("by_user_event", (q) =>
-        q.eq("userId", userId).eq("eventKey", eventKey)
-      )
-      .first();
-
-    if (!bal) throw new Error("No balance record");
-
-    const payout = Math.floor(betAmount * multiplier);
-    await ctx.db.patch(bal._id, {
-      balance:  bal.balance + payout,
-      totalWon: bal.totalWon + (payout > betAmount ? payout - betAmount : 0),
-    });
-
-    const final = (await ctx.db.get(bal._id))!;
-    return {
-      payout,
-      newBalance: final.balance,
-    };
+    // Row 0 is the free hook row; cashing out there would pay 1x for nothing.
+    return await settleRound(ctx, userId, eventKey, "crossy", 1);
   },
 });
 
 // ── Mines ─────────────────────────────────────────────────────────────────────
 
+const MINES_TILES = 25;
+/** House edge applied to the fair combinatorial multiplier. */
+const MINES_HOUSE_EDGE = 0.97;
+
+function combination(n: number, k: number): number {
+  if (k > n || k < 0) return 0;
+  if (k === 0 || k === n) return 1;
+  let result = 1;
+  for (let i = 0; i < k; i++) {
+    result = result * (n - i) / (i + 1);
+  }
+  return result;
+}
+
 /**
- * Reveal a tile in the Mines game.
- * On the first reveal (revealedCount === 0), deducts the bet.
- * Server determines mine positions on first reveal and uses a deterministic
- * seed so positions stay consistent across reveals within the same game.
+ * Cash-out multiplier after `gemsRevealed` safe tiles.
+ *
+ * Guarded against gemsRevealed exceeding the number of safe tiles: the
+ * denominator is then 0 and the raw formula yields Infinity, which used to be
+ * written straight into the balance row and left it permanently unusable.
+ * The reveal path can no longer produce that state, but the guard keeps a bad
+ * multiplier from ever reaching a balance again.
  */
-export const minesReveal = mutation({
+function minesMultiplier(mineCount: number, gemsRevealed: number): number {
+  const safeTotal = MINES_TILES - mineCount;
+  if (gemsRevealed <= 0) return 1;
+  if (gemsRevealed > safeTotal) return 1;
+  const raw =
+    MINES_HOUSE_EDGE * combination(MINES_TILES, gemsRevealed) / combination(safeTotal, gemsRevealed);
+  if (!Number.isFinite(raw) || raw <= 0) return 1;
+  return parseFloat(raw.toFixed(2));
+}
+
+/**
+ * Begin a Mines round. The board is dealt here, with the server's own
+ * randomness — mine positions used to be derived from a client-supplied
+ * `gameSeed`, so losing a round revealed the layout and replaying the same
+ * seed walked the safe path to the top multiplier.
+ */
+export const minesStart = mutation({
   args: {
-    eventKey:      v.string(),
-    betAmount:     v.number(),
-    mineCount:     v.number(),    // 1–24
-    tileIndex:     v.number(),    // 0–24
-    revealedCount: v.number(),    // how many gems already revealed this game
-    gameSeed:      v.string(),    // client-generated unique game ID for deterministic mine placement
+    eventKey:  v.string(),
+    betAmount: v.number(),
+    mineCount: v.number(),
   },
-  handler: async (ctx, { eventKey, betAmount, mineCount, tileIndex, revealedCount, gameSeed }) => {
+  handler: async (ctx, { eventKey, betAmount, mineCount }) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
-    if (betAmount < 10) throw new Error("Minimum bet is 10 coins");
-    if (mineCount < 1 || mineCount > 24) throw new Error("Mine count must be 1-24");
-    if (tileIndex < 0 || tileIndex > 24) throw new Error("Invalid tile index");
-
-    // Get or create balance
-    let bal = await ctx.db
-      .query("userBalances")
-      .withIndex("by_user_event", (q) =>
-        q.eq("userId", userId).eq("eventKey", eventKey)
-      )
-      .first();
-
-    if (!bal) {
-      const id = await ctx.db.insert("userBalances", {
-        userId,
-        eventKey,
-        balance:   STARTING_BALANCE,
-        totalWon:  0,
-        totalLost: 0,
-        totalBet:  0,
-        totalBegs: 0,
-      });
-      bal = (await ctx.db.get(id))!;
+    if (!Number.isInteger(mineCount) || mineCount < 1 || mineCount > 24) {
+      throw new Error("Mine count must be a whole number from 1 to 24");
     }
 
-    // On first reveal, deduct the bet
-    if (revealedCount === 0) {
-      if (bal.balance < betAmount) throw new Error("Insufficient balance");
-      await ctx.db.patch(bal._id, {
-        balance:  bal.balance - betAmount,
-        totalBet: bal.totalBet + betAmount,
-      });
-    }
-
-    // Generate deterministic mine positions from gameSeed
-    // Simple hash-based seeded RNG
-    let hash = 0;
-    const seedStr = gameSeed + ":" + userId;
-    for (let i = 0; i < seedStr.length; i++) {
-      const chr = seedStr.charCodeAt(i);
-      hash = ((hash << 5) - hash) + chr;
-      hash |= 0;
-    }
-
-    // Fisher-Yates shuffle with seeded random to pick mine positions
-    const indices = Array.from({ length: 25 }, (_, i) => i);
-    let seed = Math.abs(hash);
-    const seededRandom = () => {
-      seed = (seed * 1664525 + 1013904223) & 0x7fffffff;
-      return seed / 0x7fffffff;
-    };
+    // Fisher-Yates over the 25 tiles; take the first mineCount as mines.
+    const indices = Array.from({ length: MINES_TILES }, (_, i) => i);
     for (let i = indices.length - 1; i > 0; i--) {
-      const j = Math.floor(seededRandom() * (i + 1));
+      const j = Math.floor(Math.random() * (i + 1));
       [indices[i], indices[j]] = [indices[j], indices[i]];
     }
-    const minePositions = indices.slice(0, mineCount);
+
+    const newBalance = await startRound(ctx, userId, eventKey, "mines", betAmount, {
+      mineCount,
+      minePositions: indices.slice(0, mineCount),
+      revealed: [],
+    });
+    return { newBalance };
+  },
+});
+
+/** Reveal one tile of the open Mines round. */
+export const minesReveal = mutation({
+  args: {
+    eventKey:  v.string(),
+    tileIndex: v.number(),
+  },
+  handler: async (ctx, { eventKey, tileIndex }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+
+    const round = await openGame(ctx, userId, eventKey, "mines");
+    if (!round) throw new Error("No game in progress");
+
+    if (!Number.isInteger(tileIndex) || tileIndex < 0 || tileIndex >= MINES_TILES) {
+      throw new Error("Invalid tile index");
+    }
+
+    const minePositions = round.minePositions ?? [];
+    const revealed      = round.revealed ?? [];
+    const mineCount     = round.mineCount ?? minePositions.length;
+    if (revealed.includes(tileIndex)) throw new Error("Tile already revealed");
 
     // ── Retention mercy: chance to save player from mine ────────────────────
-    const minesEffectiveBal = revealedCount === 0 ? bal.balance - betAmount : bal.balance;
-    const minesBoost = await getBoostForUser(ctx, userId, eventKey, minesEffectiveBal);
+    const bal = await getOrCreateBalanceRow(ctx, userId, eventKey);
+    const minesBoost = await getBoostForUser(ctx, userId, eventKey, bal.balance);
     let hitMine = minePositions.includes(tileIndex);
     if (minesBoost > 0 && hitMine) {
       const mercyChance = [0, 0.15, 0.25, 0.40][minesBoost];
+      // Move the mine to a tile the player has not touched, so the board stays
+      // consistent for the rest of the round.
       if (Math.random() < mercyChance) {
-        hitMine = false;
+        const free = Array.from({ length: MINES_TILES }, (_, i) => i).filter(
+          (i) => i !== tileIndex && !revealed.includes(i) && !minePositions.includes(i)
+        );
+        if (free.length > 0) {
+          minePositions[minePositions.indexOf(tileIndex)] =
+            free[Math.floor(Math.random() * free.length)];
+          hitMine = false;
+        }
       }
     }
 
-    // Calculate multiplier using combinatorial formula with 3% house edge
-    // Multiplier = 0.97 * C(25, s) / C(25 - N, s)
-    // where s = gems revealed (including this one if safe), N = mine count
-    const HOUSE_EDGE = 0.97;
-    const gemsRevealed = hitMine ? revealedCount : revealedCount + 1;
-
-    const combination = (n: number, k: number): number => {
-      if (k > n || k < 0) return 0;
-      if (k === 0 || k === n) return 1;
-      let result = 1;
-      for (let i = 0; i < k; i++) {
-        result = result * (n - i) / (i + 1);
-      }
-      return result;
-    };
-
-    const safeTotal = 25 - mineCount;
-    const multiplier = gemsRevealed === 0
-      ? 1
-      : parseFloat(
-          (HOUSE_EDGE * combination(25, gemsRevealed) / combination(safeTotal, gemsRevealed)).toFixed(2)
-        );
-
     if (hitMine) {
-      // Player lost
-      const updated = (await ctx.db.get(bal._id))!;
-      await ctx.db.patch(bal._id, {
-        totalLost: updated.totalLost + betAmount,
-      });
-      const final = (await ctx.db.get(bal._id))!;
+      const newBalance = await loseRound(ctx, userId, eventKey, round._id, round.betAmount);
       return {
         safe: false,
         minePositions,
-        multiplier: revealedCount === 0 ? 1 : parseFloat(
-          (HOUSE_EDGE * combination(25, revealedCount) / combination(safeTotal, revealedCount)).toFixed(2)
-        ),
+        multiplier: minesMultiplier(mineCount, revealed.length),
         payout: 0,
-        newBalance: final.balance,
+        newBalance,
         gameOver: true,
       };
     }
 
-    // Safe tile — check if all safe tiles are revealed (auto cash-out)
-    const allGemsRevealed = gemsRevealed >= safeTotal;
-    const payout = Math.floor(betAmount * multiplier);
-    
-    if (allGemsRevealed) {
-      // Auto cash out — all gems found!
-      const current = (await ctx.db.get(bal._id))!;
-      await ctx.db.patch(bal._id, {
-        balance:  current.balance + payout,
-        totalWon: current.totalWon + (payout > betAmount ? payout - betAmount : 0),
-      });
-    }
+    const nextRevealed = [...revealed, tileIndex];
+    const multiplier   = minesMultiplier(mineCount, nextRevealed.length);
+    const allGemsRevealed = nextRevealed.length >= MINES_TILES - mineCount;
 
-    const final = (await ctx.db.get(bal._id))!;
+    await ctx.db.patch(round._id, {
+      revealed: nextRevealed,
+      minePositions,
+      multiplier,
+    });
+
     return {
       safe: true,
+      // Only give the layout away once the round is over.
       minePositions: allGemsRevealed ? minePositions : [],
       multiplier,
-      payout,
-      newBalance: final.balance,
+      payout: Math.floor(round.betAmount * multiplier),
+      newBalance: bal.balance,
       gameOver: allGemsRevealed,
     };
   },
 });
 
 /**
- * Cash out the current Mines game.
- * Credits bet × multiplier to the player's balance.
+ * Cash out the open Mines round at the server-held multiplier.
+ * Takes no stake or multiplier — both come from the round.
  */
 export const minesCashOut = mutation({
-  args: {
-    eventKey:   v.string(),
-    betAmount:  v.number(),
-    multiplier: v.number(),
-  },
-  handler: async (ctx, { eventKey, betAmount, multiplier }) => {
+  args: { eventKey: v.string() },
+  handler: async (ctx, { eventKey }) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
-
-    const bal = await ctx.db
-      .query("userBalances")
-      .withIndex("by_user_event", (q) =>
-        q.eq("userId", userId).eq("eventKey", eventKey)
-      )
-      .first();
-
-    if (!bal) throw new Error("No balance record");
-
-    const payout = Math.floor(betAmount * multiplier);
-    await ctx.db.patch(bal._id, {
-      balance:  bal.balance + payout,
-      totalWon: bal.totalWon + (payout > betAmount ? payout - betAmount : 0),
-    });
-
-    const final = (await ctx.db.get(bal._id))!;
-    return {
-      payout,
-      newBalance: final.balance,
-    };
+    return await settleRound(ctx, userId, eventKey, "mines", 1);
   },
 });

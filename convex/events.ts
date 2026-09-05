@@ -1,10 +1,11 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { requireAdmin } from "./adminAuth";
+import { isSignedIn, requireAdmin } from "./adminAuth";
 
 export const getCurrentEvent = query({
   args: {},
   handler: async (ctx) => {
+    if (!(await isSignedIn(ctx))) return null;
     return await ctx.db
       .query("eventSettings")
       .withIndex("by_key", (q) => q.eq("key", "current_event"))

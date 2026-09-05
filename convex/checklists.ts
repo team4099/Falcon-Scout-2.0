@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
+import { isSignedIn, requireUser } from "./adminAuth";
 
 // ──────────────────────────────────────────────
 // Checklist Templates
@@ -10,6 +11,7 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 export const listActiveChecklistTemplates = query({
   args: {},
   handler: async (ctx) => {
+    if (!(await isSignedIn(ctx))) return [];
     return await ctx.db
       .query("formTemplates")
       .filter((q) =>
@@ -37,7 +39,10 @@ export const submitChecklist = mutation({
     offlineId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    // This was the one write mutation with no auth check: getAuthUserId was
+    // read but never enforced, so an anonymous caller could insert checklist
+    // rows with completedById left blank.
+    const userId = await requireUser(ctx);
 
     // Idempotency check
     if (args.offlineId) {
@@ -53,7 +58,7 @@ export const submitChecklist = mutation({
       eventKey: args.eventKey,
       matchNumber: args.matchNumber,
       assignedScoutId: args.assignedScoutId,
-      completedById: userId ?? undefined,
+      completedById: userId,
       data: args.data,
       completedAt: Date.now(),
       offlineId: args.offlineId,
@@ -80,6 +85,7 @@ export const getMyChecklistSubmissions = query({
 export const listAllChecklistSubmissions = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
+    if (!(await isSignedIn(ctx))) return [];
     return await ctx.db
       .query("checklistSubmissions")
       .withIndex("by_event_match", (q) => q.eq("eventKey", eventKey))
@@ -91,6 +97,7 @@ export const listAllChecklistSubmissions = query({
 export const getChecklistSubmissionsForMatch = query({
   args: { eventKey: v.string(), matchNumber: v.number() },
   handler: async (ctx, { eventKey, matchNumber }) => {
+    if (!(await isSignedIn(ctx))) return [];
     return await ctx.db
       .query("checklistSubmissions")
       .withIndex("by_event_match", (q) =>

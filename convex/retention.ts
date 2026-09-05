@@ -175,7 +175,13 @@ export const recordAbandon = mutation({
     await ctx.db.patch(profile._id, {
       abandonHistory: history,
       threshold,
-      updatedAt:      Date.now(),
+      // Close the session out as well as recording it. Without this the
+      // sessionStartBalance stayed put, so startSession recomputed the very
+      // same loss on the next visit and pushed it into the history a second
+      // time — every abandon was counted twice and the threshold drifted.
+      sessionStartBalance: bal.balance,
+      sessionStartTime:    Date.now(),
+      updatedAt:           Date.now(),
     });
   },
 });

@@ -86,3 +86,16 @@ export async function requireAdmin(ctx: MutationCtx, adminKey: string | undefine
   }
   return userId;
 }
+
+/**
+ * Non-throwing sign-in check for read queries.
+ *
+ * Reads are gated by returning nothing rather than by throwing: convex/react
+ * surfaces a query error during render, and App.tsx deliberately renders the
+ * app from cache while auth is unresolved (the offline escape hatches), so a
+ * throwing query there would replace a working offline session with a crash.
+ * An empty result degrades into the cached value instead.
+ */
+export async function isSignedIn(ctx: QueryCtx): Promise<boolean> {
+  return (await getAuthUserId(ctx)) !== null;
+}

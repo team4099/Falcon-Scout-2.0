@@ -1,7 +1,37 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { requireAdmin, requireUser } from "./adminAuth";
+import { isSignedIn, requireAdmin, requireUser } from "./adminAuth";
 import { awardCoins, DEFAULT_SCOUT_REWARD } from "./betting";
+import type { Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
+
+/**
+ * Has this scout already logged this exact match+team at this event?
+ *
+ * `exclude` is the row just inserted, which is skipped so a submission never
+ * counts itself. compLevel is part of the identity: qual 5 and elim 5 are
+ * different matches, and an undefined compLevel (rows predating the column)
+ * only matches another undefined one.
+ */
+async function alreadyScouted(
+  ctx: MutationCtx,
+  scoutId: Id<"users">,
+  args: { eventKey: string; matchNumber: number; teamNumber: number; compLevel?: "qm" | "elim" },
+  exclude: Id<"formSubmissions">,
+): Promise<boolean> {
+  const prior = await ctx.db
+    .query("formSubmissions")
+    .withIndex("by_scout_event_match", (q) =>
+      q.eq("scoutId", scoutId).eq("eventKey", args.eventKey).eq("matchNumber", args.matchNumber)
+    )
+    .collect();
+  return prior.some(
+    (r) =>
+      r._id !== exclude &&
+      r.teamNumber === args.teamNumber &&
+      r.compLevel === args.compLevel
+  );
+}
 
 // Shared field-type validator (keep in sync with schema.ts)
 const fieldTypeValidator = v.union(
@@ -40,6 +70,7 @@ const fieldValidator = v.object({
 export const listTemplates = query({
   args: {},
   handler: async (ctx) => {
+    if (!(await isSignedIn(ctx))) return [];
     return await ctx.db.query("formTemplates").collect();
   },
 });
@@ -47,6 +78,7 @@ export const listTemplates = query({
 export const getTemplate = query({
   args: { id: v.id("formTemplates") },
   handler: async (ctx, { id }) => {
+    if (!(await isSignedIn(ctx))) return null;
     return await ctx.db.get(id);
   },
 });
@@ -54,6 +86,7 @@ export const getTemplate = query({
 export const getActiveTemplate = query({
   args: {},
   handler: async (ctx) => {
+    if (!(await isSignedIn(ctx))) return null;
     return await ctx.db
       .query("formTemplates")
       .filter((q) => q.eq(q.field("isActive"), true))
@@ -64,6 +97,7 @@ export const getActiveTemplate = query({
 export const listActiveTemplates = query({
   args: {},
   handler: async (ctx) => {
+    if (!(await isSignedIn(ctx))) return [];
     return await ctx.db
       .query("formTemplates")
       .filter((q) => q.eq(q.field("isActive"), true))
@@ -200,11 +234,16 @@ export const submitForm = mutation({
     });
 
     // ── Scouting payout ───────────────────────────────────────────────────
-    // Scouting is meant to be the primary way to earn coins, so every accepted
-    // submission pays out. This runs after the insert and the idempotency check
-    // above, so a replayed offline submission returns early and cannot be
-    // farmed for repeat payouts.
-    if (userId) {
+    // Scouting is meant to be the primary way to earn coins, so an accepted
+    // submission pays out — but only the scout's FIRST one for a given match
+    // and team. The offlineId check above only guards replays of a queued
+    // submission; nothing stopped a scout re-submitting the same match from
+    // the form over and over, which paid the reward every time.
+    //
+    // Re-submitting is still allowed (it is how a scout corrects a mistake,
+    // and two scouts covering the same team is normal and should pay both) —
+    // it just doesn't pay twice.
+    if (userId && !(await alreadyScouted(ctx, userId, args, submissionId))) {
       const template = await ctx.db.get(args.templateId);
       const reward = template?.coinReward ?? DEFAULT_SCOUT_REWARD;
       if (reward > 0) {
@@ -221,6 +260,7 @@ export const listSubmissions = query({
     eventKey: v.string(),
   },
   handler: async (ctx, { eventKey }) => {
+    if (!(await isSignedIn(ctx))) return [];
     return await ctx.db
       .query("formSubmissions")
       .withIndex("by_event_team", (q) => q.eq("eventKey", eventKey))
@@ -234,6 +274,7 @@ export const getTeamSubmissions = query({
     teamNumber: v.number(),
   },
   handler: async (ctx, { eventKey, teamNumber }) => {
+    if (!(await isSignedIn(ctx))) return [];
     return await ctx.db
       .query("formSubmissions")
       .withIndex("by_event_team", (q) =>
@@ -289,6 +330,7 @@ export const syncEventTeamRoster = mutation({
 export const getEventTeamRoster = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
+    if (!(await isSignedIn(ctx))) return null;
     const roster = await ctx.db
       .query("eventTeamRosters")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))

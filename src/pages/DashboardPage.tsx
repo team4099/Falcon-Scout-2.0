@@ -1696,9 +1696,11 @@ export default function DashboardPage() {
     (lsGetStale<Record<number, number>>(`dash_avgScore_${eventKey ?? ""}`) ?? {})
   );
   const [matchData, setMatchData] = useState<TBAMatch[]>(() =>
-    // Try dashboard-specific key first, fall back to the key written by fetchTBAEventMatches
+    // Try dashboard-specific key first, fall back to the key written by
+    // fetchTBAEventMatches — which is `tba_matches_full_`, not `tba_matches_`.
+    // The old fallback named a key nothing writes, so it never fired.
     (lsGetStale<TBAMatch[]>(`dash_matches_${eventKey ?? ""}`) ??
-     lsGetStale<TBAMatch[]>(`tba_matches_${eventKey ?? ""}`) ?? [])
+     lsGetStale<TBAMatch[]>(`tba_matches_full_${eventKey ?? ""}`) ?? [])
   );
   // Track which eventKey the state was seeded for; re-seed when it changes
   const seededEventKeyRef = useRef<string>("");

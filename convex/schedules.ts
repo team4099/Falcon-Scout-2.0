@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
-import { requireAdmin } from "./adminAuth";
+import { isSignedIn, requireAdmin } from "./adminAuth";
 
 const positionValidator = v.union(
   v.literal("red1"), v.literal("red2"), v.literal("red3"),
@@ -14,6 +14,7 @@ const positionValidator = v.union(
 export const listMatchAssignments = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
+    if (!(await isSignedIn(ctx))) return [];
     return await ctx.db
       .query("matchAssignments")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
@@ -142,6 +143,7 @@ export const clearAllMatchAssignments = mutation({
 export const listPitRotations = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
+    if (!(await isSignedIn(ctx))) return [];
     return await ctx.db
       .query("pitRotations")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
@@ -274,6 +276,7 @@ export const upsertMyPreferences = mutation({
 export const listAllPreferences = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
+    if (!(await isSignedIn(ctx))) return [];
     return await ctx.db
       .query("scoutPreferences")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
@@ -287,6 +290,7 @@ export const listAllPreferences = query({
 export const getScheduleExclusions = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
+    if (!(await isSignedIn(ctx))) return null;
     const row = await ctx.db
       .query("scheduleExclusions")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))

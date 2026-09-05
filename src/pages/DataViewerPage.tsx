@@ -1259,6 +1259,32 @@ function ChartCard({
 
 // ─────────────────────────────── Builder panel ────────────────────────────────
 
+/**
+ * Axis picker. Defined at module scope on purpose — it used to live inside the
+ * chart editor, so every parent render produced a new component type and React
+ * remounted both selects, dropping focus mid-interaction.
+ */
+function AxisSelect({
+  id, value, onChange, grouped, groupNames,
+}: {
+  id: string;
+  value: string;
+  onChange: (v: string) => void;
+  grouped: Record<string, AxisOpt[]>;
+  groupNames: Record<string, string>;
+}) {
+  return (
+    <select id={id} value={value} onChange={(e) => onChange(e.target.value)}
+      className="w-full rounded-lg border border-border bg-muted/30 px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary">
+      {Object.entries(grouped).map(([g, opts]) => (
+        <optgroup key={g} label={groupNames[g] ?? g}>
+          {opts.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+        </optgroup>
+      ))}
+    </select>
+  );
+}
+
 function Builder({ axes, fields: _fields, allTeams, initial, onSave, onCancel }: {
   axes: AxisOpt[]; fields: FormField[]; allTeams: number[];
   initial?: Partial<ChartCfg>;
@@ -1287,19 +1313,6 @@ function Builder({ axes, fields: _fields, allTeams, initial, onSave, onCancel }:
   const grouped: Record<string, AxisOpt[]> = {};
   for (const a of axes) (grouped[a.group] ??= []).push(a);
   const groupNames: Record<string, string> = { scouting: "Scouting Fields", epa: "Statbotics EPA", match: "Match Info" };
-
-  function AxisSelect({ id, value, onChange }: { id: string; value: string; onChange: (v: string) => void }) {
-    return (
-      <select id={id} value={value} onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg border border-border bg-muted/30 px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary">
-        {Object.entries(grouped).map(([g, opts]) => (
-          <optgroup key={g} label={groupNames[g] ?? g}>
-            {opts.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-          </optgroup>
-        ))}
-      </select>
-    );
-  }
 
   function save() {
     const autoTitle = `${type.charAt(0).toUpperCase() + type.slice(1)} — ${axes.find(a => a.id === yAxis)?.label ?? yAxis}`;
@@ -1344,14 +1357,14 @@ function Builder({ axes, fields: _fields, allTeams, initial, onSave, onCancel }:
           {needsX && (
             <div>
               <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5 block" htmlFor="cv-x">X Axis</label>
-              <AxisSelect id="cv-x" value={xAxis} onChange={setXAxis} />
+              <AxisSelect id="cv-x" value={xAxis} onChange={setXAxis} grouped={grouped} groupNames={groupNames} />
             </div>
           )}
           <div>
             <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5 block" htmlFor="cv-y">
               {type === "histogram" ? "Field to Distribute" : needsX ? "Y Axis" : "Metric"}
             </label>
-            <AxisSelect id="cv-y" value={yAxis} onChange={setYAxis} />
+            <AxisSelect id="cv-y" value={yAxis} onChange={setYAxis} grouped={grouped} groupNames={groupNames} />
           </div>
         </div>
       )}

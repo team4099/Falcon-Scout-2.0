@@ -1,7 +1,9 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
-import { requireAdmin, requireUser } from "./adminAuth";
+import type { MutationCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
+import { isSignedIn, requireAdmin, requireUser } from "./adminAuth";
 
 // ──────────────────────────────────────────────
 // Kanban Boards
@@ -10,6 +12,7 @@ import { requireAdmin, requireUser } from "./adminAuth";
 export const getCentralBoard = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
+    if (!(await isSignedIn(ctx))) return null;
     return await ctx.db
       .query("kanbanBoards")
       .withIndex("by_type_event", (q) =>
@@ -79,6 +82,7 @@ export const updateBoardColumns = mutation({
 export const getBoardCards = query({
   args: { boardId: v.id("kanbanBoards") },
   handler: async (ctx, { boardId }) => {
+    if (!(await isSignedIn(ctx))) return [];
     return await ctx.db
       .query("kanbanCards")
       .withIndex("by_board", (q) => q.eq("boardId", boardId))
@@ -96,10 +100,35 @@ export const addCard = mutation({
     position: v.number(),
   },
   handler: async (ctx, args) => {
-    await requireUser(ctx);
+    const userId = await requireUser(ctx);
+    const board = await ctx.db.get(args.boardId);
+    if (!board) throw new Error("Board not found");
+    if (board.type === "personal" && board.ownerId !== userId) {
+      throw new Error("That is someone else's board.");
+    }
     return await ctx.db.insert("kanbanCards", args);
   },
 });
+
+/**
+ * Confirm the caller may write to the board a card sits on, and return the card.
+ *
+ * Personal boards carry an ownerId and getPersonalBoard filters on it, but the
+ * card mutations took a bare cardId and only checked that the caller was signed
+ * in — so any scout could move, edit or delete cards on someone else's personal
+ * board. Central boards stay shared: the picklist is a team artefact.
+ */
+async function requireCardAccess(ctx: MutationCtx, cardId: Id<"kanbanCards">) {
+  const userId = await requireUser(ctx);
+  const card = await ctx.db.get(cardId);
+  if (!card) throw new Error("Card not found");
+  const board = await ctx.db.get(card.boardId);
+  if (!board) throw new Error("Board not found");
+  if (board.type === "personal" && board.ownerId !== userId) {
+    throw new Error("That card is on someone else's board.");
+  }
+  return card;
+}
 
 export const moveCard = mutation({
   args: {
@@ -108,7 +137,7 @@ export const moveCard = mutation({
     position: v.number(),
   },
   handler: async (ctx, { cardId, columnId, position }) => {
-    await requireUser(ctx);
+    await requireCardAccess(ctx, cardId);
     await ctx.db.patch(cardId, { columnId, position });
   },
 });
@@ -119,7 +148,7 @@ export const updateCard = mutation({
     notes: v.optional(v.string()),
   },
   handler: async (ctx, { cardId, notes }) => {
-    await requireUser(ctx);
+    await requireCardAccess(ctx, cardId);
     await ctx.db.patch(cardId, { notes });
   },
 });
@@ -127,7 +156,7 @@ export const updateCard = mutation({
 export const removeCard = mutation({
   args: { cardId: v.id("kanbanCards") },
   handler: async (ctx, { cardId }) => {
-    await requireUser(ctx);
+    await requireCardAccess(ctx, cardId);
     await ctx.db.delete(cardId);
   },
 });

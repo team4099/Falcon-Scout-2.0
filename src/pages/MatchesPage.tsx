@@ -399,8 +399,11 @@ export default function MatchesPage() {
 
   // Seed from cache immediately so the list renders on first mount even offline
   const [matches,         setMatches]         = useState<TBAMatch[]>(
-    () => lsGet<TBAMatch[]>(`tba_matches_${currentEvent?.eventKey ?? ""}`) ??
-          lsGetStale<TBAMatch[]>(`tba_matches_${currentEvent?.eventKey ?? ""}`) ?? []
+    // `tba_matches_full_` is the key fetchTBAEventMatches writes. This read used
+    // `tba_matches_`, which nothing ever writes, so the seed always came back
+    // empty and the offline-first render it exists for never happened.
+    () => lsGet<TBAMatch[]>(`tba_matches_full_${currentEvent?.eventKey ?? ""}`) ??
+          lsGetStale<TBAMatch[]>(`tba_matches_full_${currentEvent?.eventKey ?? ""}`) ?? []
   );
   const [epaDetailByTeam, setEpaDetailByTeam] = useState<Record<number, EpaBreakdown>>({});
   const [avgScoreByTeam,  setAvgScoreByTeam]  = useState<Record<number, number>>({});

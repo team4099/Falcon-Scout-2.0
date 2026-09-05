@@ -30,7 +30,9 @@ export function getOfflineQueue(): OfflineSubmission[] {
  *  Pass `offlineId` to reuse a UUID that was already sent to the server
  *  (e.g. when a live submit fails mid-flight). */
 export function enqueueOfflineSubmission(
-  submission: Omit<OfflineSubmission, "id" | "timestamp"> & { offlineId?: string }
+  // offlineId must be omitted from the base type as well: intersecting a
+  // required property with an optional one leaves it required.
+  submission: Omit<OfflineSubmission, "id" | "timestamp" | "offlineId"> & { offlineId?: string }
 ): string {
   const queue = getOfflineQueue();
   const id = crypto.randomUUID();
@@ -52,6 +54,62 @@ export function dequeueOfflineSubmission(id: string): void {
 
 export function clearOfflineQueue(): void {
   localStorage.removeItem(QUEUE_KEY);
+}
+
+// ── Checklist submission queue ─────────────────────────────────────────────────
+//
+// Checklists need their own queue. They used to be pushed onto the form queue
+// above, which useOfflineSync drains through api.forms.submitForm — so a
+// checklist completed offline never reached checklistSubmissions at all. It was
+// filed as a scouting submission with teamNumber 0, polluting the Data Viewer,
+// losing assignedScoutId (the form queue has no such field), and paying out the
+// scouting reward. These go to api.checklists.submitChecklist instead.
+
+export interface OfflineChecklist {
+  id: string;        // internal queue ID
+  offlineId: string; // idempotency key sent to server
+  timestamp: number;
+  templateId: string;
+  eventKey: string;
+  matchNumber: number;
+  assignedScoutId: string;
+  data: string;
+}
+
+const CHECKLIST_QUEUE_KEY = "falconscout_checklist_queue";
+
+export function getChecklistQueue(): OfflineChecklist[] {
+  try {
+    const raw = localStorage.getItem(CHECKLIST_QUEUE_KEY);
+    return raw ? (JSON.parse(raw) as OfflineChecklist[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function enqueueOfflineChecklist(
+  submission: Omit<OfflineChecklist, "id" | "timestamp" | "offlineId"> & { offlineId?: string }
+): string {
+  const queue = getChecklistQueue();
+  const id = crypto.randomUUID();
+  const entry: OfflineChecklist = {
+    ...submission,
+    id,
+    offlineId: submission.offlineId ?? id,
+    timestamp: Date.now(),
+  };
+  queue.push(entry);
+  localStorage.setItem(CHECKLIST_QUEUE_KEY, JSON.stringify(queue));
+  return entry.offlineId;
+}
+
+export function dequeueOfflineChecklist(id: string): void {
+  const queue = getChecklistQueue().filter((s) => s.id !== id);
+  localStorage.setItem(CHECKLIST_QUEUE_KEY, JSON.stringify(queue));
+}
+
+export function clearChecklistQueue(): void {
+  localStorage.removeItem(CHECKLIST_QUEUE_KEY);
 }
 
 // ── Kanban mutation queue ──────────────────────────────────────────────────────
@@ -95,5 +153,5 @@ export function clearKanbanQueue(): void {
 }
 
 export function getTotalPendingOps(): number {
-  return getOfflineQueue().length + getKanbanQueue().length;
+  return getOfflineQueue().length + getChecklistQueue().length + getKanbanQueue().length;
 }

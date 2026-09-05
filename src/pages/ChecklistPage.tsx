@@ -29,7 +29,7 @@ import QRCode from "react-qr-code";
 import { fetchTBAEventMatches } from "@/lib/api";
 import type { TBAMatch } from "@/lib/api";
 import { saveMySubmission, toQRChunks, type LocalSubmission } from "@/lib/submissionStore";
-import { enqueueOfflineSubmission } from "@/lib/offlineQueue";
+import { enqueueOfflineChecklist } from "@/lib/offlineQueue";
 import { lsGet, lsGetStale } from "@/lib/persistentCache";
 import { useOfflineSync } from "@/hooks/useOfflineSync";
 import {
@@ -377,11 +377,11 @@ function ChecklistFormDialog({
     setSubmitting(true);
     try {
       if (!navigator.onLine) {
-        enqueueOfflineSubmission({
+        enqueueOfflineChecklist({
           templateId: assignment.templateId as string,
           eventKey,
           matchNumber: assignment.matchNumber,
-          teamNumber: 0,
+          assignedScoutId: assignedScoutId as string,
           data: JSON.stringify({ _checklistMatch: assignment.matchNumber, _checklist: true, ...formData }),
           offlineId,
         });
@@ -402,11 +402,11 @@ function ChecklistFormDialog({
       onClose();
     } catch {
       toast.error("Submission failed — saved offline instead.");
-      enqueueOfflineSubmission({
+      enqueueOfflineChecklist({
         templateId: assignment.templateId as string,
         eventKey,
         matchNumber: assignment.matchNumber,
-        teamNumber: 0,
+        assignedScoutId: assignedScoutId as string,
         data: JSON.stringify({ _checklistMatch: assignment.matchNumber, _checklist: true, ...formData }),
         offlineId,
       });

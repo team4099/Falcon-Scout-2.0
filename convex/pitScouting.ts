@@ -1,7 +1,7 @@
 ﻿import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
-import { requireAdmin } from "./adminAuth";
+import { isSignedIn, requireAdmin } from "./adminAuth";
 
 // -- Pit Scouting Assignments -------------------------------------------------
 // Maps individual TBA team numbers to the scouts assigned to pit-scout them.
@@ -10,6 +10,7 @@ import { requireAdmin } from "./adminAuth";
 export const listPitScoutingTeams = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
+    if (!(await isSignedIn(ctx))) return [];
     return await ctx.db
       .query("pitScoutingTeams")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))

@@ -53,7 +53,10 @@ export default defineSchema({
     offlineId: v.optional(v.string()), // idempotency key from offline queue
   })
     .index("by_event_team", ["eventKey", "teamNumber"])
-    .index("by_offline_id", ["offlineId"]),
+    .index("by_offline_id", ["offlineId"])
+    // Used to tell a scout's first submission for a match apart from a repeat,
+    // so only the first one pays out. See awardOncePerMatch in forms.ts.
+    .index("by_scout_event_match", ["scoutId", "eventKey", "matchNumber"]),
 
   // Checklist submissions — one per checklist template per match
   checklistSubmissions: defineTable({
@@ -270,6 +273,37 @@ export default defineSchema({
     totalPenalties: v.optional(v.number()), // coins lost for skipping markets
   })
     .index("by_user_event", ["userId", "eventKey"]),
+
+  // In-progress casino rounds.
+  //
+  // Crossy and Mines are multi-request games: the client steps through them one
+  // mutation at a time and then cashes out. Previously every part of that state
+  // — the row reached, the gems revealed, and the multiplier to pay — was held
+  // by the client and taken on trust at cash-out, so a hand-written mutation
+  // call could credit any amount it liked. The round now lives here: the server
+  // deals the board, tracks progress, and computes the multiplier, and cash-out
+  // reads this row rather than its arguments.
+  //
+  // At most one open round per (user, event, game); it is deleted when the
+  // round ends, whether by cash-out, a loss, or being abandoned.
+  casinoGames: defineTable({
+    userId:    v.id("users"),
+    eventKey:  v.string(),
+    game:      v.union(v.literal("crossy"), v.literal("mines")),
+    betAmount: v.number(),
+    /** Server-computed cash-out multiplier as of the last completed step. */
+    multiplier: v.number(),
+    // Mines state
+    mineCount:     v.optional(v.number()),
+    minePositions: v.optional(v.array(v.number())),
+    revealed:      v.optional(v.array(v.number())),
+    // Crossy state
+    difficulty: v.optional(v.string()),
+    /** Rows already cleared — the next step is row `rowsCleared`. */
+    rowsCleared: v.optional(v.number()),
+    startedAt: v.number(),
+  })
+    .index("by_user_event_game", ["userId", "eventKey", "game"]),
 
   // ── Retention tracking (player abandon behavior) ─────────────────────────
   retentionProfiles: defineTable({

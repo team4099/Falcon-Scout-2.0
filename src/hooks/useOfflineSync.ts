@@ -8,6 +8,8 @@ import type { Id } from "../../convex/_generated/dataModel";
 import {
   getOfflineQueue,
   dequeueOfflineSubmission,
+  getChecklistQueue,
+  dequeueOfflineChecklist,
   getKanbanQueue,
   dequeueKanbanOp,
   getTotalPendingOps,
@@ -36,7 +38,8 @@ export function useOfflineSync() {
   const [isOnline, setIsOnline]           = useState<boolean>(navigator.onLine);
   const syncingRef = useRef(false);
 
-  const submitForm  = useMutation(api.forms.submitForm);
+  const submitForm      = useMutation(api.forms.submitForm);
+  const submitChecklist = useMutation(api.checklists.submitChecklist);
   const moveCard    = useMutation(api.kanban.moveCard);
   const updateCard  = useMutation(api.kanban.updateCard);
   const removeCard  = useMutation(api.kanban.removeCard);
@@ -60,7 +63,12 @@ export function useOfflineSync() {
           compLevel:   sub.compLevel,
           teamNumber:  sub.teamNumber,
           data:        sub.data,
-          offlineId:   sub.id, // idempotency key — server skips insert if already stored
+          // sub.offlineId, NOT sub.id. They differ exactly when it matters: an
+          // online submit that failed mid-flight is re-queued carrying the
+          // offlineId the server may already have stored, under a fresh
+          // internal id. Sending the internal id there missed the match and
+          // inserted a duplicate row — and paid the scout twice.
+          offlineId:   sub.offlineId,
         });
         dequeueOfflineSubmission(sub.id);
         anySynced = true;
@@ -74,6 +82,24 @@ export function useOfflineSync() {
           continue;
         }
         break; // stop on first transient failure; retry next cycle
+      }
+    }
+
+    // ── Drain checklist submissions ──────────────────────────────────────
+    for (const cl of getChecklistQueue()) {
+      try {
+        await submitChecklist({
+          templateId:      cl.templateId as Id<"formTemplates">,
+          eventKey:        cl.eventKey,
+          matchNumber:     cl.matchNumber,
+          assignedScoutId: cl.assignedScoutId as Id<"users">,
+          data:            cl.data,
+          offlineId:       cl.offlineId,
+        });
+        dequeueOfflineChecklist(cl.id);
+        anySynced = true;
+      } catch {
+        break; // transient — retry next cycle
       }
     }
 
@@ -108,7 +134,7 @@ export function useOfflineSync() {
     }
     refreshCounts();
     syncingRef.current = false;
-  }, [submitForm, moveCard, updateCard, removeCard, refreshCounts]);
+  }, [submitForm, submitChecklist, moveCard, updateCard, removeCard, refreshCounts]);
 
   // Called by convexCache when live data arrives
   const markSynced = useCallback(() => {
