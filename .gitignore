@@ -28,3 +28,7 @@ dev-dist
 
 # Local Claude Code settings (launch.json is shared, settings.local.json isn't)
 .claude/settings.local.json
+
+# Local-only Claude Code project context (not shared with the team repo)
+CLAUDE.md
+project_specs.md

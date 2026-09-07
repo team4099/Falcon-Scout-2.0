@@ -250,7 +250,9 @@ export async function fetchStatboticsTeamEvent(teamNumber: number, eventKey: str
 
 export async function fetchStatboticsEventTeams(eventKey: string) {
   return fetchWithCache(
-    `${STATBOTICS_BASE}/team_events?event=${eventKey}&limit=100`,
+    // Statbotics v3 hard-caps limit at 1000 (422 above that) — 1000 gives
+    // a safety margin over the ~80 teams even a large championship division has.
+    `${STATBOTICS_BASE}/team_events?event=${eventKey}&limit=1000`,
     `sb_event_teams_${eventKey}`,
     {},
     TTL.SHORT  // EPA updates after every match
@@ -273,17 +275,6 @@ export async function fetchStatboticsTeamYear(teamNumber: number, year: number) 
     `sb_team_year_${teamNumber}_${year}`,
     {},
     TTL.LONG   // season EPA is stable within a year
-  );
-}
-
-/** Batch-fetch season EPA for all teams in a given year in a single request.
- *  Returns an array of { team, epa, ... } objects — one per team. */
-export async function fetchStatboticsTeamYearsBatch(year: number) {
-  return fetchWithCache<Array<{ team: number; epa: unknown }>>(
-    `${STATBOTICS_BASE}/team_years?year=${year}&limit=5000`,
-    `sb_team_years_batch_${year}`,
-    {},
-    TTL.LONG
   );
 }
 

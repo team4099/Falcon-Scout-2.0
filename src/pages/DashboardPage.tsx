@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   fetchStatboticsEventTeams,
-  fetchStatboticsTeamYearsBatch,
+  fetchStatboticsTeamYear,
   fetchTBAEventTeams,
   fetchTBAEventRankings,
   fetchTBAEventMatches,
@@ -677,16 +677,16 @@ function TeamRow({
         <div className="flex-1 grid gap-x-4 gap-y-1 min-w-0 items-start"
           style={{
             gridTemplateColumns: [
-              "56px",   // Matches
-              "64px",   // Avg Score
-              "64px",   // Event EPA
-              "64px",   // Season EPA
-              "48px",   // Auto
-              "56px",   // Teleop
-              "56px",   // Endgame
-              ...numericFields.filter((f) => visibleColumns.has(f.id)).map(() => "minmax(52px, 96px)"),
-              ...checkboxFields.filter((f) => visibleColumns.has(f.id)).map(() => "minmax(52px, 96px)"),
-              ...selectFields.filter((f) => visibleColumns.has(f.id)).map(() => "minmax(52px, 96px)"),
+              "minmax(56px, 1fr)",   // Matches
+              "minmax(72px, 1fr)",   // Avg Score
+              "minmax(72px, 1fr)",   // Event EPA
+              "minmax(84px, 1fr)",   // Season EPA — widest header label ("Season EPA")
+              "minmax(48px, 1fr)",   // Auto
+              "minmax(56px, 1fr)",   // Teleop
+              "minmax(64px, 1fr)",   // Endgame
+              ...numericFields.filter((f) => visibleColumns.has(f.id)).map(() => "minmax(52px, 1fr)"),
+              ...checkboxFields.filter((f) => visibleColumns.has(f.id)).map(() => "minmax(52px, 1fr)"),
+              ...selectFields.filter((f) => visibleColumns.has(f.id)).map(() => "minmax(52px, 1fr)"),
             ].join(" "),
           }}
         >
@@ -798,16 +798,16 @@ function ColumnHeader({
       <div className="flex-1 grid gap-x-4"
         style={{
           gridTemplateColumns: [
-            "56px",   // Rank
-            "64px",   // Avg Score
-            "64px",   // Event EPA
-            "64px",   // Season EPA
-            "48px",   // Auto
-            "56px",   // Teleop
-            "56px",   // Endgame
-            ...numericFields.map(() => "minmax(52px, 96px)"),
-            ...checkboxFields.map(() => "minmax(52px, 96px)"),
-            ...selectFields.map(() => "minmax(52px, 96px)"),
+            "minmax(56px, 1fr)",   // Rank
+            "minmax(72px, 1fr)",   // Avg Score
+            "minmax(72px, 1fr)",   // Event EPA
+            "minmax(84px, 1fr)",   // Season EPA — widest header label ("Season EPA")
+            "minmax(48px, 1fr)",   // Auto
+            "minmax(56px, 1fr)",   // Teleop
+            "minmax(64px, 1fr)",   // Endgame
+            ...numericFields.map(() => "minmax(52px, 1fr)"),
+            ...checkboxFields.map(() => "minmax(52px, 1fr)"),
+            ...selectFields.map(() => "minmax(52px, 1fr)"),
           ].join(" "),
         }}
       >
@@ -1851,18 +1851,23 @@ export default function DashboardPage() {
         // Persist transformed map so it can be seeded next render
         lsSet(`dash_sbTeams_${eventKey}`, map, TTL.SHORT);
 
-        // Also fetch overall (season) EPA for all teams — one batch request instead of N individual calls
-        const eventTeamSet = new Set((sbData as Array<{ team: number }>).map((t) => t.team));
-        fetchStatboticsTeamYearsBatch(eventYear).then((allYears) => {
+        // Also fetch overall (season) EPA for every team at this event.
+        // Statbotics' /team_years batch endpoint holds thousands of rows for
+        // a given year but caps `limit` at 1000, silently dropping most teams
+        // from a single page — fetch per-team instead, bounded by the event
+        // roster (~40-80 teams), which is always accurate.
+        const eventTeams = (sbData as Array<{ team: number }>).map((t) => t.team);
+        Promise.all(
+          eventTeams.map((team) => fetchStatboticsTeamYear(team, eventYear))
+        ).then((results) => {
           if (cancelled) return;
-          if (!Array.isArray(allYears)) return;
           const overall: Record<number, number> = {};
-          for (const d of allYears as Array<{ team: number; epa: unknown }>) {
-            if (!eventTeamSet.has(d.team)) continue; // only care about teams at this event
-            if (d.epa && typeof d.epa === "object") {
-              const epaO = d.epa as Record<string, unknown>;
-              const v = totalEpa(epaO) ?? findInEpa(epaO, "total_points", "total");
-              if (v !== null) overall[d.team] = v;
+          for (const d of results) {
+            if (!d || typeof d !== "object") continue;
+            const epaO = (d as { epa?: unknown }).epa;
+            if (epaO && typeof epaO === "object") {
+              const v = totalEpa(epaO as Record<string, unknown>) ?? findInEpa(epaO, "total_points", "total");
+              if (v !== null) overall[(d as { team: number }).team] = v;
             }
           }
           setSbOverall(overall);
