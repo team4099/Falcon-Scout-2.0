@@ -11,10 +11,11 @@ import { describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
 
-const DEFAULT_HASH =
-  "8f0e2f76e22b43e2855189877e7dc1e1e7d98c226c95db247cd1d547928334a9";
 const modules = import.meta.glob("./**/*.ts");
-const admin = { subject: "admin|1", issuer: "test" };
+// Admin access is tied to the caller's Google identity email (see
+// convex/adminAuth.ts), so this identity is only "admin" once it carries an
+// allowlisted email.
+const admin = { subject: "admin|1", issuer: "test", email: "czhao@team4099.com" };
 
 async function seed(t: ReturnType<typeof convexTest>) {
   return t.run(async (ctx) => {
@@ -48,8 +49,9 @@ async function seed(t: ReturnType<typeof convexTest>) {
 describe("backfillCompLevel", () => {
   test("requires admin", async () => {
     const t = convexTest(schema, modules);
+    const nonAdmin = { subject: "scout|1", issuer: "test", email: "scout@team4099.com" };
     await expect(
-      t.withIdentity(admin).mutation(api.forms.backfillCompLevel, {}),
+      t.withIdentity(nonAdmin).mutation(api.forms.backfillCompLevel, {}),
     ).rejects.toThrow(/Admin access required/i);
   });
 
@@ -59,7 +61,7 @@ describe("backfillCompLevel", () => {
 
     const result = await t
       .withIdentity(admin)
-      .mutation(api.forms.backfillCompLevel, { adminKey: DEFAULT_HASH });
+      .mutation(api.forms.backfillCompLevel, {});
 
     expect(result).toEqual({
       total: 4,
@@ -87,8 +89,8 @@ describe("backfillCompLevel", () => {
     const t = convexTest(schema, modules);
     await seed(t);
     const as = t.withIdentity(admin);
-    await as.mutation(api.forms.backfillCompLevel, { adminKey: DEFAULT_HASH });
-    const second = await as.mutation(api.forms.backfillCompLevel, { adminKey: DEFAULT_HASH });
+    await as.mutation(api.forms.backfillCompLevel, {});
+    const second = await as.mutation(api.forms.backfillCompLevel, {});
     expect(second).toEqual({ total: 4, updated: 0, alreadySet: 3, unrecoverable: 1 });
   });
 
@@ -105,7 +107,7 @@ describe("backfillCompLevel", () => {
     });
     const r = await t
       .withIdentity(admin)
-      .mutation(api.forms.backfillCompLevel, { adminKey: DEFAULT_HASH });
+      .mutation(api.forms.backfillCompLevel, {});
     expect(r.unrecoverable).toBe(1);
   });
 });

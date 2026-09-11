@@ -1,64 +1,28 @@
 // ── Server-side admin enforcement ─────────────────────────────────────────────
 //
-// FalconScout uses a single shared admin password that the team knows, rather
-// than per-user roles. Previously that password was checked only in the browser
-// (src/lib/adminAuth.ts) and the Convex mutations behind it had no check at all,
-// so anyone could call them directly.
+// FalconScout previously gated privileged mutations behind a single shared
+// password known to the whole team. That meant anyone who knew (or guessed,
+// since the default shipped in the client source) the password could act as
+// admin. Admin access is now tied to the caller's signed-in Google identity
+// instead: only the emails in ADMIN_EMAILS below can pass requireAdmin, no
+// matter what the client sends.
 //
-// The client stores the SHA-256 hash of the password and sends that hash as
-// `adminKey` on every privileged mutation. The server compares it against the
-// hash held in the `adminConfig` table. The plaintext password is never sent and
-// never stored.
-//
-// Bootstrapping: the adminConfig row is created on first use from the
-// ADMIN_PASSWORD_HASH environment variable, falling back to the hash of
-// "passw0rd" so an un-configured deployment behaves as it did before. Set
-// ADMIN_PASSWORD_HASH in the Convex dashboard to choose your own.
+// "Admin Mode" in Settings is still just a client-side UI toggle — anyone can
+// flip it to preview the admin UI — but every privileged mutation re-checks
+// the caller's email here on the server, so the toggle alone grants nothing.
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 
-/** SHA-256 of "passw0rd" — the historical default. */
-const FALLBACK_HASH =
-  "8f0e2f76e22b43e2855189877e7dc1e1e7d98c226c95db247cd1d547928334a9";
-
-function configuredHash(): string {
-  return (process.env.ADMIN_PASSWORD_HASH ?? "").trim().toLowerCase() || FALLBACK_HASH;
-}
-
-/** Length-independent constant-time-ish comparison of two hex strings. */
-function safeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
-
-/** Read the current admin hash, seeding the row from env on first use. */
-export async function getAdminHash(ctx: MutationCtx): Promise<string> {
-  const row = await ctx.db.query("adminConfig").first();
-  if (row) return row.passwordHash;
-  const seeded = configuredHash();
-  await ctx.db.insert("adminConfig", { passwordHash: seeded, updatedAt: Date.now() });
-  return seeded;
-}
-
-/** Read-only variant for queries — cannot seed, so falls back to env. */
-export async function peekAdminHash(ctx: QueryCtx): Promise<string> {
-  const row = await ctx.db.query("adminConfig").first();
-  return row?.passwordHash ?? configuredHash();
-}
-
 /**
- * True when the admin credential is still the shipped default ("passw0rd").
- *
- * The default exists so an un-configured deployment keeps working, but it is
- * public knowledge — it was hardcoded in the client for the whole life of the
- * app. Anything relying on this must surface it loudly rather than let a
- * deployment sit on it unnoticed.
+ * The only accounts that may exercise real admin privileges.
+ * Google sign-in is restricted to @team4099.com already (see convex/auth.ts);
+ * this narrows it further to two people.
  */
-export async function isUsingDefaultAdminPassword(ctx: QueryCtx): Promise<boolean> {
-  return safeEqual(await peekAdminHash(ctx), FALLBACK_HASH);
+const ADMIN_EMAILS = new Set(["czhao@team4099.com", "yabdulkadir@team4099.com"]);
+
+export function isAdminEmail(email: string | null | undefined): boolean {
+  return !!email && ADMIN_EMAILS.has(email.trim().toLowerCase());
 }
 
 /**
@@ -73,18 +37,27 @@ export async function requireUser(ctx: QueryCtx | MutationCtx) {
 }
 
 /**
- * Require that the caller is signed in AND presented the correct admin key.
- * Use on destructive or team-wide operations.
+ * Require that the caller is signed in AND their account email is on the
+ * admin allowlist. Use on destructive or team-wide operations.
+ *
+ * The second parameter is accepted-but-ignored for backward compatibility
+ * with call sites and clients still sending the retired `adminKey` field.
  */
-export async function requireAdmin(ctx: MutationCtx, adminKey: string | undefined) {
+export async function requireAdmin(ctx: MutationCtx, _adminKey?: string) {
   const userId = await requireUser(ctx);
-  const expected = await getAdminHash(ctx);
-  if (!adminKey || !safeEqual(adminKey.trim().toLowerCase(), expected)) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!isAdminEmail(identity?.email)) {
     throw new Error(
-      "Admin access required. Enable Admin Mode in Settings with the team password."
+      "Admin access required. Admin mode is restricted to designated team leads."
     );
   }
   return userId;
+}
+
+/** Whether the signed-in caller's email is on the admin allowlist. */
+export async function isCurrentUserAdminEligible(ctx: QueryCtx): Promise<boolean> {
+  const identity = await ctx.auth.getUserIdentity();
+  return isAdminEmail(identity?.email);
 }
 
 /**

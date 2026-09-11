@@ -21,7 +21,6 @@ import {
   ShieldOff,
   ShieldAlert,
   Lock,
-  KeySquare,
   RefreshCw,
   ShieldX,
 } from "lucide-react";
@@ -37,11 +36,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { getTBAKey, setTBAKey, clearApiCache } from "@/lib/api";
 import { useUIStore } from "@/store/uiStore";
-import {
-  checkAdminPassword,
-  setAdminPwHash,
-  sha256Hex,
-} from "@/lib/adminAuth";
 
 // ── API Key field ─────────────────────────────────────────────────────────────
 
@@ -149,115 +143,27 @@ function ApiKeyField({
 function AdminModeCard() {
   const { isAdminMode, setAdminMode } = useUIStore();
 
-  // The server holds the authoritative hash; these confirm against it so a
-  // wrong password fails here rather than on the first privileged action.
-  const verifyAdminPassword = useMutation(api.admin.verifyAdminPassword);
-  const setAdminPasswordRemote = useMutation(api.admin.setAdminPassword);
-  // The shipped default is public knowledge, so a deployment sitting on it has
-  // effectively open admin access. Say so rather than let it go unnoticed.
-  const usingDefaultPassword = useQuery(api.admin.adminPasswordIsDefault);
-
-  // Enable flow
-  const [showEnableForm, setShowEnableForm] = useState(false);
-  const [enablePw, setEnablePw] = useState("");
-  const [showEnablePw, setShowEnablePw] = useState(false);
-  const [enableLoading, setEnableLoading] = useState(false);
-
-  // Change password flow
-  const [showChangeForm, setShowChangeForm] = useState(false);
-  const [oldPw, setOldPw] = useState("");
-  const [newPw, setNewPw] = useState("");
-  const [confirmPw, setConfirmPw] = useState("");
-  const [showOldPw, setShowOldPw] = useState(false);
-  const [showNewPw, setShowNewPw] = useState(false);
-  const [changeLoading, setChangeLoading] = useState(false);
+  // The server is the only real gate (requireAdmin checks the caller's signed-in
+  // email against an allowlist) — this query just tells the UI whether Enable
+  // will actually grant anything, so it can explain rather than silently fail.
+  const isEligible = useQuery(api.admin.isCurrentUserAdmin);
 
   function handleDisable() {
     setAdminMode(false);
-    setShowEnableForm(false);
-    setShowChangeForm(false);
-    setEnablePw("");
-    setOldPw("");
-    setNewPw("");
-    setConfirmPw("");
     toast.success("Admin mode disabled.");
   }
 
-  async function handleEnable() {
-    if (!enablePw) return;
-    setEnableLoading(true);
-    try {
-      const hash = await sha256Hex(enablePw);
-      // Confirm with the server, which owns the real credential. Falls back to
-      // the local check when offline so admin mode still works at an event.
-      let ok: boolean;
-      if (navigator.onLine) {
-        try {
-          ok = await verifyAdminPassword({ adminKey: hash }) === true;
-        } catch {
-          ok = false;
-        }
-      } else {
-        ok = await checkAdminPassword(enablePw);
-      }
-
-      if (ok) {
-        setAdminPwHash(hash);
-        setAdminMode(true);
-        setShowEnableForm(false);
-        setEnablePw("");
-        toast.success("Admin mode enabled.", {
-          description: "You now have access to Form Builder and report deletion.",
-        });
-      } else {
-        toast.error("Incorrect password.");
-      }
-    } finally {
-      setEnableLoading(false);
-    }
-  }
-
-  async function handleChangePassword() {
-    if (!oldPw || !newPw || !confirmPw) {
-      toast.error("All fields are required.");
-      return;
-    }
-    if (newPw !== confirmPw) {
-      toast.error("New passwords don't match.");
-      return;
-    }
-    if (newPw.length < 4) {
-      toast.error("New password must be at least 4 characters.");
-      return;
-    }
-    setChangeLoading(true);
-    try {
-      const oldHash = await sha256Hex(oldPw);
-      const newHash = await sha256Hex(newPw);
-
-      // The server is the source of truth, so change it there first. Only
-      // mirror into localStorage once that succeeds, otherwise the device
-      // would hold a key the backend rejects.
-      try {
-        await setAdminPasswordRemote({ newHash, adminKey: oldHash });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "";
-        toast.error(
-          msg.includes("Admin access required")
-            ? "Current password is incorrect."
-            : "Couldn't change the password — you need to be online to do this."
-        );
-        return;
-      }
-
-      setAdminPwHash(newHash);
-      setShowChangeForm(false);
-      setOldPw("");
-      setNewPw("");
-      setConfirmPw("");
-      toast.success("Admin password changed for the whole team.");
-    } finally {
-      setChangeLoading(false);
+  function handleEnable() {
+    setAdminMode(true);
+    if (isEligible) {
+      toast.success("Admin mode enabled.", {
+        description: "You now have access to Form Builder and report deletion.",
+      });
+    } else {
+      toast.info("Admin mode UI enabled for preview.", {
+        description:
+          "Your account isn't on the admin allowlist, so privileged actions will still be rejected by the server.",
+      });
     }
   }
 
@@ -269,18 +175,15 @@ function AdminModeCard() {
           : "bg-card border-border"
       }`}
     >
-      {usingDefaultPassword === true && (
-        <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
-          <ShieldX className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+      {isEligible === false && (
+        <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2.5">
+          <ShieldX className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-destructive">
-              Admin is using the default password
-            </p>
+            <p className="text-sm font-semibold">Admin is restricted</p>
             <p className="text-xs text-muted-foreground mt-0.5">
-              The default is published in this app&apos;s source, so anyone can turn on
-              Admin Mode. Change it below, or set{" "}
-              <code className="font-mono">ADMIN_PASSWORD_HASH</code> in the Convex
-              dashboard.
+              Only designated team leads can perform admin actions. You can still
+              enable this toggle to preview the admin UI, but the server will
+              reject any privileged action from this account.
             </p>
           </div>
         </div>
@@ -312,15 +215,7 @@ function AdminModeCard() {
             Disable
           </Button>
         ) : (
-          <Button
-            size="sm"
-            variant="outline"
-            className="gap-1.5"
-            onClick={() => {
-              setShowEnableForm((s) => !s);
-              setShowChangeForm(false);
-            }}
-          >
+          <Button size="sm" variant="outline" className="gap-1.5" onClick={handleEnable}>
             <Lock className="h-3.5 w-3.5" />
             Enable
           </Button>
@@ -330,144 +225,8 @@ function AdminModeCard() {
       <p className="text-xs text-muted-foreground -mt-2">
         {isAdminMode
           ? "Admin mode is active. You can access the Form Builder and delete scouting reports."
-          : "Admin mode restricts access to the Form Builder and report deletion. Enter the password to unlock."}
+          : "Admin mode restricts access to the Form Builder and report deletion to designated team leads."}
       </p>
-
-      {/* Enable form */}
-      {!isAdminMode && showEnableForm && (
-        <>
-          <Separator />
-          <div className="space-y-3">
-            <Label className="flex items-center gap-1.5 text-sm">
-              <Lock className="h-3.5 w-3.5 text-muted-foreground" />
-              Enter Admin Password
-            </Label>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Input
-                  type={showEnablePw ? "text" : "password"}
-                  placeholder="Password"
-                  value={enablePw}
-                  onChange={(e) => setEnablePw(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleEnable()}
-                  className="pr-9"
-                  autoFocus
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowEnablePw((s) => !s)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  tabIndex={-1}
-                >
-                  {showEnablePw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-              <Button
-                size="sm"
-                onClick={handleEnable}
-                disabled={!enablePw || enableLoading}
-                className="shrink-0"
-              >
-                {enableLoading ? "Checking…" : "Unlock"}
-              </Button>
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* Change password (visible when admin mode active) */}
-      {isAdminMode && (
-        <>
-          <Separator />
-          <div>
-            <button
-              onClick={() => setShowChangeForm((s) => !s)}
-              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <KeySquare className="h-3.5 w-3.5" />
-              {showChangeForm ? "Hide" : "Change Admin Password"}
-            </button>
-
-            {showChangeForm && (
-              <div className="mt-3 space-y-3">
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Current Password</Label>
-                  <div className="relative">
-                    <Input
-                      type={showOldPw ? "text" : "password"}
-                      placeholder="Current password"
-                      value={oldPw}
-                      onChange={(e) => setOldPw(e.target.value)}
-                      className="pr-9 text-sm"
-                      autoFocus
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowOldPw((s) => !s)}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      tabIndex={-1}
-                    >
-                      {showOldPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">New Password</Label>
-                  <div className="relative">
-                    <Input
-                      type={showNewPw ? "text" : "password"}
-                      placeholder="New password (min 4 chars)"
-                      value={newPw}
-                      onChange={(e) => setNewPw(e.target.value)}
-                      className="pr-9 text-sm"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowNewPw((s) => !s)}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      tabIndex={-1}
-                    >
-                      {showNewPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Confirm New Password</Label>
-                  <Input
-                    type="password"
-                    placeholder="Confirm new password"
-                    value={confirmPw}
-                    onChange={(e) => setConfirmPw(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleChangePassword()}
-                    className="text-sm"
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    onClick={handleChangePassword}
-                    disabled={!oldPw || !newPw || !confirmPw || changeLoading}
-                  >
-                    {changeLoading ? "Saving…" : "Update Password"}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => {
-                      setShowChangeForm(false);
-                      setOldPw("");
-                      setNewPw("");
-                      setConfirmPw("");
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            )}
-          </div>
-        </>
-      )}
     </div>
   );
 }

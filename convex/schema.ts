@@ -335,13 +335,4 @@ export default defineSchema({
     updatedAt:           v.number(),
   })
     .index("by_user_event", ["userId", "eventKey"]),
-
-  // ── Admin credential ─────────────────────────────────────────────────────
-  // Single row holding the SHA-256 hash of the shared team admin password.
-  // Seeded from the ADMIN_PASSWORD_HASH env var on first use. Never exposed
-  // through any query — see convex/adminAuth.ts.
-  adminConfig: defineTable({
-    passwordHash: v.string(),
-    updatedAt:    v.number(),
-  }),
 });

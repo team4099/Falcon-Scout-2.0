@@ -9,14 +9,15 @@ import { describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
 
-const DEFAULT_HASH =
-  "8f0e2f76e22b43e2855189877e7dc1e1e7d98c226c95db247cd1d547928334a9";
 const modules = import.meta.glob("./**/*.ts");
 const EVENT = "2025chcmp";
 
 async function setup(t: ReturnType<typeof convexTest>, balance = 1000) {
   const userId = await t.run(async (ctx) => ctx.db.insert("users", { name: "Bettor" }));
-  const as = t.withIdentity({ subject: userId, issuer: "test" });
+  // Also carries an admin-allowlisted email (see convex/adminAuth.ts) so this
+  // same fixture can exercise both bettor actions and the admin-only market
+  // lifecycle calls (cancelMarket/resolveMarket) below.
+  const as = t.withIdentity({ subject: userId, issuer: "test", email: "czhao@team4099.com" });
   const marketId = await t.run(async (ctx) => {
     await ctx.db.insert("userBalances", {
       userId, eventKey: EVENT, balance,
@@ -49,12 +50,12 @@ describe("cancelMarket", () => {
     await as.mutation(api.betting.placeBet, { marketId, optionId: "red", amount: 300 });
     expect(await bal()).toBe(700);
 
-    await as.mutation(api.betting.cancelMarket, { marketId, adminKey: DEFAULT_HASH });
+    await as.mutation(api.betting.cancelMarket, { marketId });
     expect(await bal()).toBe(1000);
 
     // Second call used to credit every bet again — minting 300 coins.
     await expect(
-      as.mutation(api.betting.cancelMarket, { marketId, adminKey: DEFAULT_HASH }),
+      as.mutation(api.betting.cancelMarket, { marketId }),
     ).rejects.toThrow(/already cancelled/i);
     expect(await bal()).toBe(1000);
   });
@@ -64,11 +65,11 @@ describe("cancelMarket", () => {
     const { as, marketId, bal } = await setup(t, 1000);
     await as.mutation(api.betting.placeBet, { marketId, optionId: "red", amount: 100 });
     await as.mutation(api.betting.resolveMarket, {
-      marketId, resolvedOptionId: "red", adminKey: DEFAULT_HASH,
+      marketId, resolvedOptionId: "red",
     });
     const afterResolve = await bal();
     await expect(
-      as.mutation(api.betting.cancelMarket, { marketId, adminKey: DEFAULT_HASH }),
+      as.mutation(api.betting.cancelMarket, { marketId }),
     ).rejects.toThrow(/already resolved/i);
     expect(await bal()).toBe(afterResolve);
   });
@@ -145,7 +146,7 @@ describe("resolveMarket payouts", () => {
     expect(await bal()).toBe(800);
 
     const res = await as.mutation(api.betting.resolveMarket, {
-      marketId, resolvedOptionId: "red", adminKey: DEFAULT_HASH,
+      marketId, resolvedOptionId: "red",
     });
 
     // totalPool = seeds(200) + bets(200) = 400; winPool = seed_red(100) + 200 = 300

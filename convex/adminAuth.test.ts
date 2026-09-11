@@ -3,20 +3,19 @@
  *
  * These cover the hole found in the audit: privileged mutations that either had
  * no auth check at all, or called getAuthUserId and threw the result away. Both
- * layers are checked here — signed-in, and signed-in *with the right admin key*.
+ * layers are checked here — signed-in, and signed-in *with an allowlisted admin
+ * email*. Admin access is tied to the caller's Google identity email (see
+ * convex/adminAuth.ts), not a shared secret, so tests grant/deny it by setting
+ * `email` on the test identity rather than by passing a key.
  */
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
 
-// SHA-256 of "passw0rd" — the historical default the client ships with.
-const DEFAULT_HASH =
-  "8f0e2f76e22b43e2855189877e7dc1e1e7d98c226c95db247cd1d547928334a9";
-const WRONG_HASH = "0".repeat(64);
-
 const modules = import.meta.glob("./**/*.ts");
-const scout = { subject: "scout|1", issuer: "test" };
+const scout = { subject: "scout|1", issuer: "test", email: "scout@team4099.com" };
+const admin = { subject: "chief|1", issuer: "test", email: "czhao@team4099.com" };
 
 describe("requireAdmin", () => {
   test("setCurrentEvent rejects an anonymous caller", async () => {
@@ -29,7 +28,7 @@ describe("requireAdmin", () => {
     ).rejects.toThrow(/signed in/i);
   });
 
-  test("setCurrentEvent rejects a signed-in scout with no admin key", async () => {
+  test("setCurrentEvent rejects a signed-in scout who isn't on the admin allowlist", async () => {
     const t = convexTest(schema, modules);
     await expect(
       t.withIdentity(scout).mutation(api.events.setCurrentEvent, {
@@ -39,46 +38,30 @@ describe("requireAdmin", () => {
     ).rejects.toThrow(/Admin access required/i);
   });
 
-  test("setCurrentEvent rejects a signed-in scout with the wrong key", async () => {
+  test("setCurrentEvent succeeds for an allowlisted admin email", async () => {
     const t = convexTest(schema, modules);
-    await expect(
-      t.withIdentity(scout).mutation(api.events.setCurrentEvent, {
-        eventKey: "2025chcmp",
-        eventName: "Chesapeake",
-        adminKey: WRONG_HASH,
-      }),
-    ).rejects.toThrow(/Admin access required/i);
-  });
-
-  test("setCurrentEvent succeeds with the correct admin key", async () => {
-    const t = convexTest(schema, modules);
-    await t.withIdentity(scout).mutation(api.events.setCurrentEvent, {
+    await t.withIdentity(admin).mutation(api.events.setCurrentEvent, {
       eventKey: "2025chcmp",
       eventName: "Chesapeake",
-      adminKey: DEFAULT_HASH,
     });
     // Read back as the scout: getCurrentEvent is gated to signed-in callers.
     const ev = await t.withIdentity(scout).query(api.events.getCurrentEvent, {});
     expect(ev?.eventKey).toBe("2025chcmp");
   });
 
-  test("the admin key is compared case-insensitively but not loosely", async () => {
+  test("the admin email is compared case-insensitively but must match exactly otherwise", async () => {
     const t = convexTest(schema, modules);
-    // upper-case hex is the same credential
-    await t.withIdentity(scout).mutation(api.events.setCurrentEvent, {
-      eventKey: "2025mdber",
-      eventName: "Bethesda",
-      adminKey: DEFAULT_HASH.toUpperCase(),
-    });
+    // upper-case email is the same account
+    await t
+      .withIdentity({ ...admin, email: "CZHAO@team4099.com" })
+      .mutation(api.events.setCurrentEvent, { eventKey: "2025mdber", eventName: "Bethesda" });
     expect((await t.withIdentity(scout).query(api.events.getCurrentEvent, {}))?.eventKey).toBe("2025mdber");
 
-    // a prefix of the real hash is not
+    // a similar but different team4099.com address is not on the allowlist
     await expect(
-      t.withIdentity(scout).mutation(api.events.setCurrentEvent, {
-        eventKey: "nope",
-        eventName: "nope",
-        adminKey: DEFAULT_HASH.slice(0, 32),
-      }),
+      t
+        .withIdentity({ subject: "other|1", issuer: "test", email: "yzhao@team4099.com" })
+        .mutation(api.events.setCurrentEvent, { eventKey: "nope", eventName: "nope" }),
     ).rejects.toThrow(/Admin access required/i);
   });
 });
@@ -103,9 +86,7 @@ describe("mutations that previously discarded the auth result", () => {
     // still there
     expect(await t.run(async (ctx) => ctx.db.get(id))).not.toBeNull();
 
-    await t.withIdentity(scout).mutation(api.forms.deleteSubmission, {
-      id, adminKey: DEFAULT_HASH,
-    });
+    await t.withIdentity(admin).mutation(api.forms.deleteSubmission, { id });
     expect(await t.run(async (ctx) => ctx.db.get(id))).toBeNull();
   });
 
@@ -127,58 +108,16 @@ describe("mutations that previously discarded the auth result", () => {
   });
 });
 
-describe("changing the admin password", () => {
-  test("the new password works and the old one stops working", async () => {
+describe("admin allowlist eligibility query", () => {
+  test("reports false for a non-admin and true for an allowlisted email", async () => {
     const t = convexTest(schema, modules);
-    const NEW = "a".repeat(64);
-
-    await t.withIdentity(scout).mutation(api.admin.setAdminPassword, {
-      newHash: NEW,
-      adminKey: DEFAULT_HASH,
-    });
-
-    await t.withIdentity(scout).mutation(api.events.setCurrentEvent, {
-      eventKey: "2025new", eventName: "New", adminKey: NEW,
-    });
-    expect((await t.withIdentity(scout).query(api.events.getCurrentEvent, {}))?.eventKey).toBe("2025new");
-
-    await expect(
-      t.withIdentity(scout).mutation(api.events.setCurrentEvent, {
-        eventKey: "2025old", eventName: "Old", adminKey: DEFAULT_HASH,
-      }),
-    ).rejects.toThrow(/Admin access required/i);
+    expect(await t.withIdentity(scout).query(api.admin.isCurrentUserAdmin, {})).toBe(false);
+    expect(await t.withIdentity(admin).query(api.admin.isCurrentUserAdmin, {})).toBe(true);
   });
 
-  test("a malformed hash is rejected", async () => {
+  test("reports false for a signed-out caller", async () => {
     const t = convexTest(schema, modules);
-    await expect(
-      t.withIdentity(scout).mutation(api.admin.setAdminPassword, {
-        newHash: "not-a-hash",
-        adminKey: DEFAULT_HASH,
-      }),
-    ).rejects.toThrow(/Invalid password hash/i);
-  });
-});
-
-describe("default-password warning", () => {
-  test("reports true on a fresh deployment with no ADMIN_PASSWORD_HASH", async () => {
-    const t = convexTest(schema, modules);
-    expect(await t.query(api.admin.adminPasswordIsDefault, {})).toBe(true);
-  });
-
-  test("goes false once the password is changed", async () => {
-    const t = convexTest(schema, modules);
-    await t.withIdentity(scout).mutation(api.admin.setAdminPassword, {
-      newHash: "b".repeat(64),
-      adminKey: DEFAULT_HASH,
-    });
-    expect(await t.query(api.admin.adminPasswordIsDefault, {})).toBe(false);
-  });
-
-  test("never exposes the hash itself", async () => {
-    const t = convexTest(schema, modules);
-    const result = await t.query(api.admin.adminPasswordIsDefault, {});
-    expect(typeof result).toBe("boolean");
+    expect(await t.query(api.admin.isCurrentUserAdmin, {})).toBe(false);
   });
 });
 
