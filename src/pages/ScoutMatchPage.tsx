@@ -4,7 +4,8 @@ import { useQuery, useMutation } from "convex/react";
 import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
-import type { FormField, FormData } from "@/types";
+import type { FormField, FormData, FormType } from "@/types";
+import { FORM_TYPE_ORDER, formTypeRank } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -237,7 +238,12 @@ function FormPicker({
         </p>
       </div>
       <div className="space-y-3">
-        {templates.map((t) => (
+        {[...templates]
+          .sort((a, b) =>
+            formTypeRank((a as { formType?: string }).formType) -
+            formTypeRank((b as { formType?: string }).formType)
+          )
+          .map((t) => (
           <button
             key={t._id}
             onClick={() => onSelect(t)}
@@ -285,17 +291,26 @@ export default function ScoutMatchPage() {
   // Which form the scout picked (null = not yet chosen / only one)
   const [selectedTemplate, setSelectedTemplate] = useState<ActiveTemplate | null>(null);
 
-  // Deep-link prefill: /scout?match=39&prefix=qm&team=254 — used by the cards in
-  // My Schedule so tapping an assignment lands on a form that is already filled
-  // in. Read once on mount; after that the scout owns these fields.
+  // Deep-link prefill: /scout?match=39&prefix=qm&team=254&form=default — used by
+  // the cards in My Schedule so tapping an assignment lands on a form that is
+  // already filled in. Read once on mount; after that the scout owns these
+  // fields. `form` is a formType, not a template id, so the link keeps working
+  // when an admin activates a different template mid-event.
   const [searchParams] = useSearchParams();
   // useState initialiser rather than a ref: this is read during render (and in
   // an effect dependency), which a ref does not allow.
-  const [prefill] = useState(() => ({
-    match:  Number(searchParams.get("match")) || null,
-    prefix: searchParams.get("prefix") === "elim" ? ("elim" as const) : null,
-    team:   Number(searchParams.get("team")) || null,
-  }));
+  const [prefill] = useState(() => {
+    const form = searchParams.get("form");
+    return {
+      match:  Number(searchParams.get("match")) || null,
+      prefix: searchParams.get("prefix") === "elim" ? ("elim" as const) : null,
+      team:   Number(searchParams.get("team")) || null,
+      form:   FORM_TYPE_ORDER.includes(form as FormType) ? (form as FormType) : null,
+    };
+  });
+  // Whether the `form` deep-link has already picked a template. Without this,
+  // "← Change form" would be undone by the effect below re-selecting it.
+  const [deepLinkApplied, setDeepLinkApplied] = useState(false);
 
   const [matchNumber, setMatchNumber] = useState<number>(prefill.match ?? 1);
   const [matchPrefix, setMatchPrefix] = useState<"qm" | "elim">(prefill.prefix ?? "qm");
@@ -332,12 +347,24 @@ export default function ScoutMatchPage() {
     };
   }, [currentEvent?.eventKey]);
 
-  // Auto-select if only one active template
+  // Pick the template automatically where there's no real choice to make:
+  // a `form=` deep-link from My Schedule, or a single active template.
   useEffect(() => {
-    if (activeTemplates?.length === 1) {
+    if (selectedTemplate || !activeTemplates?.length) return;
+    if (prefill.form && !deepLinkApplied) {
+      const match = (activeTemplates as ActiveTemplate[]).find(
+        (t) => ((t as { formType?: string }).formType ?? "default") === prefill.form
+      );
+      if (match) {
+        setDeepLinkApplied(true);
+        setSelectedTemplate(match);
+        return;
+      }
+    }
+    if (activeTemplates.length === 1) {
       setSelectedTemplate(activeTemplates[0] as ActiveTemplate);
     }
-  }, [activeTemplates]);
+  }, [activeTemplates, selectedTemplate, prefill.form, deepLinkApplied]);
 
   // Reset form data when template changes. When the page was opened from a
   // schedule assignment, seed the first teamNumber field instead of clearing to

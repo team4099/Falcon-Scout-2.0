@@ -4,6 +4,16 @@ export type FieldType = "text" | "number" | "checkbox" | "select" | "counter" | 
 
 export type FormType = "default" | "super" | "pit" | "checklist";
 
+/** The order form types are presented in everywhere: match scouting first,
+ *  then pit, then super scout, then checklists. */
+export const FORM_TYPE_ORDER: FormType[] = ["default", "pit", "super", "checklist"];
+
+/** Sort key for a template's `formType` (missing/unknown → treated as default). */
+export function formTypeRank(t: string | undefined): number {
+  const i = FORM_TYPE_ORDER.indexOf((t ?? "default") as FormType);
+  return i === -1 ? 0 : i;
+}
+
 export interface FormField {
   id: string;
   type: FieldType;

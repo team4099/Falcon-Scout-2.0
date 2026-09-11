@@ -5,6 +5,7 @@ import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import type { FormField, FieldType, FormType } from "@/types";
+import { formTypeRank } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -634,6 +635,12 @@ function FormBuilderContent() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
+  // Form list order: match scouting → pit → super scout → checklist, with the
+  // backend's own order (creation time) as the tie-break inside a type.
+  const orderedTemplates = templates
+    ? [...templates].sort((a, b) => formTypeRank(a.formType) - formTypeRank(b.formType))
+    : templates;
+
   // Identify currently active forms by type
   const activeDefault   = templates?.find((t) => t.isActive && (t.formType ?? "default") === "default");
   const activeSuper     = templates?.find((t) => t.isActive && (t.formType ?? "default") === "super");
@@ -857,16 +864,16 @@ function FormBuilderContent() {
                       <span className="truncate font-medium">{activeDefault.name}</span>
                     </div>
                   )}
-                  {activeSuper && (
-                    <div className="flex items-center gap-1.5 text-xs text-amber-400 px-2 py-1 rounded-md bg-amber-500/10">
-                      <Binoculars className="h-3 w-3" />
-                      <span className="truncate font-medium">{activeSuper.name}</span>
-                    </div>
-                  )}
                   {activePit && (
                     <div className="flex items-center gap-1.5 text-xs text-cyan-400 px-2 py-1 rounded-md bg-cyan-500/10">
                       <Search className="h-3 w-3" />
                       <span className="truncate font-medium">{activePit.name}</span>
+                    </div>
+                  )}
+                  {activeSuper && (
+                    <div className="flex items-center gap-1.5 text-xs text-amber-400 px-2 py-1 rounded-md bg-amber-500/10">
+                      <Binoculars className="h-3 w-3" />
+                      <span className="truncate font-medium">{activeSuper.name}</span>
                     </div>
                   )}
                   {activeChecklists.map((cl) => (
@@ -878,7 +885,7 @@ function FormBuilderContent() {
                 </div>
               )}
               {templates === undefined && <p className="text-sm text-muted-foreground">Loading…</p>}
-              {templates?.map((t) => {
+              {orderedTemplates?.map((t) => {
                 const tType: FormType = (t.formType as FormType) ?? "default";
                 return (
                   <button
@@ -918,16 +925,16 @@ function FormBuilderContent() {
                   <span className="truncate font-medium">{activeDefault.name}</span>
                 </div>
               )}
-              {activeSuper && (
-                <div className="flex items-center gap-1.5 text-xs text-amber-400 px-2 py-1 rounded-md bg-amber-500/10">
-                  <Binoculars className="h-3 w-3" />
-                  <span className="truncate font-medium">{activeSuper.name}</span>
-                </div>
-              )}
               {activePit && (
                 <div className="flex items-center gap-1.5 text-xs text-cyan-400 px-2 py-1 rounded-md bg-cyan-500/10">
                   <Search className="h-3 w-3" />
                   <span className="truncate font-medium">{activePit.name}</span>
+                </div>
+              )}
+              {activeSuper && (
+                <div className="flex items-center gap-1.5 text-xs text-amber-400 px-2 py-1 rounded-md bg-amber-500/10">
+                  <Binoculars className="h-3 w-3" />
+                  <span className="truncate font-medium">{activeSuper.name}</span>
                 </div>
               )}
               {activeChecklists.map((cl) => (
@@ -940,7 +947,7 @@ function FormBuilderContent() {
           )}
 
           {templates === undefined && <p className="text-sm text-muted-foreground">Loading…</p>}
-          {templates?.map((t) => {
+          {orderedTemplates?.map((t) => {
             const tType: FormType = (t.formType as FormType) ?? "default";
             return (
               <button
@@ -1050,6 +1057,20 @@ function FormBuilderContent() {
                       </div>
                     </button>
                     <button
+                      onClick={() => { setFormType("pit"); setFields((prev) => prev); }}
+                      className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm transition-all ${
+                        formType === "pit"
+                          ? "border-cyan-500 bg-cyan-500/10 text-cyan-400 font-semibold"
+                          : "border-border text-muted-foreground hover:bg-muted/50"
+                      }`}
+                    >
+                      <Search className="h-4 w-4 shrink-0" />
+                      <div className="text-left">
+                        <p className="font-medium leading-none">Pit Scout</p>
+                        <p className="text-[10px] opacity-70 mt-0.5">Per-team, no match#</p>
+                      </div>
+                    </button>
+                    <button
                       onClick={() => {
                         setFormType("super");
                         // Remove incompatible fields when switching to super
@@ -1065,20 +1086,6 @@ function FormBuilderContent() {
                       <div className="text-left">
                         <p className="font-medium leading-none">Super Scout</p>
                         <p className="text-[10px] opacity-70 mt-0.5">Text + ratings</p>
-                      </div>
-                    </button>
-                    <button
-                      onClick={() => { setFormType("pit"); setFields((prev) => prev); }}
-                      className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm transition-all ${
-                        formType === "pit"
-                          ? "border-cyan-500 bg-cyan-500/10 text-cyan-400 font-semibold"
-                          : "border-border text-muted-foreground hover:bg-muted/50"
-                      }`}
-                    >
-                      <Search className="h-4 w-4 shrink-0" />
-                      <div className="text-left">
-                        <p className="font-medium leading-none">Pit Scout</p>
-                        <p className="text-[10px] opacity-70 mt-0.5">Per-team, no match#</p>
                       </div>
                     </button>
                     <button

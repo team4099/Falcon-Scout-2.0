@@ -241,6 +241,7 @@ function PreCompetitionCard({
   assignments: PitScoutingAssignment[];
   allUsers: { _id: string; name?: string; email?: string; image?: string }[];
 }) {
+  const navigate = useNavigate();
   const userMap = Object.fromEntries(allUsers.map(u => [u._id, u]));
   const getFirst = (u: { name?: string; email?: string } | undefined) => {
     const n = u?.name ?? u?.email ?? "?";
@@ -301,15 +302,24 @@ function PreCompetitionCard({
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 12 }}>
           {teamNums.map(num => (
-            <span key={num} style={{
-              display: "inline-flex", alignItems: "center",
-              padding: "4px 12px", borderRadius: 20, fontSize: 13, fontWeight: 800,
-              background: PS_COLOR, color: PS_TXT,
-              boxShadow: `0 1px 6px ${PS_COLOR} / 25%`,
-              letterSpacing: "-0.01em",
-            }}>
+            // Tapping a team opens the active Pit Scout form with that team
+            // already entered, same as the match cards do for match scouting.
+            <button
+              key={num}
+              type="button"
+              onClick={() => navigate(`/scout?form=pit&team=${num}`)}
+              title={`Pit scout team ${num}`}
+              style={{
+                display: "inline-flex", alignItems: "center",
+                padding: "4px 12px", borderRadius: 20, fontSize: 13, fontWeight: 800,
+                background: PS_COLOR, color: PS_TXT,
+                boxShadow: `0 1px 6px ${PS_COLOR} / 25%`,
+                letterSpacing: "-0.01em",
+                border: "none", cursor: "pointer", fontFamily: "inherit",
+              }}
+            >
               {num}
-            </span>
+            </button>
           ))}
         </div>
 
@@ -341,7 +351,7 @@ function PreCompetitionCard({
         )}
 
         <div style={{ marginTop: 10, fontSize: 11, color: MUTED, lineHeight: 1.5 }}>
-          Visit each assigned team's pit <strong>before quals start</strong> and fill out the Pit Scouting form.
+          Visit each assigned team's pit <strong>before quals start</strong>. Tap a team number to open the Pit Scouting form for it.
         </div>
       </div>
     </div>
@@ -370,11 +380,17 @@ function ScoutingCard({ assignment, match }: { assignment: MatchAssignment; matc
   const allianceBord  = isRed ? "oklch(0.62 0.22 25 / 35%)" : "oklch(0.55 0.22 255 / 35%)";
   const teamNumber = match ? teamNumberForPosition(match, assignment.position) : null;
 
-  // Tapping the card opens the scouting form with match, comp level and team
-  // already filled in — the whole point of the tab is to remove that typing.
+  // Tapping the card opens the match scouting form itself — not the form picker
+  // — with match, comp level and team already filled in. The whole point of the
+  // tab is to remove that typing. The scout is identified server-side from the
+  // signed-in user, so there is no name to pass.
   const prefix = match && match.comp_level !== "qm" ? "elim" : "qm";
   function open() {
-    const q = new URLSearchParams({ match: String(assignment.matchNumber), prefix });
+    const q = new URLSearchParams({
+      match: String(assignment.matchNumber),
+      prefix,
+      form: "default",
+    });
     if (teamNumber) q.set("team", String(teamNumber));
     navigate(`/scout?${q.toString()}`);
   }
