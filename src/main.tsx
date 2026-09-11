@@ -42,6 +42,7 @@ function PWAUpdatePrompt() {
 
 
 import App from './App.tsx'
+import RouteErrorBoundary from '@/components/RouteErrorBoundary'
 
 // ─── Pre-exchange OAuth code via HTTP before React mounts ────────────────────
 //
@@ -132,6 +133,10 @@ const router = createBrowserRouter([
   {
     path: '/*',
     element: <App />,
+    // Without this, any throw during render — most importantly a cached client
+    // calling a Convex function the deployed backend no longer has — replaces
+    // the whole app with react-router's raw stack trace. See the component.
+    errorElement: <RouteErrorBoundary />,
   },
 ])
 
