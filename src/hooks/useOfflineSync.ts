@@ -10,6 +10,7 @@ import {
   dequeueOfflineSubmission,
   getChecklistQueue,
   dequeueOfflineChecklist,
+  legacyChecklistToForm,
   getKanbanQueue,
   dequeueKanbanOp,
   getTotalPendingOps,
@@ -39,7 +40,6 @@ export function useOfflineSync() {
   const syncingRef = useRef(false);
 
   const submitForm      = useMutation(api.forms.submitForm);
-  const submitChecklist = useMutation(api.checklists.submitChecklist);
   const moveCard    = useMutation(api.kanban.moveCard);
   const updateCard  = useMutation(api.kanban.updateCard);
   const removeCard  = useMutation(api.kanban.removeCard);
@@ -85,16 +85,22 @@ export function useOfflineSync() {
       }
     }
 
-    // ── Drain checklist submissions ──────────────────────────────────────
+    // ── Drain the legacy checklist queue ─────────────────────────────────
+    // Nothing writes to this queue any more — checklists are ordinary form
+    // submissions. This only exists to rescue work a scout finished offline on
+    // the pre-merge build, by re-filing it through submitForm. Once a device's
+    // queue drains it stays empty.
     for (const cl of getChecklistQueue()) {
+      const sub = legacyChecklistToForm(cl);
       try {
-        await submitChecklist({
-          templateId:      cl.templateId as Id<"formTemplates">,
-          eventKey:        cl.eventKey,
-          matchNumber:     cl.matchNumber,
-          assignedScoutId: cl.assignedScoutId as Id<"users">,
-          data:            cl.data,
-          offlineId:       cl.offlineId,
+        await submitForm({
+          templateId:  sub.templateId as Id<"formTemplates">,
+          eventKey:    sub.eventKey,
+          matchNumber: sub.matchNumber,
+          compLevel:   sub.compLevel,
+          teamNumber:  sub.teamNumber,
+          data:        sub.data,
+          offlineId:   sub.offlineId,
         });
         dequeueOfflineChecklist(cl.id);
         anySynced = true;
@@ -134,7 +140,7 @@ export function useOfflineSync() {
     }
     refreshCounts();
     syncingRef.current = false;
-  }, [submitForm, submitChecklist, moveCard, updateCard, removeCard, refreshCounts]);
+  }, [submitForm, moveCard, updateCard, removeCard, refreshCounts]);
 
   // Called by convexCache when live data arrives
   const markSynced = useCallback(() => {

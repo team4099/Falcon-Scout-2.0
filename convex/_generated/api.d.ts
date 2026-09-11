@@ -12,7 +12,6 @@ import type * as admin from "../admin.js";
 import type * as adminAuth from "../adminAuth.js";
 import type * as auth from "../auth.js";
 import type * as betting from "../betting.js";
-import type * as checklists from "../checklists.js";
 import type * as events from "../events.js";
 import type * as forms from "../forms.js";
 import type * as http from "../http.js";
@@ -33,7 +32,6 @@ declare const fullApi: ApiFromModules<{
   adminAuth: typeof adminAuth;
   auth: typeof auth;
   betting: typeof betting;
-  checklists: typeof checklists;
   events: typeof events;
   forms: typeof forms;
   http: typeof http;

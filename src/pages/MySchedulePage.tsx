@@ -75,7 +75,11 @@ const SURF_BORD = "oklch(1 0 0 / 8%)";
 const MUTED     = "var(--muted-foreground)";
 const FG        = "var(--foreground)";
 
-// ── Checklist assignment algorithm (mirrors ChecklistPage) ───────────────────
+// ── Checklist assignment algorithm ───────────────────────────────────────────
+//
+// This is the only home for it now: the standalone Checklists tab is gone and a
+// checklist is an ordinary scouting form, so My Schedule is where a scout finds
+// out which one is theirs and taps through to fill it in.
 
 const OUR_TEAM_KEY = "frc4099";
 
@@ -160,7 +164,11 @@ function teamNumberForPosition(match: TBAMatch, position: Position): number | nu
 function ChecklistCard({ assignment }: { assignment: ChecklistAssignment }) {
   const navigate = useNavigate();
   function open() {
-    navigate(`/checklist?match=${assignment.matchNumber}&template=${assignment.templateId}`);
+    // Checklists are ordinary scouting forms — same page, same submit path.
+    // `template=` names the exact checklist, since several can be active.
+    navigate(
+      `/scout?match=${assignment.matchNumber}&prefix=qm&form=checklist&template=${assignment.templateId}`
+    );
   }
   return (
     <div
@@ -875,23 +883,32 @@ export default function MySchedulePage() {
   ) as PitScoutingAssignment[] | null | undefined;
   const myPitScoutingTeam = useCached(myPitScoutingTeamLive, `my_pit_scouting_team_${eventKey || "none"}`) as PitScoutingAssignment[] | null | undefined;
 
-  // Active checklist templates
-  const checklistTemplatesLive = useQuery(api.checklists.listActiveChecklistTemplates);
-  const checklistTemplates = useCached(checklistTemplatesLive, "active_checklist_templates") as ChecklistTemplate[] | undefined;
+  // Active checklist templates. Checklists are ordinary form templates now, so
+  // they come from the same query every other form uses and are filtered here
+  // rather than needing a checklist-specific endpoint.
+  const activeTemplatesLive = useQuery(api.forms.listActiveTemplates);
+  const activeTemplates = useCached(activeTemplatesLive, "active_templates") as
+    | (ChecklistTemplate & { formType?: string })[]
+    | undefined;
+  const checklistTemplates = useMemo<ChecklistTemplate[] | undefined>(
+    () => activeTemplates?.filter((t) => t.formType === "checklist"),
+    [activeTemplates]
+  );
 
-  // My checklist submissions for this event
-  const myChecklistSubsLive = useQuery(
-    api.checklists.getMyChecklistSubmissions,
+  // My submissions for this event — a checklist counts as done once this scout
+  // has a submission for that match against that checklist template.
+  const mySubmissionsLive = useQuery(
+    api.forms.getMySubmissions,
     eventKey ? { eventKey } : "skip"
   );
-  const myChecklistSubs = useCached(myChecklistSubsLive, `my_checklist_subs_${eventKey || "none"}`);
+  const mySubmissions = useCached(mySubmissionsLive, `my_submissions_${eventKey || "none"}`);
   const completedChecklistSet = useMemo<Set<string>>(() => {
     const s = new Set<string>();
-    for (const sub of myChecklistSubs ?? []) {
+    for (const sub of mySubmissions ?? []) {
       s.add(`${sub.matchNumber}-${sub.templateId}`);
     }
     return s;
-  }, [myChecklistSubs]);
+  }, [mySubmissions]);
 
   const myPreferences = useCached(
     useQuery(

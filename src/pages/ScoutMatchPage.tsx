@@ -306,6 +306,11 @@ export default function ScoutMatchPage() {
       prefix: searchParams.get("prefix") === "elim" ? ("elim" as const) : null,
       team:   Number(searchParams.get("team")) || null,
       form:   FORM_TYPE_ORDER.includes(form as FormType) ? (form as FormType) : null,
+      // An exact template id. Only checklists need it: several checklist
+      // templates can be active at once and a scout is assigned a specific
+      // one, which `form=checklist` alone cannot name. Falls back to `form=`
+      // if the template has since been deactivated.
+      template: searchParams.get("template"),
     };
   });
   // Whether the `form` deep-link has already picked a template. Without this,
@@ -351,10 +356,15 @@ export default function ScoutMatchPage() {
   // a `form=` deep-link from My Schedule, or a single active template.
   useEffect(() => {
     if (selectedTemplate || !activeTemplates?.length) return;
-    if (prefill.form && !deepLinkApplied) {
-      const match = (activeTemplates as ActiveTemplate[]).find(
-        (t) => ((t as { formType?: string }).formType ?? "default") === prefill.form
-      );
+    if ((prefill.template || prefill.form) && !deepLinkApplied) {
+      const list = activeTemplates as ActiveTemplate[];
+      const match =
+        (prefill.template && list.find((t) => t._id === prefill.template)) ||
+        (prefill.form &&
+          list.find(
+            (t) => ((t as { formType?: string }).formType ?? "default") === prefill.form
+          )) ||
+        null;
       if (match) {
         setDeepLinkApplied(true);
         setSelectedTemplate(match);
@@ -364,7 +374,7 @@ export default function ScoutMatchPage() {
     if (activeTemplates.length === 1) {
       setSelectedTemplate(activeTemplates[0] as ActiveTemplate);
     }
-  }, [activeTemplates, selectedTemplate, prefill.form, deepLinkApplied]);
+  }, [activeTemplates, selectedTemplate, prefill.form, prefill.template, deepLinkApplied]);
 
   // Reset form data when template changes. When the page was opened from a
   // schedule assignment, seed the first teamNumber field instead of clearing to
@@ -383,7 +393,19 @@ export default function ScoutMatchPage() {
 
   const template = selectedTemplate;
   const fields: FormField[] = (template?.fields ?? []) as FormField[];
-  const isPitForm = (template as { formType?: string } | null)?.formType === "pit";
+  const templateFormType =
+    ((template as { formType?: FormType } | null)?.formType ?? "default") as FormType;
+  const isPitForm = templateFormType === "pit";
+  const isChecklist = templateFormType === "checklist";
+  // Checklists are per-match but are never elimination-match work (the pit
+  // rotation that assigns them is quals-only), and they carry no team, so they
+  // need the match number and nothing else.
+  const heading = isPitForm ? "Scout Pit" : isChecklist ? "Checklist" : "Scout Match";
+  const submitLabel = isPitForm
+    ? "Submit Pit Data"
+    : isChecklist
+      ? "Submit Checklist"
+      : "Submit Match Data";
 
   // Group fields by section
   const sections = fields.reduce<Record<string, FormField[]>>((acc, f) => {
@@ -523,9 +545,8 @@ export default function ScoutMatchPage() {
         // Tell the scout what they earned — the payout is the point of the
         // change, and a silent credit teaches nobody that scouting pays.
         const reward = (template as { coinReward?: number } | null)?.coinReward ?? 50;
-        toast.success(
-          reward > 0 ? `Match scouted! +${reward} coins 🪙` : "Match scouted! ✅"
-        );
+        const what = isChecklist ? "Checklist done!" : isPitForm ? "Pit scouted!" : "Match scouted!";
+        toast.success(reward > 0 ? `${what} +${reward} coins 🪙` : `${what} ✅`);
       }
       // Reset for next scout entry — bump match number, keep same form
       setFormData({});
@@ -595,7 +616,7 @@ export default function ScoutMatchPage() {
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-2xl font-bold tracking-tight">
-              {isPitForm ? "Scout Pit" : "Scout Match"}
+              {heading}
             </h2>
             {/* Back to picker button when multiple forms exist */}
             {activeTemplates.length > 1 && (
@@ -633,7 +654,8 @@ export default function ScoutMatchPage() {
         {/* Match prefix + number — hidden for pit scouting forms */}
         {!isPitForm && (
         <div className="bg-card border border-border rounded-xl p-4 space-y-4">
-          {/* Match Prefix */}
+          {/* Match Prefix — checklists are quals-only, so there is nothing to pick */}
+          {!isChecklist && (
           <div className="space-y-1.5">
             <Label>Match Prefix <span className="text-primary">*</span></Label>
             <div className="flex rounded-lg overflow-hidden border border-border w-fit">
@@ -656,6 +678,7 @@ export default function ScoutMatchPage() {
               {matchPrefix === "qm" ? "Qualification match" : "Elimination match"}
             </p>
           </div>
+          )}
 
           {/* Match Number */}
           <div className="space-y-1.5">
@@ -708,7 +731,7 @@ export default function ScoutMatchPage() {
           className="w-full h-12 text-base font-bold"
         >
           <Send className="h-4 w-4 mr-2" />
-          {submitting ? "Submitting…" : "Submit Match Data"}
+          {submitting ? "Submitting…" : submitLabel}
         </Button>
       </form>
     </div>

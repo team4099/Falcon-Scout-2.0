@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { getAuthUserId } from "@convex-dev/auth/server";
 import { isSignedIn, requireAdmin, requireUser } from "./adminAuth";
 import { awardCoins, DEFAULT_SCOUT_REWARD } from "./betting";
 import type { Id } from "./_generated/dataModel";
@@ -252,6 +253,34 @@ export const submitForm = mutation({
     }
 
     return submissionId;
+  },
+});
+
+/**
+ * The signed-in scout's own submissions at an event.
+ *
+ * Only the identity fields are returned — this backs "have I already done
+ * this?" checks (My Schedule's checklist cards), not data display, so there is
+ * no reason to ship every response blob to every client.
+ */
+export const getMySubmissions = query({
+  args: { eventKey: v.string() },
+  handler: async (ctx, { eventKey }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    const rows = await ctx.db
+      .query("formSubmissions")
+      .withIndex("by_scout_event_match", (q) =>
+        q.eq("scoutId", userId).eq("eventKey", eventKey)
+      )
+      .collect();
+    return rows.map((r) => ({
+      _id: r._id,
+      templateId: r.templateId,
+      matchNumber: r.matchNumber,
+      compLevel: r.compLevel,
+      teamNumber: r.teamNumber,
+    }));
   },
 });
 

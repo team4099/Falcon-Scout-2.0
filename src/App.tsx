@@ -1,4 +1,4 @@
-import { Routes, Route, NavLink, useNavigate, useLocation, Link } from "react-router";
+import { Routes, Route, NavLink, Navigate, useNavigate, useLocation, Link } from "react-router";
 import { useTheme } from "next-themes";
 import { useQuery } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
@@ -36,7 +36,6 @@ import {
   ScanLine,
   MoreHorizontal,
   X,
-  ClipboardCheck,
   DollarSign,
 } from "lucide-react";
 import { useOfflineSync } from "@/hooks/useOfflineSync";
@@ -56,7 +55,6 @@ import LoginPage from "@/pages/LoginPage";
 import ManageScoutsPage from "@/pages/ManageScoutsPage";
 import SchedulingPage from "@/pages/SchedulingPage";
 import MySchedulePage from "@/pages/MySchedulePage";
-import ChecklistPage from "@/pages/ChecklistPage";
 import BettingPage from "@/pages/BettingPage";
 
 // Base nav items — always visible
@@ -66,7 +64,6 @@ const BASE_NAV = [
   { to: "/data",      label: "Data Viewer",  icon: BarChart2       },
   { to: "/scout",     label: "Scout Match",  icon: ClipboardList   },
   { to: "/schedule",  label: "My Schedule",  icon: CalendarDays    },
-  { to: "/checklist", label: "Checklists",   icon: ClipboardCheck  },
   { to: "/betting",   label: "FalconBet",    icon: DollarSign      },
   { to: "/qrcodes",   label: "My QR Codes",  icon: QrCode          },
   { to: "/scanner",   label: "QR Scanner",   icon: ScanLine        },
@@ -231,11 +228,10 @@ function AuthenticatedApp() {
     { to: "/",          label: "Dashboard", icon: LayoutDashboard },
     { to: "/scout",     label: "Scout",     icon: ClipboardList   },
     { to: "/schedule",  label: "Schedule",  icon: CalendarDays    },
-    { to: "/checklist", label: "Checklist", icon: ClipboardCheck  },
+    { to: "/matches",   label: "Matches",   icon: CalendarDays    },
   ];
 
   const BOTTOM_NAV_MORE = [
-    { to: "/matches",  label: "Matches",   icon: CalendarDays },
     { to: "/data",     label: "Data",      icon: BarChart2    },
     { to: "/betting",  label: "FalconBet", icon: DollarSign   },
     { to: "/qrcodes",  label: "QR Codes",  icon: QrCode       },
@@ -441,7 +437,11 @@ function AuthenticatedApp() {
             <Route path="/data"       element={<DataViewerPage />} />
             <Route path="/scout"      element={<ScoutMatchPage />} />
             <Route path="/schedule"   element={<MySchedulePage />} />
-            <Route path="/checklist"  element={<ChecklistPage />} />
+            {/* Checklists are ordinary scouting forms now — the dedicated tab
+                is gone. Redirect rather than 404 so an installed PWA's stale
+                shortcut, a bookmark or an old deep link still lands somewhere
+                useful. */}
+            <Route path="/checklist"  element={<Navigate to="/scout?form=checklist" replace />} />
             <Route path="/betting"    element={<BettingPage />} />
             <Route path="/qrcodes"    element={<QRCodesPage />} />
             <Route path="/scanner"    element={<ScannerPage />} />

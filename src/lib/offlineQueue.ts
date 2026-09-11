@@ -56,14 +56,19 @@ export function clearOfflineQueue(): void {
   localStorage.removeItem(QUEUE_KEY);
 }
 
-// ── Checklist submission queue ─────────────────────────────────────────────────
+// ── Legacy checklist queue (drain-only) ───────────────────────────────────────
 //
-// Checklists need their own queue. They used to be pushed onto the form queue
-// above, which useOfflineSync drains through api.forms.submitForm — so a
-// checklist completed offline never reached checklistSubmissions at all. It was
-// filed as a scouting submission with teamNumber 0, polluting the Data Viewer,
-// losing assignedScoutId (the form queue has no such field), and paying out the
-// scouting reward. These go to api.checklists.submitChecklist instead.
+// Checklists used to be their own thing: their own page, their own table
+// (checklistSubmissions) and this queue, because draining them through
+// api.forms.submitForm filed them as scouting rows. They ARE scouting rows now
+// — a checklist is just a formType, submitted through ScoutMatchPage like every
+// other form — so nothing enqueues here any more.
+//
+// The read/drain side stays because a scout could have finished a checklist
+// offline on the old build and still be carrying it in localStorage. Dropping
+// these functions would silently destroy that work. `legacyChecklistToForm`
+// converts one into the form payload the current server expects;
+// useOfflineSync drains them on the next sync and the queue empties for good.
 
 export interface OfflineChecklist {
   id: string;        // internal queue ID
@@ -87,29 +92,41 @@ export function getChecklistQueue(): OfflineChecklist[] {
   }
 }
 
-export function enqueueOfflineChecklist(
-  submission: Omit<OfflineChecklist, "id" | "timestamp" | "offlineId"> & { offlineId?: string }
-): string {
-  const queue = getChecklistQueue();
-  const id = crypto.randomUUID();
-  const entry: OfflineChecklist = {
-    ...submission,
-    id,
-    offlineId: submission.offlineId ?? id,
-    timestamp: Date.now(),
-  };
-  queue.push(entry);
-  localStorage.setItem(CHECKLIST_QUEUE_KEY, JSON.stringify(queue));
-  return entry.offlineId;
-}
-
 export function dequeueOfflineChecklist(id: string): void {
   const queue = getChecklistQueue().filter((s) => s.id !== id);
+  if (queue.length === 0) {
+    localStorage.removeItem(CHECKLIST_QUEUE_KEY);
+    return;
+  }
   localStorage.setItem(CHECKLIST_QUEUE_KEY, JSON.stringify(queue));
 }
 
 export function clearChecklistQueue(): void {
   localStorage.removeItem(CHECKLIST_QUEUE_KEY);
+}
+
+/**
+ * Map a legacy queued checklist onto the current submitForm payload.
+ *
+ * teamNumber 0 — a checklist has no teamNumber field, and 0 is what the
+ * Dashboard and Data Viewer already treat as "not a team submission", so these
+ * rows stay out of the team rollups. compLevel "qm" because checklists only
+ * ever came from the quals-only pit rotation. assignedScoutId is dropped: the
+ * server records the caller as scoutId, and only the assigned scout's own
+ * device holds their queue.
+ */
+export function legacyChecklistToForm(cl: OfflineChecklist): OfflineSubmission {
+  return {
+    id: cl.id,
+    offlineId: cl.offlineId,
+    timestamp: cl.timestamp,
+    templateId: cl.templateId,
+    eventKey: cl.eventKey,
+    matchNumber: cl.matchNumber,
+    compLevel: "qm",
+    teamNumber: 0,
+    data: cl.data,
+  };
 }
 
 // ── Kanban mutation queue ──────────────────────────────────────────────────────

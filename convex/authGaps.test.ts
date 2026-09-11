@@ -2,7 +2,9 @@
  * Authorization gaps found in the full-app audit.
  *
  *  - submitChecklist read getAuthUserId but never enforced it, so an anonymous
- *    caller could insert checklist rows.
+ *    caller could insert checklist rows. Checklists are now ordinary form
+ *    submissions, so the same guarantee is asserted against submitForm with a
+ *    checklist template.
  *  - Every read query except the ones in users.ts was ungated, so the whole
  *    dataset was readable by anyone with the deployment URL.
  *  - The kanban card mutations took a bare cardId and only checked sign-in, so
@@ -20,22 +22,51 @@ const EVENT = "2025chcmp";
 describe("checklist submission requires a signed-in caller", () => {
   test("an anonymous caller is rejected", async () => {
     const t = convexTest(schema, modules);
-    const { scoutId, templateId } = await t.run(async (ctx) => ({
-      scoutId: await ctx.db.insert("users", { name: "Scout" }),
+    const templateId = await t.run(async (ctx) =>
+      ctx.db.insert("formTemplates", {
+        name: "CL", formType: "checklist", fields: [], isActive: true,
+      }),
+    );
+
+    // Checklists go through submitForm now. teamNumber 0 is what a checklist
+    // carries (no teamNumber field), which must not become an auth bypass.
+    await expect(
+      t.mutation(api.forms.submitForm, {
+        templateId, eventKey: EVENT, matchNumber: 1,
+        compLevel: "qm", teamNumber: 0, data: "{}",
+      }),
+    ).rejects.toThrow(/signed in/);
+
+    const rows = await t.run(async (ctx) => ctx.db.query("formSubmissions").collect());
+    expect(rows).toHaveLength(0);
+  });
+
+  test("a signed-in scout's checklist lands in formSubmissions", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, templateId } = await t.run(async (ctx) => ({
+      userId: await ctx.db.insert("users", { name: "Scout" }),
       templateId: await ctx.db.insert("formTemplates", {
         name: "CL", formType: "checklist", fields: [], isActive: true,
       }),
     }));
+    const as = t.withIdentity({ subject: userId, issuer: "test" });
+    await as.mutation(api.forms.submitForm, {
+      templateId, eventKey: EVENT, matchNumber: 7,
+      compLevel: "qm", teamNumber: 0, data: "{}",
+    });
 
-    await expect(
-      t.mutation(api.checklists.submitChecklist, {
-        templateId, eventKey: EVENT, matchNumber: 1,
-        assignedScoutId: scoutId, data: "{}",
-      }),
-    ).rejects.toThrow(/signed in/);
+    // getMySubmissions is what My Schedule uses to tick a checklist off.
+    const mine = await as.query(api.forms.getMySubmissions, { eventKey: EVENT });
+    expect(mine).toHaveLength(1);
+    expect(mine[0].matchNumber).toBe(7);
+    expect(mine[0].templateId).toBe(templateId);
+    // teamNumber 0 keeps it out of the Dashboard/Data Viewer team rollups.
+    expect(mine[0].teamNumber).toBe(0);
+  });
 
-    const rows = await t.run(async (ctx) => ctx.db.query("checklistSubmissions").collect());
-    expect(rows).toHaveLength(0);
+  test("getMySubmissions returns nothing to an anonymous caller", async () => {
+    const t = convexTest(schema, modules);
+    expect(await t.query(api.forms.getMySubmissions, { eventKey: EVENT })).toEqual([]);
   });
 });
 

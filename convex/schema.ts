@@ -58,7 +58,12 @@ export default defineSchema({
     // so only the first one pays out. See awardOncePerMatch in forms.ts.
     .index("by_scout_event_match", ["scoutId", "eventKey", "matchNumber"]),
 
-  // Checklist submissions — one per checklist template per match
+  // DEPRECATED — checklists are now ordinary form submissions (formType
+  // "checklist" templates submitted through forms.submitForm), so nothing
+  // writes here any more. The table is kept, not dropped, because rows written
+  // before the merge still exist and `convex deploy` rejects a schema that
+  // omits a populated table. Safe to delete once the historical rows are no
+  // longer wanted.
   checklistSubmissions: defineTable({
     templateId: v.id("formTemplates"),
     eventKey: v.string(),
