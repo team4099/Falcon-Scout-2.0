@@ -57,13 +57,16 @@ import SchedulingPage from "@/pages/SchedulingPage";
 import MySchedulePage from "@/pages/MySchedulePage";
 import BettingPage from "@/pages/BettingPage";
 
-// Base nav items — always visible
+// Base nav items — always visible. Scheduling is here (not the admin-only
+// list below) because non-admins can view everyone's assignments read-only;
+// SchedulingPage itself gates editing on isAdminMode.
 const BASE_NAV = [
   { to: "/",          label: "Dashboard",   icon: LayoutDashboard },
   { to: "/matches",   label: "Matches",      icon: CalendarDays    },
   { to: "/data",      label: "Data Viewer",  icon: BarChart2       },
   { to: "/scout",     label: "Scout Match",  icon: ClipboardList   },
   { to: "/schedule",  label: "My Schedule",  icon: CalendarDays    },
+  { to: "/scheduling", label: "Scheduling",  icon: CalendarDays    },
   { to: "/betting",   label: "FalconBet",    icon: DollarSign      },
   { to: "/qrcodes",   label: "My QR Codes",  icon: QrCode          },
   { to: "/scanner",   label: "QR Scanner",   icon: ScanLine        },
@@ -217,7 +220,6 @@ function AuthenticatedApp() {
       ? [
           { to: "/builder",     label: "Form Builder",  icon: WrenchIcon  },
           { to: "/scouts",      label: "Manage Scouts", icon: Users       },
-          { to: "/scheduling",  label: "Scheduling",    icon: CalendarDays },
         ]
       : []),
     { to: "/settings", label: "Settings", icon: Settings },
@@ -232,15 +234,15 @@ function AuthenticatedApp() {
   ];
 
   const BOTTOM_NAV_MORE = [
-    { to: "/data",     label: "Data",      icon: BarChart2    },
-    { to: "/betting",  label: "FalconBet", icon: DollarSign   },
-    { to: "/qrcodes",  label: "QR Codes",  icon: QrCode       },
-    { to: "/scanner",  label: "Scanner",   icon: ScanLine     },
-    { to: "/kanban",   label: "Picklist",  icon: Columns      },
+    { to: "/data",       label: "Data",       icon: BarChart2    },
+    { to: "/betting",    label: "FalconBet",  icon: DollarSign   },
+    { to: "/qrcodes",    label: "QR Codes",   icon: QrCode       },
+    { to: "/scanner",    label: "Scanner",    icon: ScanLine     },
+    { to: "/kanban",     label: "Picklist",   icon: Columns      },
+    { to: "/scheduling", label: "Scheduling", icon: CalendarDays },
     ...(isAdminMode
       ? [
           { to: "/scouts",      label: "Scouts",       icon: Users       },
-          { to: "/scheduling",  label: "Scheduling",   icon: CalendarDays },
           { to: "/builder",     label: "Form Builder", icon: WrenchIcon  },
         ]
       : []),

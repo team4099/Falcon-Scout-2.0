@@ -10,7 +10,7 @@ import { fetchTBAEventMatches, fetchTBAEventTeams } from "@/lib/api";
 import type { TBAMatch, TBATeam } from "@/lib/api";
 import { lsGet, lsGetStale } from "@/lib/persistentCache";
 import {
-  Users, ShieldAlert, Lock, CalendarDays, Wrench, Loader2,
+  Users, CalendarDays, Wrench, Loader2,
   AlertCircle, Plus, Trash2, Pencil, Check,
   Zap, LayoutGrid, Sparkles, TriangleAlert, ChevronDown as ChevDown,
   ClipboardList,
@@ -131,28 +131,6 @@ function Avatar({ user, size = 36 }: { user: User; size?: number }) {
   );
 }
 
-// ── Admin lock screen ─────────────────────────────────────────────────────────
-
-function AdminLockScreen() {
-  return (
-    <div className="flex flex-col items-center justify-center h-full gap-6">
-      <div className="flex flex-col items-center gap-4 p-10 rounded-2xl border border-border bg-card max-w-sm w-full text-center shadow-sm">
-        <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center">
-          <ShieldAlert className="h-8 w-8 text-primary" />
-        </div>
-        <div className="space-y-1">
-          <h2 className="text-xl font-bold tracking-tight text-foreground">Admin Access Required</h2>
-          <p className="text-sm text-muted-foreground">Enable admin mode in Settings to manage schedules.</p>
-        </div>
-        <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-muted/50 border border-border/50 text-sm text-muted-foreground w-full justify-center">
-          <Lock className="h-4 w-4 shrink-0" />
-          <span>Go to <strong className="text-foreground">Settings → Admin Mode</strong></span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ── Scout selector panel ──────────────────────────────────────────────────────
 
 interface ScoutSelectorProps {
@@ -164,9 +142,10 @@ interface ScoutSelectorProps {
   onBatchAssign: (start: number, end: number, positions: Set<Position>) => Promise<void>;
   isMobile?: boolean;
   isLandscapePhone?: boolean;
+  readOnly?: boolean;
 }
 
-function ScoutSelector({ users, pinnedId, onPin, matchCounts, matches, onBatchAssign, isMobile, isLandscapePhone }: ScoutSelectorProps) {
+function ScoutSelector({ users, pinnedId, onPin, matchCounts, matches, onBatchAssign, isMobile, isLandscapePhone, readOnly }: ScoutSelectorProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
   // In landscape phone mode the panel is always open (side-by-side, never collapsed)
   const bodyVisible = isLandscapePhone ? true : (!isMobile || mobileOpen);
@@ -232,7 +211,7 @@ function ScoutSelector({ users, pinnedId, onPin, matchCounts, matches, onBatchAs
         </div>
         {!isMobile && !isLandscapePhone && (
           <p style={{ fontSize: 11, color: MUTED, margin: "4px 0 0", lineHeight: 1.3 }}>
-            Select a scout, then click grid cells to assign.
+            {readOnly ? "Select a scout to highlight their matches." : "Select a scout, then click grid cells to assign."}
           </p>
         )}
       </div>
@@ -349,8 +328,8 @@ function ScoutSelector({ users, pinnedId, onPin, matchCounts, matches, onBatchAs
         )
       )}
 
-      {/* Batch assign — desktop only */}
-      {pinned && bodyVisible && !isMobile && !isLandscapePhone && (
+      {/* Batch assign — desktop only, admin editing only */}
+      {pinned && bodyVisible && !isMobile && !isLandscapePhone && !readOnly && (
         <div style={{ borderTop: `1px solid ${G_MED}`, padding: "12px 12px 14px", background: G_DIM, flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 10 }}>
             <Zap size={13} style={{ color: G }} />
@@ -454,14 +433,41 @@ interface MatchGridProps {
   assignMap: Record<number, Partial<Record<Position, { scoutId: string; name: string; fullName: string }>>>;
   pinnedId: string | null;
   onCellClick: (matchNum: number, matchLbl: string, pos: Position) => void;
+  onCycleClick: (cycleMatches: TBAMatch[], pos: Position) => void;
   saving: Set<string>;
   isMobile?: boolean;
   isLandscapePhone?: boolean;
+  readOnly?: boolean;
 }
 
-function MatchGrid({ matches, assignMap, pinnedId, onCellClick, saving, isMobile, isLandscapePhone }: MatchGridProps) {
+/** A qual-match grid row is either a single match, or (once 5 consecutive
+ *  quals are available) a merged block covering a whole scouting cycle — so
+ *  admins assign a cycle in one tap instead of once per match within it. */
+type GridRow =
+  | { type: "single"; match: TBAMatch }
+  | { type: "cycle"; matches: TBAMatch[]; cycleNumber: number };
+
+function buildGridRows(matches: TBAMatch[]): GridRow[] {
+  const rows: GridRow[] = [];
+  let cycleNumber = 0;
+  for (let i = 0; i < matches.length; ) {
+    const chunk = matches.slice(i, i + SCOUT_CYCLE);
+    if (chunk.length === SCOUT_CYCLE && chunk.every(m => m.comp_level === "qm")) {
+      cycleNumber += 1;
+      rows.push({ type: "cycle", matches: chunk, cycleNumber });
+      i += SCOUT_CYCLE;
+    } else {
+      rows.push({ type: "single", match: matches[i] });
+      i += 1;
+    }
+  }
+  return rows;
+}
+
+function MatchGrid({ matches, assignMap, pinnedId, onCellClick, onCycleClick, saving, isMobile, isLandscapePhone, readOnly }: MatchGridProps) {
   const [expandedMatchKey, setExpandedMatchKey] = useState<string | null>(null);
-  const canExpand = isMobile && !isLandscapePhone;
+  const canExpand = !!(isMobile && !isLandscapePhone && !readOnly);
+  const gridRows = useMemo(() => buildGridRows(matches), [matches]);
   if (matches.length === 0) {
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, color: MUTED }}>
@@ -515,39 +521,103 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, saving, isMobile
       {/* Rows */}
       <ScrollArea style={{ flex: 1 }}>
         <div style={{ padding: rowPad, display: "flex", flexDirection: "column", gap: isLandscapePhone ? 1 : 2 }}>
-          {matches.map((m, mi) => {
-            const lbl = tbaMatchLabel(m);
-            const row = assignMap[m.match_number] ?? {};
-            const isQual = m.comp_level === "qm";
-            const isExpanded = canExpand && expandedMatchKey === m.key;
-            const redPositions: Position[]  = ["red1",  "red2",  "red3"];
-            const bluePositions: Position[] = ["blue1", "blue2", "blue3"];
-            // Scouts rotate every 5 matches, so mark the boundary. Assigning a
-            // block is much easier to eyeball when the cycles are visible.
-            const cycleBreak = mi > 0 && mi % SCOUT_CYCLE === 0;
+          {gridRows.map((row) => row.type === "cycle" ? (
+            <CycleRow
+              key={`cycle-${row.matches[0].key}`}
+              cycleMatches={row.matches}
+              cycleNumber={row.cycleNumber}
+              assignMap={assignMap}
+              pinnedId={pinnedId}
+              onCycleClick={onCycleClick}
+              saving={saving}
+              readOnly={readOnly}
+              COL={COL}
+              cellPad={cellPad}
+              cellMinH={cellMinH}
+              cellFontSize={cellFontSize}
+              isLandscapePhone={isLandscapePhone}
+            />
+          ) : (
+          <SingleMatchRow
+            key={row.match.key}
+            m={row.match}
+            lbl={tbaMatchLabel(row.match)}
+            row={assignMap[row.match.match_number] ?? {}}
+            pinnedId={pinnedId}
+            onCellClick={onCellClick}
+            saving={saving}
+            readOnly={readOnly}
+            canExpand={canExpand}
+            isExpanded={canExpand && expandedMatchKey === row.match.key}
+            onToggleExpand={() => setExpandedMatchKey(k => k === row.match.key ? null : row.match.key)}
+            onCloseExpand={() => setExpandedMatchKey(null)}
+            COL={COL}
+            cellPad={cellPad}
+            cellMinH={cellMinH}
+            cellFontSize={cellFontSize}
+            isLandscapePhone={isLandscapePhone}
+          />
+          ))}
+        </div>
+      </ScrollArea>
 
-            return (
-              <Fragment key={m.key}>
-                {cycleBreak && (
-                  <div
-                    aria-hidden
-                    style={{
-                      display: "flex", alignItems: "center", gap: 8,
-                      margin: "5px 0 3px", userSelect: "none",
-                    }}
-                  >
-                    <div style={{ flex: 1, height: 2, borderRadius: 2, background: G_MED }} />
-                    <span style={{
-                      fontSize: 9, fontWeight: 800, letterSpacing: "0.08em",
-                      textTransform: "uppercase", color: MUTED, whiteSpace: "nowrap",
-                    }}>
-                      Cycle {Math.floor(mi / SCOUT_CYCLE) + 1}
-                    </span>
-                    <div style={{ flex: 1, height: 2, borderRadius: 2, background: G_MED }} />
-                  </div>
-                )}
-                {/* Grid row */}
-                <div style={{
+      {/* Footer legend — hidden in landscape phone to save vertical space */}
+      {!isLandscapePhone && (
+        <div style={{ padding: "7px 14px", borderTop: `1px solid ${SURF_BORD}`, display: "flex", gap: 16, flexShrink: 0, background: "var(--card)", alignItems: "center" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <div style={{ width: 10, height: 10, borderRadius: 3, background: G, opacity: 0.9 }} />
+          <span style={{ fontSize: 10, color: MUTED }}>Pinned scout</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <div style={{ width: 10, height: 10, borderRadius: 3, background: SURF_HVR, border: `1px solid ${SURF_BORD}` }} />
+          <span style={{ fontSize: 10, color: MUTED }}>Other scout</span>
+        </div>
+        <span style={{ marginLeft: "auto", fontSize: 10, color: MUTED }}>
+          {readOnly
+            ? "View only — enable admin mode to edit assignments"
+            : pinnedId ? "Click a cell to assign · click same scout again to unassign" : "← Pin a scout to start assigning"}
+        </span>
+      </div>
+      )}
+    </div>
+  );
+}
+
+// ── Single-match grid row (used for individual matches — playoffs and any
+// leftover quals that don't fill a full 5-match cycle) ─────────────────────
+
+interface SingleMatchRowProps {
+  m: TBAMatch;
+  lbl: string;
+  row: Partial<Record<Position, { scoutId: string; name: string; fullName: string }>>;
+  pinnedId: string | null;
+  onCellClick: (matchNum: number, matchLbl: string, pos: Position) => void;
+  saving: Set<string>;
+  readOnly?: boolean;
+  canExpand: boolean;
+  isExpanded: boolean;
+  onToggleExpand: () => void;
+  onCloseExpand: () => void;
+  COL: string;
+  cellPad: string;
+  cellMinH: number;
+  cellFontSize: number;
+  isLandscapePhone?: boolean;
+}
+
+function SingleMatchRow({
+  m, lbl, row, pinnedId, onCellClick, saving, readOnly,
+  canExpand, isExpanded, onToggleExpand, onCloseExpand,
+  COL, cellPad, cellMinH, cellFontSize, isLandscapePhone,
+}: SingleMatchRowProps) {
+  const isQual = m.comp_level === "qm";
+  const redPositions: Position[]  = ["red1",  "red2",  "red3"];
+  const bluePositions: Position[] = ["blue1", "blue2", "blue3"];
+
+  return (
+    <Fragment>
+      {/* Grid row */}
+      <div style={{
                   display: "grid", gridTemplateColumns: COL,
                   gap: 0, alignItems: "center",
                   borderRadius: 8,
@@ -557,7 +627,7 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, saving, isMobile
                   {/* Match label — tap to expand on portrait mobile */}
                   {canExpand ? (
                     <button
-                      onClick={() => setExpandedMatchKey(k => k === m.key ? null : m.key)}
+                      onClick={onToggleExpand}
                       style={{
                         padding: "3px 4px", fontSize: 12, fontWeight: 700,
                         fontFamily: "monospace", letterSpacing: "-0.01em",
@@ -615,17 +685,17 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, saving, isMobile
                           <div style={{ width: "3px", alignSelf: "stretch", background: "oklch(1 0 0/5%)", margin: "2px 0" }} />
                         )}
                         <button
-                          onClick={() => onCellClick(m.match_number, lbl, p)}
-                          disabled={isSaving}
+                          onClick={readOnly ? undefined : () => onCellClick(m.match_number, lbl, p)}
+                          disabled={isSaving || readOnly}
                           title={
                             assigned
-                              ? `${assigned.name} (${POS_META[p].short}) — click to ${isPinned ? "unassign" : "replace"}`
-                              : pinnedId ? `Assign to ${POS_META[p].label}` : "Pin a scout first"
+                              ? `${assigned.name} (${POS_META[p].short})${readOnly ? "" : ` — click to ${isPinned ? "unassign" : "replace"}`}`
+                              : readOnly ? "Unassigned" : pinnedId ? `Assign to ${POS_META[p].label}` : "Pin a scout first"
                           }
                           style={{
                             margin: isLandscapePhone ? "1px" : "2px",
                             padding: cellPad, borderRadius: 6,
-                            cursor: pinnedId ? "pointer" : "default",
+                            cursor: pinnedId && !readOnly ? "pointer" : "default",
                             background: cellBg, border: cellBorder,
                             display: "flex", alignItems: "center", justifyContent: "center",
                             fontSize: cellFontSize, fontWeight: 700, color: textColor,
@@ -633,7 +703,7 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, saving, isMobile
                             opacity: isSaving ? 0.5 : 1,
                           }}
                           onMouseEnter={e => {
-                            if (pinnedId && !isSaving) {
+                            if (pinnedId && !isSaving && !readOnly) {
                               e.currentTarget.style.background = G_DIM;
                               e.currentTarget.style.border = `1.5px solid ${G_MED}`;
                             }
@@ -646,7 +716,7 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, saving, isMobile
                           {isSaving
                             ? <Loader2 size={10} style={{ animation: "spin 1s linear infinite" }} />
                             : !assigned
-                              ? (pinnedId ? <span style={{ opacity: 0.25, fontSize: 14, fontWeight: 300 }}>+</span> : null)
+                              ? (pinnedId && !readOnly ? <span style={{ opacity: 0.25, fontSize: 14, fontWeight: 300 }}>+</span> : null)
                               : <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%", padding: "0 2px" }}>
                                   {assigned.name}
                                 </span>
@@ -678,7 +748,7 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, saving, isMobile
                         {!isQual && <span style={{ fontSize: 10, fontWeight: 700, background: G_MED, color: G, borderRadius: 20, padding: "2px 8px" }}>Playoff</span>}
                       </div>
                       <button
-                        onClick={() => setExpandedMatchKey(null)}
+                        onClick={onCloseExpand}
                         style={{ background: SURF_HVR, border: `1px solid ${SURF_BORD}`, borderRadius: 6, padding: "3px 10px", fontSize: 12, fontWeight: 700, color: MUTED, cursor: "pointer" }}
                       >
                         ✕
@@ -726,43 +796,150 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, saving, isMobile
                       </div>
                     </div>
 
-                    {pinnedId && (
+                    {pinnedId && !readOnly && (
                       <div style={{ padding: "7px 14px", borderTop: `1px solid ${SURF_BORD}`, background: G_DIM, fontSize: 11, color: MUTED, textAlign: "center" }}>
                         Tap a cell above to assign / unassign
                       </div>
                     )}
                   </div>
                 )}
-              </Fragment>
-            );
-          })}
-        </div>
-      </ScrollArea>
+    </Fragment>
+  );
+}
 
-      {/* Footer legend — hidden in landscape phone to save vertical space */}
-      {!isLandscapePhone && (
-        <div style={{ padding: "7px 14px", borderTop: `1px solid ${SURF_BORD}`, display: "flex", gap: 16, flexShrink: 0, background: "var(--card)", alignItems: "center" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-          <div style={{ width: 10, height: 10, borderRadius: 3, background: G, opacity: 0.9 }} />
-          <span style={{ fontSize: 10, color: MUTED }}>Pinned scout</span>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-          <div style={{ width: 10, height: 10, borderRadius: 3, background: SURF_HVR, border: `1px solid ${SURF_BORD}` }} />
-          <span style={{ fontSize: 10, color: MUTED }}>Other scout</span>
-        </div>
-        <span style={{ marginLeft: "auto", fontSize: 10, color: MUTED }}>
-          {pinnedId ? "Click a cell to assign · click same scout again to unassign" : "← Pin a scout to start assigning"}
+// ── Cycle grid row — merges a 5-match block into one row so an admin taps
+// once per position to cover the whole cycle instead of once per match ─────
+
+interface CycleRowProps {
+  cycleMatches: TBAMatch[];
+  cycleNumber: number;
+  assignMap: Record<number, Partial<Record<Position, { scoutId: string; name: string; fullName: string }>>>;
+  pinnedId: string | null;
+  onCycleClick: (cycleMatches: TBAMatch[], pos: Position) => void;
+  saving: Set<string>;
+  readOnly?: boolean;
+  COL: string;
+  cellPad: string;
+  cellMinH: number;
+  cellFontSize: number;
+  isLandscapePhone?: boolean;
+}
+
+function CycleRow({
+  cycleMatches, cycleNumber, assignMap, pinnedId, onCycleClick, saving, readOnly,
+  COL, cellPad, cellMinH, cellFontSize, isLandscapePhone,
+}: CycleRowProps) {
+  const first = cycleMatches[0];
+  const last = cycleMatches[cycleMatches.length - 1];
+  const rangeLbl = `${tbaMatchLabel(first)}–${tbaMatchLabel(last)}`;
+  const cycleKey = `cycle-${first.match_number}`;
+
+  return (
+    <Fragment>
+      <div
+        aria-hidden
+        style={{ display: "flex", alignItems: "center", gap: 8, margin: "5px 0 3px", userSelect: "none" }}
+      >
+        <div style={{ flex: 1, height: 2, borderRadius: 2, background: G_MED }} />
+        <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: MUTED, whiteSpace: "nowrap" }}>
+          Cycle {cycleNumber}
         </span>
+        <div style={{ flex: 1, height: 2, borderRadius: 2, background: G_MED }} />
       </div>
-      )}
-    </div>
+      <div style={{ display: "grid", gridTemplateColumns: COL, gap: 0, alignItems: "center", borderRadius: 8 }}>
+        <div style={{
+          padding: isLandscapePhone ? "2px 3px" : "3px 4px",
+          fontSize: isLandscapePhone ? 9 : 11, fontWeight: 700,
+          fontFamily: "monospace", letterSpacing: "-0.02em", color: FG, whiteSpace: "nowrap",
+        }}>
+          {rangeLbl}
+        </div>
+
+        {POSITIONS.map((p, i) => {
+          const savingKey = `${cycleKey}-${p}`;
+          const isSaving = saving.has(savingKey);
+          const slots = cycleMatches.map(m => assignMap[m.match_number]?.[p]);
+          const allAssigned = slots.every(s => s != null);
+          const uniformScoutId = allAssigned && slots.every(s => s!.scoutId === slots[0]!.scoutId)
+            ? slots[0]!.scoutId
+            : null;
+          const isPinned = uniformScoutId != null && uniformScoutId === pinnedId;
+          const isMixed = !allAssigned && slots.some(s => s != null);
+
+          let cellBg     = "transparent";
+          let cellBorder = `1.5px solid transparent`;
+          let textColor  = MUTED;
+
+          if (uniformScoutId) {
+            if (isPinned) { cellBg = G_DIM; cellBorder = `1.5px solid ${G_STR}`; textColor = G; }
+            else { cellBg = SURF_HVR; cellBorder = `1.5px solid ${SURF_BORD}`; textColor = FG; }
+          } else if (isMixed) {
+            cellBorder = `1.5px dashed ${SURF_BORD}`;
+          } else if (pinnedId) {
+            cellBorder = `1.5px dashed ${SURF_BORD}`;
+          }
+
+          return (
+            <Fragment key={p}>
+              {i === 3 && (
+                <div style={{ width: "3px", alignSelf: "stretch", background: "oklch(1 0 0/5%)", margin: "2px 0" }} />
+              )}
+              <button
+                onClick={readOnly ? undefined : () => onCycleClick(cycleMatches, p)}
+                disabled={isSaving || readOnly}
+                title={
+                  readOnly
+                    ? (uniformScoutId ? slots[0]!.name : isMixed ? "Mixed assignment across this cycle" : "Unassigned")
+                    : uniformScoutId
+                      ? `${slots[0]!.name} (${POS_META[p].short}) for the whole cycle — click to ${isPinned ? "unassign" : "replace"}`
+                      : isMixed
+                        ? "Mixed within this cycle — click to overwrite with the pinned scout"
+                        : pinnedId ? `Assign whole cycle to ${POS_META[p].label}` : "Pin a scout first"
+                }
+                style={{
+                  margin: isLandscapePhone ? "1px" : "2px",
+                  padding: cellPad, borderRadius: 6,
+                  cursor: pinnedId && !readOnly ? "pointer" : "default",
+                  background: cellBg, border: cellBorder,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: cellFontSize, fontWeight: 700, color: textColor,
+                  transition: "all 0.1s", minHeight: cellMinH, minWidth: 0, overflow: "hidden",
+                  opacity: isSaving ? 0.5 : 1,
+                }}
+                onMouseEnter={e => {
+                  if (pinnedId && !isSaving && !readOnly) {
+                    e.currentTarget.style.background = G_DIM;
+                    e.currentTarget.style.border = `1.5px solid ${G_MED}`;
+                  }
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = cellBg;
+                  e.currentTarget.style.border = cellBorder;
+                }}
+              >
+                {isSaving
+                  ? <Loader2 size={10} style={{ animation: "spin 1s linear infinite" }} />
+                  : uniformScoutId
+                    ? <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%", padding: "0 2px" }}>
+                        {slots[0]!.name}
+                      </span>
+                    : isMixed
+                      ? <span style={{ fontSize: cellFontSize - 1, opacity: 0.6 }}>···</span>
+                      : (pinnedId && !readOnly ? <span style={{ opacity: 0.25, fontSize: 14, fontWeight: 300 }}>+</span> : null)
+                }
+              </button>
+            </Fragment>
+          );
+        })}
+      </div>
+    </Fragment>
   );
 }
 
 // ── Qual pit rotation card ────────────────────────────────────────────────────
 
-function RotationCard({ rotation, users, onEdit, onDelete }: {
-  rotation: PitRotation; users: User[]; onEdit: () => void; onDelete: () => Promise<void>;
+function RotationCard({ rotation, users, onEdit, onDelete, readOnly }: {
+  rotation: PitRotation; users: User[]; onEdit: () => void; onDelete: () => Promise<void>; readOnly?: boolean;
 }) {
   const [deleting, setDeleting] = useState(false);
   const userMap = useMemo(() => Object.fromEntries(users.map(u => [u._id, u])), [users]);
@@ -816,28 +993,30 @@ function RotationCard({ rotation, users, onEdit, onDelete }: {
       </div>
 
       {/* Actions */}
-      <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
-        <button onClick={onEdit} style={{
-          width: 30, height: 30, borderRadius: 8, border: `1.5px solid ${SURF_BORD}`,
-          background: SURF_HVR, color: MUTED, cursor: "pointer",
-          display: "flex", alignItems: "center", justifyContent: "center",
-        }}>
-          <Pencil size={13} />
-        </button>
-        <button
-          onClick={async () => { setDeleting(true); try { await onDelete(); } finally { setDeleting(false); } }}
-          disabled={deleting}
-          style={{
-            width: 30, height: 30, borderRadius: 8,
-            border: "1.5px solid oklch(0.577 0.245 27 / 30%)",
-            background: "oklch(0.577 0.245 27 / 8%)",
-            color: "var(--destructive)", cursor: "pointer",
+      {!readOnly && (
+        <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
+          <button onClick={onEdit} style={{
+            width: 30, height: 30, borderRadius: 8, border: `1.5px solid ${SURF_BORD}`,
+            background: SURF_HVR, color: MUTED, cursor: "pointer",
             display: "flex", alignItems: "center", justifyContent: "center",
-          }}
-        >
-          {deleting ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={13} />}
-        </button>
-      </div>
+          }}>
+            <Pencil size={13} />
+          </button>
+          <button
+            onClick={async () => { setDeleting(true); try { await onDelete(); } finally { setDeleting(false); } }}
+            disabled={deleting}
+            style={{
+              width: 30, height: 30, borderRadius: 8,
+              border: "1.5px solid oklch(0.577 0.245 27 / 30%)",
+              background: "oklch(0.577 0.245 27 / 8%)",
+              color: "var(--destructive)", cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}
+          >
+            {deleting ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={13} />}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -845,12 +1024,13 @@ function RotationCard({ rotation, users, onEdit, onDelete }: {
 // ── Elims pit rotation panel ──────────────────────────────────────────────────
 // Exactly one elims rotation per event, covering all playoff matches.
 
-function ElimsRotationPanel({ rotation, users, allUsers: allUsersRaw, onSave, onDelete }: {
+function ElimsRotationPanel({ rotation, users, allUsers: allUsersRaw, onSave, onDelete, readOnly }: {
   rotation: PitRotation | null;
   users: User[];        // opted-in scouts
   allUsers?: User[];    // all scouts for manual override
   onSave: (scoutIds: Set<string>) => Promise<void>;
   onDelete: () => Promise<void>;
+  readOnly?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set(rotation?.scoutIds ?? []));
@@ -906,16 +1086,18 @@ function ElimsRotationPanel({ rotation, users, allUsers: allUsersRaw, onSave, on
           /* Not yet created */
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, padding: "8px 0 4px", textAlign: "center" }}>
             <p style={{ fontSize: 13, color: MUTED, margin: 0 }}>No elims pit rotation set yet.</p>
-            <button onClick={() => setEditing(true)}
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 6,
-                padding: "7px 16px", borderRadius: 9, fontSize: 13, fontWeight: 700, cursor: "pointer",
-                background: G, color: G_TXT, border: "none",
-                boxShadow: `0 2px 8px ${G} / 30%`,
-              }}
-            >
-              <Plus size={13} />Set Up Elims Rotation
-            </button>
+            {!readOnly && (
+              <button onClick={() => setEditing(true)}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                  padding: "7px 16px", borderRadius: 9, fontSize: 13, fontWeight: 700, cursor: "pointer",
+                  background: G, color: G_TXT, border: "none",
+                  boxShadow: `0 2px 8px ${G} / 30%`,
+                }}
+              >
+                <Plus size={13} />Set Up Elims Rotation
+              </button>
+            )}
           </div>
         ) : editing || !rotation ? (
           /* Edit / create form */
@@ -1029,19 +1211,21 @@ function ElimsRotationPanel({ rotation, users, allUsers: allUsersRaw, onSave, on
                 );
               })}
             </div>
-            <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
-              <button onClick={() => setEditing(true)}
-                style={{ width: 30, height: 30, borderRadius: 8, border: `1.5px solid ${SURF_BORD}`, background: SURF_HVR, color: MUTED, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <Pencil size={13} />
-              </button>
-              <button
-                onClick={async () => { setDeleting(true); try { await onDelete(); } finally { setDeleting(false); } }}
-                disabled={deleting}
-                style={{ width: 30, height: 30, borderRadius: 8, border: "1.5px solid oklch(0.577 0.245 27 / 30%)", background: "oklch(0.577 0.245 27 / 8%)", color: "var(--destructive)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
-              >
-                {deleting ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={13} />}
-              </button>
-            </div>
+            {!readOnly && (
+              <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
+                <button onClick={() => setEditing(true)}
+                  style={{ width: 30, height: 30, borderRadius: 8, border: `1.5px solid ${SURF_BORD}`, background: SURF_HVR, color: MUTED, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Pencil size={13} />
+                </button>
+                <button
+                  onClick={async () => { setDeleting(true); try { await onDelete(); } finally { setDeleting(false); } }}
+                  disabled={deleting}
+                  style={{ width: 30, height: 30, borderRadius: 8, border: "1.5px solid oklch(0.577 0.245 27 / 30%)", background: "oklch(0.577 0.245 27 / 8%)", color: "var(--destructive)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                >
+                  {deleting ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={13} />}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1423,6 +1607,7 @@ function PitScoutingTab({
   onAutoAssign,
   optedInCount,
   isMobile,
+  readOnly,
 }: {
   tbaTeams: TBATeamSimple[];
   tbaLoading: boolean;
@@ -1434,6 +1619,7 @@ function PitScoutingTab({
   onAutoAssign: (teams: TBATeamSimple[]) => Promise<void>;
   optedInCount: number;
   isMobile: boolean;
+  readOnly?: boolean;
 }) {
   const [pinnedScoutId, setPinnedScoutId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -1452,7 +1638,7 @@ function PitScoutingTab({
   const totalCount    = tbaTeams.length;
 
   async function handleCellClick(teamNum: number) {
-    if (!pinnedScoutId) return;
+    if (!pinnedScoutId || readOnly) return;
     setSaving(prev => new Set(prev).add(teamNum));
     try { await onToggleScout(teamNum, pinnedScoutId); }
     finally { setSaving(prev => { const n = new Set(prev); n.delete(teamNum); return n; }); }
@@ -1470,7 +1656,7 @@ function PitScoutingTab({
           background: SURFACE, padding: "10px 12px",
         }}>
           <div style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: MUTED, marginBottom: 8 }}>
-            Pin a scout then click teams
+            {readOnly ? "Pin a scout to highlight their teams" : "Pin a scout then click teams"}
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
             {allUsers.map(u => {
@@ -1524,7 +1710,7 @@ function PitScoutingTab({
             ))}
           </div>
           {/* Auto Assign */}
-          {tbaTeams.length > 0 && (
+          {!readOnly && tbaTeams.length > 0 && (
             <button
               onClick={async () => {
                 const msg = optedInCount > 0
@@ -1548,7 +1734,7 @@ function PitScoutingTab({
               }
             </button>
           )}
-          {assignedCount > 0 && (
+          {!readOnly && assignedCount > 0 && (
             <button
               onClick={async () => {
                 if (!window.confirm(`Clear all ${assignedCount} pit scouting assignments for this event?`)) return;
@@ -1614,12 +1800,12 @@ function PitScoutingTab({
               return (
                 <button
                   key={team.team_number}
-                  onClick={() => pinnedScoutId && handleCellClick(team.team_number)}
-                  disabled={!pinnedScoutId || isSaving}
+                  onClick={() => !readOnly && pinnedScoutId && handleCellClick(team.team_number)}
+                  disabled={readOnly || !pinnedScoutId || isSaving}
                   style={{
                     display: "flex", flexDirection: "column", alignItems: "flex-start",
                     padding: "10px 12px", borderRadius: 12, textAlign: "left",
-                    cursor: pinnedScoutId ? "pointer" : "default",
+                    cursor: pinnedScoutId && !readOnly ? "pointer" : "default",
                     background: hasPinned ? G : hasAny ? G_DIM : SURFACE,
                     border: `1.5px solid ${hasPinned ? G_STR : hasAny ? G_MED : SURF_BORD}`,
                     transition: "all 0.12s",
@@ -1628,7 +1814,7 @@ function PitScoutingTab({
                     position: "relative",
                     overflow: "hidden",
                   }}
-                  onMouseEnter={e => { if (pinnedScoutId && !isSaving) (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-1px)"; }}
+                  onMouseEnter={e => { if (pinnedScoutId && !isSaving && !readOnly) (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-1px)"; }}
                   onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.transform = "none"; }}
                 >
                   {isSaving && (
@@ -1688,7 +1874,9 @@ function PitScoutingTab({
           flexShrink: 0, textAlign: "center", fontSize: 12, color: MUTED,
           padding: "8px 0", borderTop: `1px solid ${SURF_BORD}`,
         }}>
-          ↑ Pin a scout above, then click team cards to assign them
+          {readOnly
+            ? "View only — enable admin mode to edit assignments"
+            : "↑ Pin a scout above, then click team cards to assign them"}
         </div>
       )}
     </div>
@@ -1773,6 +1961,7 @@ export default function SchedulingPage() {
   const clearMatchAssignment     = useAdminMutation(api.schedules.clearMatchAssignment);
   const clearAllMatchAssignments = useAdminMutation(api.schedules.clearAllMatchAssignments);
   const batchSet                 = useAdminMutation(api.schedules.batchSetMatchAssignments);
+  const batchClear               = useAdminMutation(api.schedules.batchClearMatchAssignments);
   const upsertRotation           = useAdminMutation(api.schedules.upsertPitRotation);
   const deleteRotation           = useAdminMutation(api.schedules.deletePitRotation);
   const togglePitScout           = useAdminMutation(api.pitScouting.upsertPitScoutingAssignment);
@@ -1979,6 +2168,35 @@ export default function SchedulingPage() {
     if (assignments.length > 0) await batchSet({ eventKey: currentEvent.eventKey, assignments });
   }
 
+  /** Assigns (or clears) the pinned scout across every match in one 5-match
+   *  cycle for a given position, in a single round trip. */
+  async function handleCycleClick(cycleMatches: TBAMatch[], pos: Position) {
+    if (!currentEvent || !pinnedScoutId) return;
+    const key = `cycle-${cycleMatches[0].match_number}-${pos}`;
+    setSavingCells(p => new Set(p).add(key));
+    try {
+      const allAssignedToPinned = cycleMatches.every(
+        m => assignMap[m.match_number]?.[pos]?.scoutId === pinnedScoutId
+      );
+      if (allAssignedToPinned) {
+        await batchClear({
+          eventKey: currentEvent.eventKey,
+          slots: cycleMatches.map(m => ({ matchNumber: m.match_number, position: pos })),
+        });
+      } else {
+        await batchSet({
+          eventKey: currentEvent.eventKey,
+          assignments: cycleMatches.map(m => ({
+            matchNumber: m.match_number, matchLabel: tbaMatchLabel(m),
+            position: pos, scoutId: pinnedScoutId as Id<"users">,
+          })),
+        });
+      }
+    } finally {
+      setSavingCells(p => { const n = new Set(p); n.delete(key); return n; });
+    }
+  }
+
   async function handleSaveRotation(form: RotationFormState, id?: string) {
     if (!currentEvent) return;
     await upsertRotation({
@@ -2094,7 +2312,7 @@ export default function SchedulingPage() {
     }
   }, [autoGenResult, currentEvent, upsertRotation, batchSet]);
 
-  if (!isAdminMode) return <AdminLockScreen />;
+  const readOnly = !isAdminMode;
 
   const totalSlots  = matches.length * 6;
   const filledSlots = (allAssignments ?? []).length;
@@ -2118,9 +2336,20 @@ export default function SchedulingPage() {
             </div>
           )}
           <div style={{ flex: 1, minWidth: 0 }}>
-            <h1 style={{ fontSize: isLandscapePhone ? 15 : isMobile ? 18 : 22, fontWeight: 800, color: FG, margin: 0, lineHeight: 1.2, letterSpacing: "-0.02em" }}>
-              Scheduling
-            </h1>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <h1 style={{ fontSize: isLandscapePhone ? 15 : isMobile ? 18 : 22, fontWeight: 800, color: FG, margin: 0, lineHeight: 1.2, letterSpacing: "-0.02em" }}>
+                Scheduling
+              </h1>
+              {readOnly && (
+                <span style={{
+                  fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em",
+                  color: MUTED, background: SURF_HVR, border: `1px solid ${SURF_BORD}`,
+                  borderRadius: 20, padding: "2px 8px", flexShrink: 0,
+                }}>
+                  View only
+                </span>
+              )}
+            </div>
             {!isLandscapePhone && (
               <p style={{ fontSize: 13, color: MUTED, margin: 0 }}>
                 {currentEvent
@@ -2138,8 +2367,8 @@ export default function SchedulingPage() {
             </div>
           )}
         </div>
-        {/* Action buttons row — hidden in landscape phone to save space (use auto-gen sparingly) */}
-        {!isLandscapePhone && currentEvent && (allUsers && matches.length > 0 || filledSlots > 0) && (
+        {/* Action buttons row — hidden in landscape phone to save space (use auto-gen sparingly); admin editing only */}
+        {!readOnly && !isLandscapePhone && currentEvent && (allUsers && matches.length > 0 || filledSlots > 0) && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {allUsers && matches.length > 0 && (
@@ -2415,15 +2644,18 @@ export default function SchedulingPage() {
                     onBatchAssign={handleBatchAssign}
                     isMobile={isMobile}
                     isLandscapePhone={isLandscapePhone}
+                    readOnly={readOnly}
                   />
                   <MatchGrid
                     matches={matches}
                     assignMap={assignMap}
                     pinnedId={pinnedScoutId}
                     onCellClick={handleCellClick}
+                    onCycleClick={handleCycleClick}
                     saving={savingCells}
                     isMobile={isMobile}
                     isLandscapePhone={isLandscapePhone}
+                    readOnly={readOnly}
                   />
                 </>
               )}
@@ -2457,6 +2689,7 @@ export default function SchedulingPage() {
                   onDelete={async () => {
                     if (elimsRot) await deleteRotation({ id: elimsRot._id as Id<"pitRotations"> });
                   }}
+                  readOnly={readOnly}
                 />
 
                 {/* Divider */}
@@ -2486,8 +2719,8 @@ export default function SchedulingPage() {
                   </div>
                 )}
 
-                {/* Qual rotation form (only when not editing) */}
-                {!editingRotation && (
+                {/* Qual rotation form (only when not editing, admin editing only) */}
+                {!readOnly && !editingRotation && (
                   <RotationForm users={pitUsers} allUsers={allUsers} onSave={form => handleSaveRotation(form)} />
                 )}
 
@@ -2520,6 +2753,7 @@ export default function SchedulingPage() {
                           key={r._id} rotation={r} users={allUsers ?? []}
                           onEdit={() => setEditingRotation(r)}
                           onDelete={async () => { await deleteRotation({ id: r._id as Id<"pitRotations"> }); }}
+                          readOnly={readOnly}
                         />
                       ))}
                   </div>
@@ -2543,6 +2777,7 @@ export default function SchedulingPage() {
               onAutoAssign={handleAutoAssignPitScouting}
               optedInCount={(allPreferences ?? []).filter((p: any) => p.wantsPitScouting === true).length}
               isMobile={isMobile}
+              readOnly={readOnly}
             />
           )}
         </>

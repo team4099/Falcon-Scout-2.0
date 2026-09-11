@@ -125,6 +125,35 @@ export const batchSetMatchAssignments = mutation({
   },
 });
 
+/**
+ * Batch-clear many position slots in one mutation.
+ * Used to unassign an entire scouting cycle (block of matches) at once.
+ */
+export const batchClearMatchAssignments = mutation({
+  args: {
+    eventKey: v.string(),
+    slots: v.array(v.object({
+      matchNumber: v.number(),
+      position: positionValidator,
+    })),
+    adminKey: v.optional(v.string()),
+  },
+  handler: async (ctx, { eventKey, slots, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
+    for (const { matchNumber, position } of slots) {
+      const existing = await ctx.db
+        .query("matchAssignments")
+        .withIndex("by_event_match", (q) =>
+          q.eq("eventKey", eventKey).eq("matchNumber", matchNumber)
+        )
+        .filter((q) => q.eq(q.field("position"), position))
+        .first();
+
+      if (existing) await ctx.db.delete(existing._id);
+    }
+  },
+});
+
 /** Delete every match assignment for an event — used by the "Clear All" button */
 export const clearAllMatchAssignments = mutation({
   args: { eventKey: v.string(), adminKey: v.optional(v.string()) },
