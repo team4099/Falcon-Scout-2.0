@@ -25,6 +25,9 @@ export default defineConfig({
           // jsdom, not node: these modules use localStorage, and clearAllCache
           // enumerates it with Object.keys — which only works on the real thing.
           environment: "jsdom",
+          // Node 26 defines its own empty `localStorage` global, which stops
+          // vitest from installing jsdom's. See src/test-setup.ts.
+          setupFiles: ["./src/test-setup.ts"],
           include: ["src/**/*.test.ts"],
         },
       },

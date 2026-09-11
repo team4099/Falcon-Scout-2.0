@@ -23,8 +23,12 @@ import {
   fetchTBATeamAvatar,
   fetchTBATeamInfo,
   fetchNexusTeamStatus,
+  getCacheError,
+  statboticsEventTeamsCacheKey,
 } from "@/lib/api";
 import type { TBAMatch, NexusTeamStatus } from "@/lib/api";
+import { EMPTY_TEAM_EPA, parseEpaComponents, totalEpa } from "@/lib/epa";
+import type { TeamEpa } from "@/lib/epa";
 import { ExternalLink, Search, FileText, TrendingUp, TrendingDown, ClipboardList, Trash2, AlertTriangle, ChevronDown, ChevronUp, Clock, SlidersHorizontal, KeyRound, CalendarCheck, Radio, Users2, DollarSign, ArrowRight, Trophy, CalendarDays } from "lucide-react";
 import { getTBAKey } from "@/lib/api";
 import TeamDetailPanel from "@/pages/TeamDetailPanel";
@@ -471,14 +475,6 @@ async function primeAvatar(teamNumber: number, year: number) {
   if (cached !== null && cached !== undefined) {
     _avatarMemCache.set(key, cached);
   }
-}
-
-interface TeamEpa {
-  event: number | null;
-  overall: number | null;
-  auto: number | null;
-  teleop: number | null;
-  endgame: number | null;
 }
 
 function TeamRow({
@@ -1649,6 +1645,10 @@ function FalconBetsWidget({ eventKey }: { eventKey: string }) {
 
 // ── Dashboard Page ─────────────────────────────────────────────────────────────
 
+/** How many statbotics season-EPA requests to have in flight at once. Their
+ *  API docs ask consumers not to hammer the servers. */
+const SB_FETCH_CONCURRENCY = 6;
+
 export default function DashboardPage() {
   const syncRoster = useMutation(api.forms.syncEventTeamRoster);
   const currentEventLive = useQuery(api.events.getCurrentEvent);
@@ -1706,7 +1706,11 @@ export default function DashboardPage() {
   const seededEventKeyRef = useRef<string>("");
   // True while loadExternal() is in-flight (no cached TBA data yet)
   const [loadingExternal, setLoadingExternal] = useState(true);
-  const [nowMs, setNowMs] = useState(Date.now());
+  // Non-null when the statbotics EPA fetch failed upstream, so the empty
+  // EPA columns can explain themselves instead of looking like an app bug.
+  const [sbError, setSbError] = useState<{ status: number } | null>(null);
+  // Lazy initializer: Date.now() must not run during render.
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [search, setSearch] = useState("");
   const [selectedTeam, setSelectedTeam] = useState<number | null>(null);
   const [showColumnPicker, setShowColumnPicker] = useState(false);
@@ -1774,46 +1778,8 @@ export default function DashboardPage() {
     return () => clearInterval(id);
   }, []);
 
-  // ── EPA helpers ──────────────────────────────────────────────────────────────────
-
-  /** Extract mean from a {mean, sd} leaf, or a bare number. */
-  function readMean(v: unknown): number | null {
-    if (typeof v === "number") return Number(v.toFixed(1));
-    if (v && typeof v === "object") {
-      const o = v as Record<string, unknown>;
-      if (typeof o.mean === "number") return Number((o.mean as number).toFixed(1));
-    }
-    return null;
-  }
-
-  /** Recursively search EPA object for any of the named keys and return its mean.
-   *  Handles both flat (epa.auto_points) and nested (epa.breakdown.auto_points) structures. */
-  function findInEpa(obj: unknown, ...keys: string[]): number | null {
-    if (!obj || typeof obj !== "object") return null;
-    const o = obj as Record<string, unknown>;
-    for (const key of keys) {
-      if (key in o) {
-        const m = readMean(o[key]);
-        if (m !== null) return m;
-      }
-    }
-    // Recurse into sub-objects (bounded by depth — plain objects only, skip arrays)
-    for (const val of Object.values(o)) {
-      if (val && typeof val === "object" && !Array.isArray(val)) {
-        const found = findInEpa(val, ...keys);
-        if (found !== null) return found;
-      }
-    }
-    return null;
-  }
-
-  /** Total / event EPA: prefer total_points > mean directly on the epa object. */
-  function totalEpa(epaObj: Record<string, unknown>): number | null {
-    return (
-      findInEpa(epaObj, "total_points", "total") ??
-      readMean(epaObj)
-    );
-  }
+  // EPA parsing helpers live in @/lib/epa (unit-tested against real
+  // statbotics v3 payload shapes in src/lib/epa.test.ts).
 
   // Re-seed state maps whenever eventKey changes (e.g. user switches event in Settings)
   useEffect(() => {
@@ -1841,8 +1807,15 @@ export default function DashboardPage() {
       ]);
       if (cancelled) return;
 
-      // Statbotics per-team event EPA
-      if (Array.isArray(sbData)) {
+      // Statbotics per-team event EPA.
+      // An empty array is a real answer ("statbotics has no rows for this
+      // event"); a null/absent one means the request failed. Surface the
+      // upstream error either way so empty EPA columns are explainable
+      // instead of looking like a bug in this app.
+      const sbErr = getCacheError(statboticsEventTeamsCacheKey(eventKey));
+      setSbError(!Array.isArray(sbData) || sbData.length === 0 ? sbErr : null);
+
+      if (Array.isArray(sbData) && sbData.length > 0) {
         const map: Record<number, Record<string, unknown>> = {};
         for (const t of sbData as Array<{ team: number } & Record<string, unknown>>) {
           map[t.team] = t;
@@ -1856,23 +1829,30 @@ export default function DashboardPage() {
         // a given year but caps `limit` at 1000, silently dropping most teams
         // from a single page — fetch per-team instead, bounded by the event
         // roster (~40-80 teams), which is always accurate.
+        //
+        // Run these a few at a time: statbotics asks API users not to hammer
+        // their servers, and a 80-wide parallel burst is exactly that.
         const eventTeams = (sbData as Array<{ team: number }>).map((t) => t.team);
-        Promise.all(
-          eventTeams.map((team) => fetchStatboticsTeamYear(team, eventYear))
-        ).then((results) => {
-          if (cancelled) return;
+        void (async () => {
           const overall: Record<number, number> = {};
-          for (const d of results) {
-            if (!d || typeof d !== "object") continue;
-            const epaO = (d as { epa?: unknown }).epa;
-            if (epaO && typeof epaO === "object") {
-              const v = totalEpa(epaO as Record<string, unknown>) ?? findInEpa(epaO, "total_points", "total");
+          for (let i = 0; i < eventTeams.length; i += SB_FETCH_CONCURRENCY) {
+            if (cancelled) return;
+            const batch = eventTeams.slice(i, i + SB_FETCH_CONCURRENCY);
+            const results = await Promise.all(
+              batch.map((team) =>
+                fetchStatboticsTeamYear(team, eventYear).catch(() => null)
+              )
+            );
+            for (const d of results) {
+              if (!d || typeof d !== "object") continue;
+              const v = totalEpa((d as { epa?: unknown }).epa);
               if (v !== null) overall[(d as { team: number }).team] = v;
             }
           }
+          if (cancelled) return;
           setSbOverall(overall);
           lsSet(`dash_sbOverall_${eventKey}`, overall, TTL.SHORT);
-        }).catch(() => {/* ignore */});
+        })();
       }
 
       if (Array.isArray(tbaTeamData)) {
@@ -1936,13 +1916,10 @@ export default function DashboardPage() {
   const epaMap = useMemo(() => {
     const map: Record<number, TeamEpa> = {};
     for (const [num, sb] of Object.entries(sbTeams)) {
-      const epaObj = sb && "epa" in sb ? sb.epa as Record<string, unknown> : null;
+      const epaObj = sb && "epa" in sb ? sb.epa : null;
       map[Number(num)] = {
-        event:   epaObj ? totalEpa(epaObj) : null,
+        ...parseEpaComponents(epaObj),
         overall: sbOverall[Number(num)] ?? null,
-        auto:    epaObj ? findInEpa(epaObj, "auto_points", "auto") : null,
-        teleop:  epaObj ? findInEpa(epaObj, "teleop_points", "teleop") : null,
-        endgame: epaObj ? findInEpa(epaObj, "endgame_points", "endgame") : null,
       };
     }
     return map;
@@ -2216,6 +2193,14 @@ export default function DashboardPage() {
             </p>
           )}
 
+          {sbError && (
+            <p className="text-xs text-amber-500 dark:text-amber-400 shrink-0">
+              ⚠ Statbotics is unavailable{sbError.status ? ` (HTTP ${sbError.status})` : ""} — EPA
+              columns are blank. Rank, record and Avg Score come from The Blue Alliance and are
+              unaffected. This retries automatically.
+            </p>
+          )}
+
           <div className="flex-1 bg-card border border-border rounded-xl overflow-hidden flex flex-col min-h-0">
             {/* Column header — desktop only (mobile uses card layout) */}
             <div className="hidden sm:block overflow-x-auto shrink-0">
@@ -2253,9 +2238,7 @@ export default function DashboardPage() {
                   </p>
                 ) : (
                   sorted.map((teamNumber) => {
-                    const teamEpa = epaMap[teamNumber as number] ?? {
-                      event: null, overall: null, auto: null, teleop: null, endgame: null,
-                    };
+                    const teamEpa = epaMap[teamNumber as number] ?? EMPTY_TEAM_EPA;
                     return (
                       <TeamRow
                         key={teamNumber as number}
@@ -2301,9 +2284,7 @@ export default function DashboardPage() {
                   </p>
                 ) : (
                   sorted.map((teamNumber) => {
-                    const teamEpa = epaMap[teamNumber as number] ?? {
-                      event: null, overall: null, auto: null, teleop: null, endgame: null,
-                    };
+                    const teamEpa = epaMap[teamNumber as number] ?? EMPTY_TEAM_EPA;
                     return (
                       <TeamRow
                         key={teamNumber as number}
@@ -2328,7 +2309,7 @@ export default function DashboardPage() {
 
       {/* Team detail panel */}
       {selectedTeam !== null && (() => {
-        const teamEpa = epaMap[selectedTeam] ?? { event: null, overall: null, auto: null, teleop: null, endgame: null };
+        const teamEpa = epaMap[selectedTeam] ?? EMPTY_TEAM_EPA;
         return (
           <TeamDetailPanel
             teamNumber={selectedTeam}

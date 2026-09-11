@@ -49,6 +49,18 @@ export function clearCacheErrKey(cacheKey: string): void {
 }
 
 /**
+ * Read the error-backoff entry for a cache key, if the last fetch failed and
+ * the 5-minute backoff has not yet expired. Lets the UI distinguish "this
+ * upstream is down" from "this team genuinely has no data", which otherwise
+ * look identical (both render as an empty cell).
+ *
+ * `status` is the HTTP status, or 0 for a network/CORS failure.
+ */
+export function getCacheError(cacheKey: string): { status: number } | null {
+  return lsGet<{ status: number }>(`${cacheKey}__err`);
+}
+
+/**
  * Clear TBA error-backoff entries for a given event so that the next fetch
  * attempt will actually hit the network (e.g. after a key is first saved).
  */
@@ -248,12 +260,18 @@ export async function fetchStatboticsTeamEvent(teamNumber: number, eventKey: str
   );
 }
 
+/** Cache key for the event-wide Statbotics EPA fetch, so callers can inspect
+ *  its error-backoff state via `getCacheError`. */
+export function statboticsEventTeamsCacheKey(eventKey: string): string {
+  return `sb_event_teams_${eventKey}`;
+}
+
 export async function fetchStatboticsEventTeams(eventKey: string) {
   return fetchWithCache(
     // Statbotics v3 hard-caps limit at 1000 (422 above that) — 1000 gives
     // a safety margin over the ~80 teams even a large championship division has.
     `${STATBOTICS_BASE}/team_events?event=${eventKey}&limit=1000`,
-    `sb_event_teams_${eventKey}`,
+    statboticsEventTeamsCacheKey(eventKey),
     {},
     TTL.SHORT  // EPA updates after every match
   );
