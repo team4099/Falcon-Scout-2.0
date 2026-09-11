@@ -274,9 +274,21 @@ export const getMySubmissions = query({
         q.eq("scoutId", userId).eq("eventKey", eventKey)
       )
       .collect();
+
+    // formType comes from the template, not the row. My Schedule needs it to
+    // tell a pit submission from a match one when ticking assignments off, and
+    // resolving it here covers templates that have since been deactivated —
+    // the client's listActiveTemplates would not.
+    const formTypeById = new Map<string, string>();
+    for (const templateId of new Set(rows.map((r) => r.templateId))) {
+      const tpl = await ctx.db.get(templateId);
+      if (tpl) formTypeById.set(templateId, tpl.formType ?? "default");
+    }
+
     return rows.map((r) => ({
       _id: r._id,
       templateId: r.templateId,
+      formType: formTypeById.get(r.templateId) ?? "default",
       matchNumber: r.matchNumber,
       compLevel: r.compLevel,
       teamNumber: r.teamNumber,

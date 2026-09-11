@@ -7,11 +7,16 @@ import { api } from "../../convex/_generated/api";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { fetchTBAEventMatches } from "@/lib/api";
 import { lsGet, lsGetStale } from "@/lib/persistentCache";
+import { getMySubmissions as getLocalSubmissions } from "@/lib/submissionStore";
+import {
+  buildCompletion, isMatchDone, EMPTY_COMPLETION,
+  type Completion, type SubmissionKey,
+} from "@/lib/scheduleCompletion";
 import type { TBAMatch } from "@/lib/api";
 import type { FormField } from "@/types";
 import {
   CalendarDays, CalendarCheck, ClipboardList, Wrench, Coffee,
-  Loader2, CheckCircle2, Users, ClipboardCheck,
+  Loader2, CheckCircle2, Users, ClipboardCheck, CircleDashed,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -183,6 +188,7 @@ function ChecklistCard({ assignment }: { assignment: ChecklistAssignment }) {
         background: SURFACE,
         border: `1px solid ${SURF_BORD}`,
         transition: "transform 0.1s ease", cursor: "pointer",
+        opacity: assignment.isCompleted ? 0.62 : 1,
       }}
       onMouseEnter={e => (e.currentTarget.style.transform = "translateX(3px)")}
       onMouseLeave={e => (e.currentTarget.style.transform = "none")}
@@ -231,11 +237,13 @@ function ChecklistCard({ assignment }: { assignment: ChecklistAssignment }) {
 
 // ── Unified schedule item type ────────────────────────────────────────────────
 
+// `done` drives the Upcoming/Completed split. Pit duty and playoff shifts are
+// presence, not a submission, so nothing marks them done — they stay upcoming.
 type UnifiedItem =
-  | { kind: "scout";    assignment: MatchAssignment;    match: TBAMatch | null; sortKey: number; ts: number | null }
-  | { kind: "checklist"; assignment: ChecklistAssignment; sortKey: number; ts: number | null }
-  | { kind: "pit";      rotation: PitRotation;           sortKey: number; ts: number | null }
-  | { kind: "elims";    rotation: PitRotation;           sortKey: number; ts: number | null };
+  | { kind: "scout";    assignment: MatchAssignment;    match: TBAMatch | null; sortKey: number; ts: number | null; done: boolean }
+  | { kind: "checklist"; assignment: ChecklistAssignment; sortKey: number; ts: number | null; done: boolean }
+  | { kind: "pit";      rotation: PitRotation;           sortKey: number; ts: number | null; done: boolean }
+  | { kind: "elims";    rotation: PitRotation;           sortKey: number; ts: number | null; done: boolean };
 
 // ── Pre-competition pit scouting card ─────────────────────────────────────────
 
@@ -247,10 +255,12 @@ const PS_STR    = "oklch(0.80 0.15 75 / 50%)";
 const PS_TXT    = "oklch(0.12 0 0)";
 
 function PreCompetitionCard({
-  assignments, allUsers,
+  assignments, allUsers, done = false,
 }: {
   assignments: PitScoutingAssignment[];
   allUsers: { _id: string; name?: string; email?: string; image?: string }[];
+  /** Rendered in the Completed tab — these teams have already been pit scouted. */
+  done?: boolean;
 }) {
   const navigate = useNavigate();
   const userMap = Object.fromEntries(allUsers.map(u => [u._id, u]));
@@ -269,8 +279,9 @@ function PreCompetitionCard({
       style={{
         borderRadius: 16, overflow: "hidden",
         background: PS_DIM,
-        border: `1.5px solid ${PS_STR}`,
-        boxShadow: `0 4px 20px ${PS_COLOR} / 15%`,
+        border: `1.5px solid ${done ? PS_MED : PS_STR}`,
+        boxShadow: done ? "none" : `0 4px 20px ${PS_COLOR} / 15%`,
+        opacity: done ? 0.75 : 1,
       }}
     >
       {/* Header */}
@@ -285,14 +296,16 @@ function PreCompetitionCard({
           display: "flex", alignItems: "center", justifyContent: "center",
           boxShadow: `0 3px 12px ${PS_COLOR} / 40%`,
         }}>
-          <ClipboardList size={18} color={PS_TXT} />
+          {done ? <CheckCircle2 size={18} color={PS_TXT} /> : <ClipboardList size={18} color={PS_TXT} />}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 16, fontWeight: 800, color: FG, letterSpacing: "-0.01em", lineHeight: 1.2 }}>
             Pit Scouting
           </div>
           <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>
-            {teamNums.length} team{teamNums.length !== 1 ? "s" : ""} assigned to you
+            {done
+              ? `${teamNums.length} team${teamNums.length !== 1 ? "s" : ""} pit scouted`
+              : `${teamNums.length} team${teamNums.length !== 1 ? "s" : ""} assigned to you`}
           </div>
         </div>
         <div style={{
@@ -362,7 +375,9 @@ function PreCompetitionCard({
         )}
 
         <div style={{ marginTop: 10, fontSize: 11, color: MUTED, lineHeight: 1.5 }}>
-          Visit each assigned team's pit <strong>before quals start</strong>. Tap a team number to open the Pit Scouting form for it.
+          {done
+            ? <>You've submitted a Pit Scouting form for {teamNums.length === 1 ? "this team" : "these teams"}. Tap a team number to submit again.</>
+            : <>Visit each assigned team's pit <strong>before quals start</strong>. Tap a team number to open the Pit Scouting form for it.</>}
         </div>
       </div>
     </div>
@@ -375,6 +390,25 @@ function formatDay(ts: number): string {
   });
 }
 
+interface DayGroup { dayLabel: string; dateKey: string; items: UnifiedItem[] }
+
+/** Buckets an already-sorted item list into day sections, preserving order. */
+function groupByDay(items: UnifiedItem[]): DayGroup[] {
+  const groups: DayGroup[] = [];
+  const map = new Map<string, UnifiedItem[]>();
+  for (const item of items) {
+    const dateKey = item.ts ? localDateKey(item.ts) : "unscheduled";
+    const dayLabel = item.ts ? formatDay(item.ts) : "Unscheduled";
+    if (!map.has(dateKey)) {
+      const bucket: UnifiedItem[] = [];
+      map.set(dateKey, bucket);
+      groups.push({ dayLabel, dateKey, items: bucket });
+    }
+    map.get(dateKey)!.push(item);
+  }
+  return groups;
+}
+
 function localDateKey(ts: number): string {
   const d = new Date(ts * 1000);
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
@@ -382,7 +416,7 @@ function localDateKey(ts: number): string {
 
 // ── Scouting match card ───────────────────────────────────────────────────────
 
-function ScoutingCard({ assignment, match }: { assignment: MatchAssignment; match: TBAMatch | null }) {
+function ScoutingCard({ assignment, match, done = false }: { assignment: MatchAssignment; match: TBAMatch | null; done?: boolean }) {
   const navigate = useNavigate();
   const time = match ? formatTime(match) : null;
   const isRed = assignment.position.startsWith("red");
@@ -417,16 +451,21 @@ function ScoutingCard({ assignment, match }: { assignment: MatchAssignment; matc
         display: "flex", alignItems: "center", gap: 12, padding: "11px 14px",
         borderRadius: 12, background: SURFACE, border: `1px solid ${SURF_BORD}`,
         transition: "transform 0.1s ease", cursor: "pointer",
+        opacity: done ? 0.62 : 1,
       }}
       onMouseEnter={e => (e.currentTarget.style.transform = "translateX(3px)")}
       onMouseLeave={e => (e.currentTarget.style.transform = "none")}
     >
-      {/* Alliance color stripe */}
-      <div style={{
-        width: 4, height: 44, borderRadius: 3, flexShrink: 0,
-        background: allianceColor,
-        boxShadow: `0 0 8px ${allianceColor} / 60%`,
-      }} />
+      {/* Alliance color stripe — replaced by a tick once the form is in */}
+      {done ? (
+        <CheckCircle2 size={20} style={{ color: G, flexShrink: 0 }} />
+      ) : (
+        <div style={{
+          width: 4, height: 44, borderRadius: 3, flexShrink: 0,
+          background: allianceColor,
+          boxShadow: `0 0 8px ${allianceColor} / 60%`,
+        }} />
+      )}
 
       {/* Match label + position */}
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -435,6 +474,12 @@ function ScoutingCard({ assignment, match }: { assignment: MatchAssignment; matc
         </div>
         <div style={{ fontSize: 12, color: MUTED, marginTop: 1 }}>
           {POS_LABEL[assignment.position]}{time ? ` · ${time}` : ""}
+          {done && (
+            <>
+              {" · "}
+              <span style={{ color: G, fontWeight: 700 }}>Done</span>
+            </>
+          )}
         </div>
       </div>
 
@@ -847,6 +892,7 @@ function PreferencesPanel({
 
 export default function MySchedulePage() {
   const [tbaLoading, setTbaLoading] = useState(false);
+  const [tab, setTab] = useState<"upcoming" | "completed">("upcoming");
 
   const currentEvent   = useCached(useQuery(api.events.getCurrentEvent), "current_event");
   const eventKey       = currentEvent?.eventKey ?? "";
@@ -902,13 +948,45 @@ export default function MySchedulePage() {
     eventKey ? { eventKey } : "skip"
   );
   const mySubmissions = useCached(mySubmissionsLive, `my_submissions_${eventKey || "none"}`);
-  const completedChecklistSet = useMemo<Set<string>>(() => {
-    const s = new Set<string>();
-    for (const sub of mySubmissions ?? []) {
-      s.add(`${sub.matchNumber}-${sub.templateId}`);
-    }
-    return s;
+
+  // Locally stored submissions cover the offline case — they are written before
+  // the network call, so an assignment ticks off the moment the scout submits
+  // even with no uplink. Re-read when the tab regains focus (the scout has just
+  // come back from the form) and whenever the server list changes.
+  const [localSubs, setLocalSubs] = useState(() => getLocalSubmissions());
+  useEffect(() => {
+    const reload = () => setLocalSubs(getLocalSubmissions());
+    reload();
+    window.addEventListener("focus", reload);
+    document.addEventListener("visibilitychange", reload);
+    return () => {
+      window.removeEventListener("focus", reload);
+      document.removeEventListener("visibilitychange", reload);
+    };
   }, [mySubmissions]);
+
+  const completion = useMemo<Completion>(() => {
+    if (!eventKey) return EMPTY_COMPLETION;
+    // Local rows carry no formType, so resolve it from the active templates.
+    const typeById = new Map<string, string>(
+      (activeTemplates ?? []).map((t) => [t._id, t.formType ?? "default"])
+    );
+    const keys: SubmissionKey[] = [];
+    for (const sub of (mySubmissions ?? []) as SubmissionKey[]) keys.push(sub);
+    for (const sub of localSubs) {
+      if (sub.eventKey !== eventKey) continue;
+      keys.push({
+        formType: typeById.get(sub.templateId) ?? "default",
+        matchNumber: sub.matchNumber,
+        compLevel: sub.compLevel,
+        teamNumber: sub.teamNumber,
+        templateId: sub.templateId,
+      });
+    }
+    return buildCompletion(keys);
+  }, [mySubmissions, localSubs, activeTemplates, eventKey]);
+
+  const completedChecklistSet = completion.checklists;
 
   const myPreferences = useCached(
     useQuery(
@@ -983,15 +1061,21 @@ export default function MySchedulePage() {
   const loading        = myAssignments === undefined || myPitRotations === undefined;
   const hasAnything    = scoutingCount > 0 || pitRotations.length > 0 || checklistCount > 0 || (Array.isArray(myPitScoutingTeam) && myPitScoutingTeam.length > 0);
 
-  // ── Build unified sorted item list ──────────────────────────────────────────
-  const groupedByDay = useMemo(() => {
+  // ── Build unified sorted item list, split upcoming vs completed ────────────
+  const { upcomingDays, completedDays, upcomingCount, completedCount } = useMemo(() => {
     const items: UnifiedItem[] = [];
 
     // Scouting matches — sort by match number (timestamp from TBA)
     for (const a of assignments) {
       const match = matchMap[a.matchNumber] ?? null;
       const ts = match ? (match.actual_time ?? match.predicted_time ?? match.time ?? null) : null;
-      items.push({ kind: "scout", assignment: a, match, sortKey: a.matchNumber, ts });
+      // matchMap only holds quals, so a resolved match is always "qm".
+      const compLevel: "qm" | "elim" = match && match.comp_level !== "qm" ? "elim" : "qm";
+      const teamNumber = match ? teamNumberForPosition(match, a.position) : null;
+      items.push({
+        kind: "scout", assignment: a, match, sortKey: a.matchNumber, ts,
+        done: isMatchDone(completion, a.matchNumber, compLevel, teamNumber),
+      });
     }
 
     // Checklists — due at (matchNumber - 4), so sort there
@@ -1000,7 +1084,7 @@ export default function MySchedulePage() {
       const dueMatch = matchMap[dueMatchNum] ?? null;
       const ts = dueMatch ? (dueMatch.actual_time ?? dueMatch.predicted_time ?? dueMatch.time ?? null) : null;
       // sortKey offset 0.3 so checklists appear after scouting at the same match slot
-      items.push({ kind: "checklist", assignment: a, sortKey: dueMatchNum + 0.3, ts });
+      items.push({ kind: "checklist", assignment: a, sortKey: dueMatchNum + 0.3, ts, done: a.isCompleted });
     }
 
     // Qual pit rotations — sort by startMatch
@@ -1008,12 +1092,12 @@ export default function MySchedulePage() {
       const startM = rot.startMatch ?? 0;
       const startMatch = matchMap[startM] ?? null;
       const ts = startMatch ? (startMatch.actual_time ?? startMatch.predicted_time ?? startMatch.time ?? null) : null;
-      items.push({ kind: "pit", rotation: rot, sortKey: startM + 0.1, ts });
+      items.push({ kind: "pit", rotation: rot, sortKey: startM + 0.1, ts, done: false });
     }
 
     // Elims — always last
     if (elimsRotation) {
-      items.push({ kind: "elims", rotation: elimsRotation, sortKey: 999_999, ts: null });
+      items.push({ kind: "elims", rotation: elimsRotation, sortKey: 999_999, ts: null, done: false });
     }
 
     // Sort: items with ts by (ts, sortKey), null-ts items by sortKey at end
@@ -1027,21 +1111,24 @@ export default function MySchedulePage() {
       return a.sortKey - b.sortKey;
     });
 
-    // Group into days
-    const groups: { dayLabel: string; dateKey: string; items: UnifiedItem[] }[] = [];
-    const map = new Map<string, UnifiedItem[]>();
-    for (const item of items) {
-      const dateKey = item.ts ? localDateKey(item.ts) : "unscheduled";
-      const dayLabel = item.ts ? formatDay(item.ts) : "Unscheduled";
-      if (!map.has(dateKey)) {
-        const bucket: UnifiedItem[] = [];
-        map.set(dateKey, bucket);
-        groups.push({ dayLabel, dateKey, items: bucket });
-      }
-      map.get(dateKey)!.push(item);
-    }
-    return groups;
-  }, [assignments, myChecklistAssignments, qualRotations, elimsRotation, matchMap]);
+    const upcoming = items.filter(i => !i.done);
+    const completed = items.filter(i => i.done);
+    return {
+      upcomingDays: groupByDay(upcoming),
+      completedDays: groupByDay(completed),
+      upcomingCount: upcoming.length,
+      completedCount: completed.length,
+    };
+  }, [assignments, myChecklistAssignments, qualRotations, elimsRotation, matchMap, completion]);
+
+  // Pre-competition pit scouting splits per team, same as everything else.
+  const pitScoutingTeams = Array.isArray(myPitScoutingTeam) ? myPitScoutingTeam : [];
+  const pitScoutingTodo = pitScoutingTeams.filter(a => !completion.pitTeams.has(a.teamNumber));
+  const pitScoutingDone = pitScoutingTeams.filter(a => completion.pitTeams.has(a.teamNumber));
+
+  const shownDays      = tab === "upcoming" ? upcomingDays : completedDays;
+  const shownPitScout  = tab === "upcoming" ? pitScoutingTodo : pitScoutingDone;
+  const tabTotal       = (tab === "upcoming" ? upcomingCount : completedCount) + shownPitScout.length;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", gap: 20 }}>
@@ -1123,8 +1210,46 @@ export default function MySchedulePage() {
         <ScrollArea style={{ flex: 1 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14, paddingBottom: 24 }}>
 
+            {/* Upcoming / Completed toggle */}
+            <div style={{ display: "flex", gap: 4, padding: 4, borderRadius: 14, background: SURFACE, border: `1px solid ${SURF_BORD}` }}>
+              {([
+                { id: "upcoming"  as const, label: "Upcoming",  count: upcomingCount + pitScoutingTodo.length, icon: CircleDashed },
+                { id: "completed" as const, label: "Completed", count: completedCount + pitScoutingDone.length, icon: CheckCircle2 },
+              ]).map(({ id, label, count, icon: Icon }) => {
+                const active = tab === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setTab(id)}
+                    aria-pressed={active}
+                    style={{
+                      flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+                      padding: "10px 12px", borderRadius: 10, cursor: "pointer",
+                      background: active ? G : "transparent",
+                      border: `1.5px solid ${active ? G_STR : "transparent"}`,
+                      color: active ? G_TXT : MUTED,
+                      fontWeight: 800, fontSize: 13, fontFamily: "inherit",
+                      letterSpacing: "-0.01em", outline: "none",
+                      transition: "background 0.15s ease, color 0.15s ease",
+                    }}
+                  >
+                    <Icon size={14} />
+                    {label}
+                    <span style={{
+                      borderRadius: 20, padding: "1px 8px", fontSize: 11, fontWeight: 800,
+                      background: active ? "oklch(0.1 0 0 / 15%)" : SURF_BORD,
+                      color: active ? G_TXT : MUTED,
+                    }}>
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
             {/* Before Competition — pit scouting team */}
-            {Array.isArray(myPitScoutingTeam) && myPitScoutingTeam.length > 0 && (
+            {shownPitScout.length > 0 && (
               <div>
                 {/* Section label */}
                 <div style={{
@@ -1151,13 +1276,15 @@ export default function MySchedulePage() {
                   }} />
                 </div>
                 <PreCompetitionCard
-                  assignments={myPitScoutingTeam as PitScoutingAssignment[]}
+                  assignments={shownPitScout}
                   allUsers={allUsers ?? []}
+                  done={tab === "completed"}
                 />
               </div>
             )}
 
-            {/* Summary strip */}
+            {/* Summary strip — event totals, so it only belongs on Upcoming */}
+            {tab === "upcoming" && (
             <div style={{ display: "flex", gap: 2, padding: 4, borderRadius: 14, background: SURFACE, border: `1px solid ${SURF_BORD}` }}>
               {([
                 { label: "Scouting",   count: scoutingCount,  icon: ClipboardList  },
@@ -1179,6 +1306,7 @@ export default function MySchedulePage() {
                 </div>
               ))}
             </div>
+            )}
 
             {tbaLoading && (
               <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px",
@@ -1189,7 +1317,7 @@ export default function MySchedulePage() {
             )}
 
             {/* ── Day-grouped sequential list ── */}
-            {groupedByDay.map(({ dayLabel, dateKey, items }) => (
+            {shownDays.map(({ dayLabel, dateKey, items }) => (
               <div key={dateKey}>
 
                 {/* Day header */}
@@ -1239,7 +1367,7 @@ export default function MySchedulePage() {
                           }}>
                             Scouting
                           </div>
-                          <ScoutingCard assignment={item.assignment} match={item.match} />
+                          <ScoutingCard assignment={item.assignment} match={item.match} done={item.done} />
                         </div>
                       );
                     }
@@ -1297,8 +1425,29 @@ export default function MySchedulePage() {
               </div>
             ))}
 
+            {/* Nothing in this tab */}
+            {tabTotal === 0 && (
+              <div style={{
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 10,
+                padding: "44px 20px", textAlign: "center",
+                borderRadius: 14, background: SURFACE, border: `1px solid ${SURF_BORD}`,
+              }}>
+                {tab === "upcoming"
+                  ? <CheckCircle2 size={26} style={{ color: G }} />
+                  : <CircleDashed size={26} style={{ color: MUTED }} />}
+                <div style={{ fontSize: 14, fontWeight: 700, color: FG }}>
+                  {tab === "upcoming" ? "All caught up" : "Nothing completed yet"}
+                </div>
+                <div style={{ fontSize: 12, color: MUTED, maxWidth: 280 }}>
+                  {tab === "upcoming"
+                    ? "Every assignment you have is done. Check Completed to review them."
+                    : "Submit a scouting, pit or checklist form and it will move here."}
+                </div>
+              </div>
+            )}
+
             {/* Off summary footer */}
-            {offCount > 0 && (
+            {tab === "upcoming" && offCount > 0 && (
               <div style={{
                 display: "flex", alignItems: "center", gap: 12, padding: "10px 16px",
                 borderRadius: 12, background: SURFACE, border: `1px solid ${SURF_BORD}`,

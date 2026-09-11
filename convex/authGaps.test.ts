@@ -62,6 +62,32 @@ describe("checklist submission requires a signed-in caller", () => {
     expect(mine[0].templateId).toBe(templateId);
     // teamNumber 0 keeps it out of the Dashboard/Data Viewer team rollups.
     expect(mine[0].teamNumber).toBe(0);
+    // formType is resolved from the template so My Schedule can tell a
+    // checklist apart from a match or pit submission when marking it complete.
+    expect(mine[0].formType).toBe("checklist");
+  });
+
+  test("getMySubmissions reports formType even for a deactivated template", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, templateId } = await t.run(async (ctx) => ({
+      userId: await ctx.db.insert("users", { name: "Scout" }),
+      templateId: await ctx.db.insert("formTemplates", {
+        name: "Pit", formType: "pit", fields: [], isActive: true,
+      }),
+    }));
+    const as = t.withIdentity({ subject: userId, issuer: "test" });
+    await as.mutation(api.forms.submitForm, {
+      templateId, eventKey: EVENT, matchNumber: 0,
+      compLevel: "qm", teamNumber: 9072, data: "{}",
+    });
+    // An admin swapping the active pit form mid-event must not un-tick work
+    // the scout already did — the client's active-template list would lose it.
+    await t.run(async (ctx) => ctx.db.patch(templateId, { isActive: false }));
+
+    const mine = await as.query(api.forms.getMySubmissions, { eventKey: EVENT });
+    expect(mine).toHaveLength(1);
+    expect(mine[0].formType).toBe("pit");
+    expect(mine[0].teamNumber).toBe(9072);
   });
 
   test("getMySubmissions returns nothing to an anonymous caller", async () => {
