@@ -3,26 +3,50 @@
 // FalconScout previously gated privileged mutations behind a single shared
 // password known to the whole team. That meant anyone who knew (or guessed,
 // since the default shipped in the client source) the password could act as
-// admin. Admin access is now tied to the caller's signed-in Google identity
-// instead: only the emails in ADMIN_EMAILS below can pass requireAdmin, no
-// matter what the client sends.
+// admin. Admin access is now tied to identity instead, two ways:
 //
-// "Admin Mode" in Settings is still just a client-side UI toggle — anyone can
-// flip it to preview the admin UI — but every privileged mutation re-checks
-// the caller's email here on the server, so the toggle alone grants nothing.
+//   1. Inherent admins — the two emails in ADMIN_EMAILS below. Permanent,
+//      hard-coded, and the only accounts that can grant #2.
+//   2. Temporary admins — any user an inherent admin has granted a 12-hour
+//      grant to (temporaryAdminGrants table). They pass requireAdmin like an
+//      inherent admin, but cannot call requireInherentAdmin, so they cannot
+//      grant admin to anyone else.
+//
+// "Admin Mode" in Settings is a client-side toggle, but it can only be turned
+// on by an account that is actually eligible (see isCurrentUserAdminEligible)
+// — every privileged mutation re-checks the caller's identity here on the
+// server regardless of what the client sends, so the toggle alone grants
+// nothing even if that check were ever bypassed.
 
 import { getAuthUserId } from "@convex-dev/auth/server";
+import type { Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 
 /**
- * The only accounts that may exercise real admin privileges.
- * Google sign-in is restricted to @team4099.com already (see convex/auth.ts);
- * this narrows it further to two people.
+ * The only accounts that may exercise permanent admin privileges, including
+ * granting/revoking temporary admin. Google sign-in is restricted to
+ * @team4099.com already (see convex/auth.ts); this narrows it further to two
+ * people.
  */
 const ADMIN_EMAILS = new Set(["czhao@team4099.com", "yabdulkadir@team4099.com"]);
 
+/** How long a temporary admin grant lasts before it must be renewed. */
+export const TEMP_ADMIN_DURATION_MS = 12 * 60 * 60 * 1000;
+
 export function isAdminEmail(email: string | null | undefined): boolean {
   return !!email && ADMIN_EMAILS.has(email.trim().toLowerCase());
+}
+
+/** Whether `userId` currently holds an unexpired temporary admin grant. */
+export async function hasActiveTemporaryGrant(
+  ctx: QueryCtx | MutationCtx,
+  userId: Id<"users">,
+): Promise<boolean> {
+  const grant = await ctx.db
+    .query("temporaryAdminGrants")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .first();
+  return !!grant && grant.expiresAt > Date.now();
 }
 
 /**
@@ -37,8 +61,9 @@ export async function requireUser(ctx: QueryCtx | MutationCtx) {
 }
 
 /**
- * Require that the caller is signed in AND their account email is on the
- * admin allowlist. Use on destructive or team-wide operations.
+ * Require that the caller is signed in AND is either an inherent admin or
+ * currently holds an active temporary admin grant. Use on destructive or
+ * team-wide operations.
  *
  * The second parameter is accepted-but-ignored for backward compatibility
  * with call sites and clients still sending the retired `adminKey` field.
@@ -46,18 +71,35 @@ export async function requireUser(ctx: QueryCtx | MutationCtx) {
 export async function requireAdmin(ctx: MutationCtx, _adminKey?: string) {
   const userId = await requireUser(ctx);
   const identity = await ctx.auth.getUserIdentity();
+  if (isAdminEmail(identity?.email)) return userId;
+  if (await hasActiveTemporaryGrant(ctx, userId)) return userId;
+  throw new Error(
+    "Admin access required. Admin mode is restricted to designated team leads."
+  );
+}
+
+/**
+ * Require that the caller is an inherent admin — not merely a temporary
+ * grant holder. Use on anything that manages admin access itself (granting
+ * or revoking temporary admin), so a temporary admin can never bootstrap
+ * another one.
+ */
+export async function requireInherentAdmin(ctx: MutationCtx) {
+  const userId = await requireUser(ctx);
+  const identity = await ctx.auth.getUserIdentity();
   if (!isAdminEmail(identity?.email)) {
-    throw new Error(
-      "Admin access required. Admin mode is restricted to designated team leads."
-    );
+    throw new Error("Only designated team leads can do that.");
   }
   return userId;
 }
 
-/** Whether the signed-in caller's email is on the admin allowlist. */
+/** Whether the signed-in caller is currently eligible for admin mode (inherent or temporary). */
 export async function isCurrentUserAdminEligible(ctx: QueryCtx): Promise<boolean> {
   const identity = await ctx.auth.getUserIdentity();
-  return isAdminEmail(identity?.email);
+  if (isAdminEmail(identity?.email)) return true;
+  const userId = await getAuthUserId(ctx);
+  if (!userId) return false;
+  return hasActiveTemporaryGrant(ctx, userId);
 }
 
 /**

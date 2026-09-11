@@ -335,4 +335,15 @@ export default defineSchema({
     updatedAt:           v.number(),
   })
     .index("by_user_event", ["userId", "eventKey"]),
+
+  // ── Temporary admin grants ────────────────────────────────────────────────
+  // Lets an inherent admin (see ADMIN_EMAILS in convex/adminAuth.ts) hand a
+  // scout time-boxed admin privileges. One row per user; re-granting patches
+  // expiresAt rather than inserting a duplicate.
+  temporaryAdminGrants: defineTable({
+    userId:     v.id("users"),
+    grantedBy:  v.id("users"),
+    expiresAt:  v.number(),
+  })
+    .index("by_user", ["userId"]),
 });

@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { useQuery } from "convex/react";
+import { useQuery, useMutation } from "convex/react";
 import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
@@ -7,6 +7,7 @@ import { useUIStore } from "@/store/uiStore";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { toast } from "sonner";
 import {
   Users,
   ShieldAlert,
@@ -32,6 +33,8 @@ import {
   Eye,
   AlertTriangle,
   Ban,
+  ShieldCheck,
+  Clock,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -116,6 +119,15 @@ function formatTimestamp(ts: number): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function formatRemaining(expiresAt: number): string {
+  const ms = expiresAt - Date.now();
+  if (ms <= 0) return "expired";
+  const hours = Math.floor(ms / 3_600_000);
+  const minutes = Math.round((ms % 3_600_000) / 60_000);
+  if (hours <= 0) return `${minutes}m left`;
+  return `${hours}h ${minutes}m left`;
 }
 
 // ─── Avatar ───────────────────────────────────────────────────────────────────
@@ -839,16 +851,28 @@ export default function ManageScoutsPage() {
     currentEvent ? { eventKey } : "skip"
   ) as string[] | undefined;
 
+  // Admin status — only inherent admins (czhao, yabdulkadir) see per-user
+  // admin state and the grant/revoke controls; everyone else gets [] back.
+  const isInherentAdmin = useQuery(api.admin.isCurrentUserInherentAdmin);
+  const adminStatuses = useQuery(api.admin.listAdminStatuses) as
+    | { userId: string; isInherentAdmin: boolean; tempAdminExpiresAt: number | null }[]
+    | undefined;
+  const adminStatusByUser: Record<string, { isInherentAdmin: boolean; tempAdminExpiresAt: number | null }> = {};
+  for (const s of adminStatuses ?? []) adminStatusByUser[s.userId] = s;
+
   // Mutations
   const clearMatchAssignment = useAdminMutation(api.schedules.clearMatchAssignment);
   const upsertPitRotation    = useAdminMutation(api.schedules.upsertPitRotation);
   const setScheduleExclusions = useAdminMutation(api.schedules.setScheduleExclusions);
   const deleteSubmissions    = useAdminMutation(api.forms.deleteSubmissions);
+  const grantTemporaryAdmin  = useMutation(api.admin.grantTemporaryAdmin);
+  const revokeTemporaryAdmin = useMutation(api.admin.revokeTemporaryAdmin);
 
   // Saving state
   const [clearingSlot, setClearingSlot]   = useState<string | null>(null);
   const [togglingRot,  setTogglingRot]    = useState<string | null>(null);
   const [togglingExclude, setTogglingExclude] = useState(false);
+  const [togglingAdmin, setTogglingAdmin] = useState(false);
   const [deletingScoutReports, setDeletingScoutReports] = useState(false);
   const [deletingAllReports, setDeletingAllReports] = useState(false);
 
@@ -946,6 +970,34 @@ export default function ManageScoutsPage() {
       setTogglingExclude(false);
     }
   }, [currentEvent?.eventKey, dbExcludedScoutIds, setScheduleExclusions]);
+
+  async function handleGrantAdmin(userId: string) {
+    setTogglingAdmin(true);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { expiresAt } = await grantTemporaryAdmin({ userId: userId as any });
+      toast.success(`Admin access granted for 12 hours.`, {
+        description: `Expires ${new Date(expiresAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}.`,
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't grant admin access.");
+    } finally {
+      setTogglingAdmin(false);
+    }
+  }
+
+  async function handleRevokeAdmin(userId: string) {
+    setTogglingAdmin(true);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await revokeTemporaryAdmin({ userId: userId as any });
+      toast.success("Admin access revoked.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't revoke admin access.");
+    } finally {
+      setTogglingAdmin(false);
+    }
+  }
 
   async function handleDeleteScoutReports() {
     if (!currentEvent?.eventKey || !selectedUserId) return;
@@ -1571,6 +1623,86 @@ export default function ManageScoutsPage() {
                         </button>
                       </div>
                     </div>
+
+                    {/* ── Admin Access ── (inherent admins only — czhao, yabdulkadir) */}
+                    {isInherentAdmin && (() => {
+                      const status = adminStatusByUser[selectedUser._id];
+                      if (status?.isInherentAdmin) {
+                        return (
+                          <div style={{
+                            display: "flex", alignItems: "center", gap: 10,
+                            padding: "12px 14px", borderRadius: 13,
+                            background: "oklch(0.85 0.18 95 / 8%)",
+                            border: "1px solid oklch(0.85 0.18 95 / 30%)",
+                            marginBottom: 4,
+                          }}>
+                            <ShieldCheck size={16} style={{ color: "oklch(0.75 0.18 95)", flexShrink: 0 }} />
+                            <div style={{ fontSize: 12.5, fontWeight: 700, color: "oklch(0.75 0.18 95)" }}>
+                              Permanent team lead — always has admin access
+                            </div>
+                          </div>
+                        );
+                      }
+                      const hasTempAdmin = !!status?.tempAdminExpiresAt;
+                      return (
+                        <div style={{
+                          borderRadius: 13,
+                          background: hasTempAdmin ? "oklch(0.85 0.18 95 / 8%)" : "oklch(1 0 0 / 3%)",
+                          border: hasTempAdmin
+                            ? "1px solid oklch(0.85 0.18 95 / 30%)"
+                            : "1px solid oklch(1 0 0 / 8%)",
+                          overflow: "hidden",
+                          marginBottom: 4,
+                        }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px" }}>
+                            <div style={{
+                              width: 32, height: 32, borderRadius: 9, flexShrink: 0,
+                              background: hasTempAdmin ? "oklch(0.85 0.18 95 / 20%)" : "oklch(1 0 0 / 6%)",
+                              display: "flex", alignItems: "center", justifyContent: "center",
+                            }}>
+                              <ShieldCheck size={15} style={{ color: hasTempAdmin ? "oklch(0.75 0.18 95)" : "var(--muted-foreground)" }} />
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{
+                                fontSize: 13, fontWeight: 700,
+                                color: hasTempAdmin ? "oklch(0.75 0.18 95)" : "var(--foreground)",
+                              }}>
+                                Admin Access
+                              </div>
+                              <div style={{ fontSize: 11, color: "var(--muted-foreground)", lineHeight: 1.4, marginTop: 1, display: "flex", alignItems: "center", gap: 4 }}>
+                                {hasTempAdmin ? (
+                                  <>
+                                    <Clock size={11} />
+                                    {formatRemaining(status!.tempAdminExpiresAt!)}
+                                  </>
+                                ) : (
+                                  "Grant 12 hours of admin access."
+                                )}
+                              </div>
+                            </div>
+                            {hasTempAdmin ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={togglingAdmin}
+                                onClick={() => handleRevokeAdmin(selectedUser._id)}
+                              >
+                                Revoke
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={togglingAdmin}
+                                onClick={() => handleGrantAdmin(selectedUser._id)}
+                              >
+                                Grant Admin
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* Preferences section */}
                     {selectedPrefs && (

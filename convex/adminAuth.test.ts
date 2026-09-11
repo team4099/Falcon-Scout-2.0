@@ -121,6 +121,100 @@ describe("admin allowlist eligibility query", () => {
   });
 });
 
+describe("temporary admin grants", () => {
+  // grantTemporaryAdmin stores grantedBy as a real v.id("users") value, so the
+  // granter here needs an actual users row (unlike the `admin`/`scout` fakes
+  // above, which only ever flow through identity.email and never get stored).
+  async function realAdmin(t: ReturnType<typeof convexTest>) {
+    const chiefId = await t.run((ctx) =>
+      ctx.db.insert("users", { name: "Chief", email: "czhao@team4099.com" }),
+    );
+    return { chiefId, as: t.withIdentity({ subject: chiefId, issuer: "test", email: "czhao@team4099.com" }) };
+  }
+
+  test("an inherent admin can grant a scout 12 hours of admin access", async () => {
+    const t = convexTest(schema, modules);
+    const { as: chiefAs } = await realAdmin(t);
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
+    const scoutAs = t.withIdentity({ subject: scoutId, issuer: "test" });
+
+    await expect(
+      scoutAs.mutation(api.events.setCurrentEvent, { eventKey: "e", eventName: "E" }),
+    ).rejects.toThrow(/Admin access required/i);
+
+    const before = Date.now();
+    const { expiresAt } = await chiefAs.mutation(api.admin.grantTemporaryAdmin, { userId: scoutId });
+    expect(expiresAt).toBeGreaterThan(before + 11 * 60 * 60 * 1000);
+    expect(expiresAt).toBeLessThanOrEqual(before + 12 * 60 * 60 * 1000 + 1000);
+
+    await scoutAs.mutation(api.events.setCurrentEvent, { eventKey: "2025temp", eventName: "Temp" });
+    expect((await scoutAs.query(api.events.getCurrentEvent, {}))?.eventKey).toBe("2025temp");
+    expect(await scoutAs.query(api.admin.isCurrentUserAdmin, {})).toBe(true);
+  });
+
+  test("a temporary admin cannot grant admin to anyone else", async () => {
+    const t = convexTest(schema, modules);
+    const { as: chiefAs } = await realAdmin(t);
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
+    const otherId = await t.run((ctx) => ctx.db.insert("users", { name: "Other" }));
+    await chiefAs.mutation(api.admin.grantTemporaryAdmin, { userId: scoutId });
+
+    const scoutAs = t.withIdentity({ subject: scoutId, issuer: "test" });
+    await expect(
+      scoutAs.mutation(api.admin.grantTemporaryAdmin, { userId: otherId }),
+    ).rejects.toThrow(/designated team leads/i);
+  });
+
+  test("granting an inherent admin's own account is rejected", async () => {
+    const t = convexTest(schema, modules);
+    const { as: chiefAs } = await realAdmin(t);
+    const otherChiefId = await t.run((ctx) =>
+      ctx.db.insert("users", { name: "Yusuf", email: "yabdulkadir@team4099.com" }),
+    );
+    await expect(
+      chiefAs.mutation(api.admin.grantTemporaryAdmin, { userId: otherChiefId }),
+    ).rejects.toThrow(/already a designated team lead/i);
+  });
+
+  test("an expired grant no longer counts as admin", async () => {
+    const t = convexTest(schema, modules);
+    const scoutId = await t.run(async (ctx) => {
+      const chiefId = await ctx.db.insert("users", { name: "Chief", email: "czhao@team4099.com" });
+      const sId = await ctx.db.insert("users", { name: "Scout" });
+      await ctx.db.insert("temporaryAdminGrants", {
+        userId: sId, grantedBy: chiefId, expiresAt: Date.now() - 1000,
+      });
+      return sId;
+    });
+    const scoutAs = t.withIdentity({ subject: scoutId, issuer: "test" });
+    expect(await scoutAs.query(api.admin.isCurrentUserAdmin, {})).toBe(false);
+    await expect(
+      scoutAs.mutation(api.events.setCurrentEvent, { eventKey: "e", eventName: "E" }),
+    ).rejects.toThrow(/Admin access required/i);
+  });
+
+  test("revoking removes access immediately", async () => {
+    const t = convexTest(schema, modules);
+    const { as: chiefAs } = await realAdmin(t);
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
+    await chiefAs.mutation(api.admin.grantTemporaryAdmin, { userId: scoutId });
+
+    const scoutAs = t.withIdentity({ subject: scoutId, issuer: "test" });
+    expect(await scoutAs.query(api.admin.isCurrentUserAdmin, {})).toBe(true);
+
+    await chiefAs.mutation(api.admin.revokeTemporaryAdmin, { userId: scoutId });
+    expect(await scoutAs.query(api.admin.isCurrentUserAdmin, {})).toBe(false);
+  });
+
+  test("listAdminStatuses is empty for non-inherent-admin callers", async () => {
+    const t = convexTest(schema, modules);
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
+    const scoutAs = t.withIdentity({ subject: scoutId, issuer: "test" });
+    expect(await scoutAs.query(api.admin.listAdminStatuses, {})).toEqual([]);
+    expect(await t.query(api.admin.listAdminStatuses, {})).toEqual([]);
+  });
+});
+
 describe("scout-level mutations stay usable by non-admins", () => {
   test("a signed-in scout can submit a form and move a picklist card", async () => {
     const t = convexTest(schema, modules);

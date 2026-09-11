@@ -143,10 +143,22 @@ function ApiKeyField({
 function AdminModeCard() {
   const { isAdminMode, setAdminMode } = useUIStore();
 
-  // The server is the only real gate (requireAdmin checks the caller's signed-in
-  // email against an allowlist) — this query just tells the UI whether Enable
-  // will actually grant anything, so it can explain rather than silently fail.
+  // The server is the only real gate — requireAdmin accepts an inherent admin
+  // email or an active temporary grant, and re-checks it on every privileged
+  // mutation regardless of this toggle. This query tells the UI whether the
+  // caller is currently eligible at all, so non-admins can't turn the toggle
+  // on, and a temporary admin whose 12-hour grant lapses gets switched back
+  // automatically instead of sitting in a UI that no longer does anything.
   const isEligible = useQuery(api.admin.isCurrentUserAdmin);
+
+  useEffect(() => {
+    if (isEligible === false && isAdminMode) {
+      setAdminMode(false);
+      toast.info("Admin mode turned off.", {
+        description: "Your admin access is no longer active.",
+      });
+    }
+  }, [isEligible, isAdminMode, setAdminMode]);
 
   function handleDisable() {
     setAdminMode(false);
@@ -154,17 +166,11 @@ function AdminModeCard() {
   }
 
   function handleEnable() {
+    if (!isEligible) return;
     setAdminMode(true);
-    if (isEligible) {
-      toast.success("Admin mode enabled.", {
-        description: "You now have access to Form Builder and report deletion.",
-      });
-    } else {
-      toast.info("Admin mode UI enabled for preview.", {
-        description:
-          "Your account isn't on the admin allowlist, so privileged actions will still be rejected by the server.",
-      });
-    }
+    toast.success("Admin mode enabled.", {
+      description: "You now have access to Form Builder and report deletion.",
+    });
   }
 
   return (
@@ -181,9 +187,8 @@ function AdminModeCard() {
           <div className="min-w-0">
             <p className="text-sm font-semibold">Admin is restricted</p>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Only designated team leads can perform admin actions. You can still
-              enable this toggle to preview the admin UI, but the server will
-              reject any privileged action from this account.
+              Only designated team leads, or scouts they've temporarily granted
+              admin access, can enable admin mode.
             </p>
           </div>
         </div>
@@ -215,7 +220,14 @@ function AdminModeCard() {
             Disable
           </Button>
         ) : (
-          <Button size="sm" variant="outline" className="gap-1.5" onClick={handleEnable}>
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5"
+            onClick={handleEnable}
+            disabled={!isEligible}
+            title={isEligible === false ? "Admin mode is restricted to team leads" : undefined}
+          >
             <Lock className="h-3.5 w-3.5" />
             Enable
           </Button>
