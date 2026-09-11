@@ -843,11 +843,14 @@ export default function ManageScoutsPage() {
   const clearMatchAssignment = useAdminMutation(api.schedules.clearMatchAssignment);
   const upsertPitRotation    = useAdminMutation(api.schedules.upsertPitRotation);
   const setScheduleExclusions = useAdminMutation(api.schedules.setScheduleExclusions);
+  const deleteSubmissions    = useAdminMutation(api.forms.deleteSubmissions);
 
   // Saving state
   const [clearingSlot, setClearingSlot]   = useState<string | null>(null);
   const [togglingRot,  setTogglingRot]    = useState<string | null>(null);
   const [togglingExclude, setTogglingExclude] = useState(false);
+  const [deletingScoutReports, setDeletingScoutReports] = useState(false);
+  const [deletingAllReports, setDeletingAllReports] = useState(false);
 
   // Derived: excluded scout set
   const excludedSet = new Set(dbExcludedScoutIds ?? []);
@@ -944,6 +947,35 @@ export default function ManageScoutsPage() {
     }
   }, [currentEvent?.eventKey, dbExcludedScoutIds, setScheduleExclusions]);
 
+  async function handleDeleteScoutReports() {
+    if (!currentEvent?.eventKey || !selectedUserId) return;
+    const count = selectedSubmissions.length;
+    if (count === 0) return;
+    const name = selectedUser ? displayName(selectedUser) : "this scout";
+    if (!window.confirm(`Delete all ${count} report${count !== 1 ? "s" : ""} from ${name}? This cannot be undone.`)) return;
+    setDeletingScoutReports(true);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await deleteSubmissions({ eventKey: currentEvent.eventKey, scoutId: selectedUserId as any });
+    } finally {
+      setDeletingScoutReports(false);
+    }
+  }
+
+  async function handleDeleteAllReports() {
+    if (!currentEvent?.eventKey) return;
+    const count = submissions?.length ?? 0;
+    if (count === 0) return;
+    if (!window.confirm(`Delete ALL ${count} reports for ${currentEvent.eventName ?? currentEvent.eventKey}? This cannot be undone and affects every scout.`)) return;
+    setDeletingAllReports(true);
+    try {
+      await deleteSubmissions({ eventKey: currentEvent.eventKey });
+      setSelectedUserId(null);
+    } finally {
+      setDeletingAllReports(false);
+    }
+  }
+
   // ── Guard ─────────────────────────────────────────────────────────────────────
 
   if (!isAdminMode) return <AdminLockScreen />;
@@ -955,7 +987,7 @@ export default function ManageScoutsPage() {
 
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <div style={{ flexShrink: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4, justifyContent: "space-between" }}>
           <div
             style={{
               width: 38,
@@ -991,6 +1023,25 @@ export default function ManageScoutsPage() {
             </p>
           </div>
         </div>
+
+        {currentEvent && (submissions?.length ?? 0) > 0 && (
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleDeleteAllReports}
+              disabled={deletingAllReports}
+              style={{
+                color: "oklch(0.72 0.18 30)",
+                fontSize: 12,
+                gap: 6,
+              }}
+            >
+              <AlertTriangle size={13} />
+              {deletingAllReports ? "Deleting…" : `Delete all ${submissions?.length ?? 0} reports`}
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* ── No event state ────────────────────────────────────────────────── */}
@@ -1414,6 +1465,30 @@ export default function ManageScoutsPage() {
                 {/* Submissions list */}
                 <ScrollArea style={{ flex: 1 }}>
                   <div style={{ padding: "14px 18px 20px", display: "flex", flexDirection: "column", gap: 8 }}>
+
+                    {/* ── Delete all reports (this scout) ── */}
+                    {selectedSubmissions.length > 0 && (
+                      <button
+                        onClick={handleDeleteScoutReports}
+                        disabled={deletingScoutReports}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 8,
+                          padding: "9px 12px",
+                          borderRadius: 11,
+                          background: "oklch(0.55 0.18 30 / 8%)",
+                          border: "1px solid oklch(0.55 0.18 30 / 25%)",
+                          color: "oklch(0.72 0.18 30)",
+                          fontSize: 12.5, fontWeight: 700,
+                          cursor: deletingScoutReports ? "default" : "pointer",
+                          opacity: deletingScoutReports ? 0.6 : 1,
+                        }}
+                      >
+                        <Trash2 size={13} />
+                        {deletingScoutReports
+                          ? "Deleting…"
+                          : `Delete all ${selectedSubmissions.length} report${selectedSubmissions.length !== 1 ? "s" : ""}`}
+                      </button>
+                    )}
 
                     {/* ── Exclude from Schedule toggle ── */}
                     <div style={{

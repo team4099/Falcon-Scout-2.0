@@ -7,6 +7,74 @@ import type { Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 
 /**
+ * Was this scout actually assigned the work this submission represents?
+ *
+ * Coins are meant to reward assigned scouting, not any submission a signed-in
+ * user happens to send — a scout with nothing to do could otherwise farm
+ * coins by resubmitting matches/teams no one asked them to cover.
+ *
+ *  - "default" (match scouting): the scout must hold a position on
+ *    `matchAssignments` for this match. Positions aren't team-specific here
+ *    (the server has no TBA schedule to resolve red1/blue2/etc into a team
+ *    number), so this checks "assigned to this match", not "assigned this
+ *    exact team" — still enough to block scouting matches nobody rostered
+ *    them for.
+ *  - "pit": the scout must be on this team's `pitScoutingTeams` roster.
+ *  - "checklist": the scout must be on a non-elims `pitRotations` shift that
+ *    covers this match number — checklists are handed out to whoever is on
+ *    pit duty for that window (see `computeMyChecklistAssignments` in
+ *    MySchedulePage.tsx).
+ *  - "super": there is no assignment mechanism for super scouting anywhere
+ *    in the app (no table, no My Schedule entry) — always false.
+ */
+async function isAssignedForReward(
+  ctx: MutationCtx,
+  scoutId: Id<"users">,
+  formType: string,
+  args: { eventKey: string; matchNumber: number; teamNumber: number },
+): Promise<boolean> {
+  switch (formType) {
+    case "default": {
+      const assignment = await ctx.db
+        .query("matchAssignments")
+        .withIndex("by_event_match", (q) =>
+          q.eq("eventKey", args.eventKey).eq("matchNumber", args.matchNumber)
+        )
+        .filter((q) => q.eq(q.field("scoutId"), scoutId))
+        .first();
+      return assignment !== null;
+    }
+    case "pit": {
+      const team = await ctx.db
+        .query("pitScoutingTeams")
+        .withIndex("by_event_team", (q) =>
+          q.eq("eventKey", args.eventKey).eq("teamNumber", args.teamNumber)
+        )
+        .first();
+      return team?.scoutIds.includes(scoutId) ?? false;
+    }
+    case "checklist": {
+      const rotations = await ctx.db
+        .query("pitRotations")
+        .withIndex("by_event", (q) => q.eq("eventKey", args.eventKey))
+        .collect();
+      return rotations.some(
+        (r) =>
+          !r.isElims &&
+          r.startMatch != null &&
+          r.endMatch != null &&
+          args.matchNumber >= r.startMatch &&
+          args.matchNumber <= r.endMatch &&
+          r.scoutIds.includes(scoutId)
+      );
+    }
+    default:
+      // "super" and anything unrecognized: no assignment source, no reward.
+      return false;
+  }
+}
+
+/**
  * Has this scout already logged this exact match+team at this event?
  *
  * `exclude` is the row just inserted, which is skipped so a submission never
@@ -246,8 +314,9 @@ export const submitForm = mutation({
     // it just doesn't pay twice.
     if (userId && !(await alreadyScouted(ctx, userId, args, submissionId))) {
       const template = await ctx.db.get(args.templateId);
+      const formType = template?.formType ?? "default";
       const reward = template?.coinReward ?? DEFAULT_SCOUT_REWARD;
-      if (reward > 0) {
+      if (reward > 0 && (await isAssignedForReward(ctx, userId, formType, args))) {
         await awardCoins(ctx, userId, args.eventKey, reward);
       }
     }
@@ -330,6 +399,29 @@ export const deleteSubmission = mutation({
   handler: async (ctx, { id, adminKey }) => {
     await requireAdmin(ctx, adminKey);
     await ctx.db.delete(id);
+  },
+});
+
+/**
+ * Bulk-delete submissions for an event — every one, or just one scout's.
+ * Backs Manage Scouts' "Delete all reports" actions (per-scout and event-wide).
+ * Coins already paid out are not clawed back.
+ */
+export const deleteSubmissions = mutation({
+  args: {
+    eventKey: v.string(),
+    scoutId: v.optional(v.id("users")), // omit to delete every submission at the event
+    adminKey: v.optional(v.string()),
+  },
+  handler: async (ctx, { eventKey, scoutId, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
+    const rows = await ctx.db
+      .query("formSubmissions")
+      .withIndex("by_event_team", (q) => q.eq("eventKey", eventKey))
+      .collect();
+    const toDelete = scoutId ? rows.filter((r) => r.scoutId === scoutId) : rows;
+    await Promise.all(toDelete.map((r) => ctx.db.delete(r._id)));
+    return toDelete.length;
   },
 });
 

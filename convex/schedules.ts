@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { isSignedIn, requireAdmin } from "./adminAuth";
+import { awardCoins, revokeCoins, PIT_DUTY_REWARD } from "./betting";
 
 const positionValidator = v.union(
   v.literal("red1"), v.literal("red2"), v.literal("red3"),
@@ -278,9 +279,13 @@ export const reportPitDuty = mutation({
       .first();
     if (existing) return existing._id;
 
-    return await ctx.db.insert("pitDutyCheckIns", {
+    const id = await ctx.db.insert("pitDutyCheckIns", {
       scoutId: userId, eventKey, rotationId, reportedAt: Date.now(),
     });
+    // Pit duty produces no form submission, so this is its own payout —
+    // paid once per rotation since a repeat report short-circuits above.
+    await awardCoins(ctx, userId, eventKey, PIT_DUTY_REWARD);
+    return id;
   },
 });
 
@@ -295,7 +300,12 @@ export const unreportPitDuty = mutation({
       .query("pitDutyCheckIns")
       .withIndex("by_scout_rotation", (q) => q.eq("scoutId", userId).eq("rotationId", rotationId))
       .first();
-    if (existing) await ctx.db.delete(existing._id);
+    if (existing) {
+      await ctx.db.delete(existing._id);
+      // Reverse the reportPitDuty payout — otherwise report→undo→report
+      // repeated farms unlimited coins.
+      await revokeCoins(ctx, userId, existing.eventKey, PIT_DUTY_REWARD);
+    }
   },
 });
 

@@ -11,6 +11,9 @@ const STARTING_BALANCE = 1000;
 /** Coins paid for a submission whose template predates per-form rewards. */
 export const DEFAULT_SCOUT_REWARD = 50;
 
+/** Coins paid for reporting to a pit-duty shift (no form submission to reward instead). */
+export const PIT_DUTY_REWARD = 25;
+
 const MIN_BET = 10;
 /** Coins are whole and the economy starts at 1000; nothing legitimate stakes more. */
 const MAX_BET = 1_000_000;
@@ -88,6 +91,29 @@ export async function awardCoins(
   await ctx.db.patch(bal._id, {
     balance:     bal.balance + amount,
     totalEarned: (bal.totalEarned ?? 0) + amount,
+  });
+}
+
+/**
+ * Reverse a previous `awardCoins` call — for an action that undoes the work
+ * it paid out for (e.g. undoing a pit-duty report). A no-op if the user has
+ * no balance row yet, since there is nothing to claw back.
+ */
+export async function revokeCoins(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  eventKey: string,
+  amount: number,
+): Promise<void> {
+  if (amount <= 0) return;
+  const bal = await ctx.db
+    .query("userBalances")
+    .withIndex("by_user_event", (q) => q.eq("userId", userId).eq("eventKey", eventKey))
+    .first();
+  if (!bal) return;
+  await ctx.db.patch(bal._id, {
+    balance:     bal.balance - amount,
+    totalEarned: Math.max(0, (bal.totalEarned ?? 0) - amount),
   });
 }
 
