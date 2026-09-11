@@ -448,6 +448,8 @@ function TeamCard({
   onRemove,
   onDragStart,
   onDragEnd,
+  onDragOver,
+  onDrop,
 }: {
   card: KanbanCard;
   eventKey: string;
@@ -462,6 +464,8 @@ function TeamCard({
   onRemove: (cardId: string) => void;
   onDragStart: (e: React.DragEvent, cardId: string) => void;
   onDragEnd: () => void;
+  onDragOver?: (e: React.DragEvent) => void;
+  onDrop?: (e: React.DragEvent) => void;
 }) {
   const { nickname, avatar } = useTeamInfo(card.teamNumber, eventYear);
   const { rank, record } = useTeamRanking(card.teamNumber, eventKey);
@@ -508,6 +512,8 @@ function TeamCard({
       draggable
       onDragStart={(e) => onDragStart(e, card._id)}
       onDragEnd={onDragEnd}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
       className={`group bg-card border border-border rounded-lg overflow-hidden cursor-grab active:cursor-grabbing transition-all select-none ${
         isDragging
           ? "opacity-40 scale-95"
@@ -612,6 +618,7 @@ function KanbanCol({
   isDragTarget,
   isColDragging,
   isColDropTarget,
+  cardDropInfo,
   onDragOver,
   onDragLeave,
   onDrop,
@@ -620,6 +627,8 @@ function KanbanCol({
   onRemoveColumn,
   onDragStart,
   onDragEnd,
+  onCardDragOver,
+  onCardDrop,
   onColDragStart,
   onColDragOver,
   onColDrop,
@@ -638,6 +647,7 @@ function KanbanCol({
   isDragTarget: boolean;
   isColDragging: boolean;
   isColDropTarget: boolean;
+  cardDropInfo: { cardId: string; before: boolean } | null;
   onDragOver: (colId: string) => void;
   onDragLeave: () => void;
   onDrop: (colId: string) => void;
@@ -646,12 +656,14 @@ function KanbanCol({
   onRemoveColumn: (colId: string) => void;
   onDragStart: (e: React.DragEvent, cardId: string) => void;
   onDragEnd: () => void;
+  onCardDragOver: (e: React.DragEvent, cardId: string) => void;
+  onCardDrop: (e: React.DragEvent, cardId: string) => void;
   onColDragStart: (e: React.DragEvent, colId: string) => void;
   onColDragOver: (e: React.DragEvent, colId: string) => void;
   onColDrop: (e: React.DragEvent, colId: string) => void;
   onColDragEnd: () => void;
 }) {
-  const sorted = [...cards].sort((a, b) => a.teamNumber - b.teamNumber);
+  const sorted = [...cards].sort((a, b) => a.position - b.position);
   const isUnsorted = column.id === "unsorted";
 
   return (
@@ -724,24 +736,37 @@ function KanbanCol({
       {/* Cards */}
       <ScrollArea className="flex-1" style={{ maxHeight: "calc(100vh - 220px)" }}>
         <div className="p-2 space-y-2">
-          {sorted.map((card) => (
-            <TeamCard
-              key={card._id}
-              card={card}
-              eventKey={eventKey}
-              eventYear={eventYear}
-              epa={epaByTeam[card.teamNumber] ?? null}
-              epaStatus={epaStatus}
-              submissions={submissionsByTeam[card.teamNumber] ?? []}
-              fields={fields}
-              cardPrefs={cardPrefs}
-              isDragging={draggingCardId === card._id}
-              onEdit={onEditCard}
-              onRemove={onRemoveCard}
-              onDragStart={onDragStart}
-              onDragEnd={onDragEnd}
-            />
-          ))}
+          {sorted.map((card) => {
+            const showAbove = cardDropInfo?.cardId === card._id && cardDropInfo.before  && draggingCardId !== card._id;
+            const showBelow = cardDropInfo?.cardId === card._id && !cardDropInfo.before && draggingCardId !== card._id;
+            return (
+              <div key={card._id} className="relative">
+                {showAbove && (
+                  <div className="absolute -top-1.5 left-0 right-0 h-0.5 bg-primary z-20 pointer-events-none" />
+                )}
+                <TeamCard
+                  card={card}
+                  eventKey={eventKey}
+                  eventYear={eventYear}
+                  epa={epaByTeam[card.teamNumber] ?? null}
+                  epaStatus={epaStatus}
+                  submissions={submissionsByTeam[card.teamNumber] ?? []}
+                  fields={fields}
+                  cardPrefs={cardPrefs}
+                  isDragging={draggingCardId === card._id}
+                  onEdit={onEditCard}
+                  onRemove={onRemoveCard}
+                  onDragStart={onDragStart}
+                  onDragEnd={onDragEnd}
+                  onDragOver={(e) => onCardDragOver(e, card._id)}
+                  onDrop={(e) => onCardDrop(e, card._id)}
+                />
+                {showBelow && (
+                  <div className="absolute -bottom-1.5 left-0 right-0 h-0.5 bg-primary z-20 pointer-events-none" />
+                )}
+              </div>
+            );
+          })}
           {sorted.length === 0 && (
             <div className={`rounded-lg border-2 border-dashed py-8 text-center text-xs text-muted-foreground transition-colors ${
               isDragTarget ? "border-primary/40 text-primary/60" : "border-border"
@@ -1213,6 +1238,7 @@ function BoardView({
   const draggingCardId   = useRef<string | null>(null);
   const [activeDragCardId, setActiveDragCardId] = useState<string | null>(null);
   const [dragOverColId, setDragOverColId]       = useState<string | null>(null);
+  const [cardDropInfo, setCardDropInfo]         = useState<{ cardId: string; before: boolean } | null>(null);
 
   // Column drag-to-reorder state
   const [draggingColId, setDraggingColId]       = useState<string | null>(null);
@@ -1251,6 +1277,19 @@ function BoardView({
     setLocalMoves({});
     setRemovedCardIds(new Set());
   }, [rawCardsLive]);
+
+  // Flat ordering (by column, then position) used to figure out drag direction
+  // and insertion index when reordering cards within a board column.
+  const orderedForBoard = useMemo(
+    () =>
+      [...cards].sort((a, b) => {
+        const ai = columns.findIndex((c) => c.id === a.columnId);
+        const bi = columns.findIndex((c) => c.id === b.columnId);
+        if (ai !== bi) return ai - bi;
+        return a.position - b.position;
+      }),
+    [cards, columns]
+  );
 
   const fields: FormField[] = (activeTemplate?.fields as FormField[]) ?? [];
 
@@ -1454,6 +1493,7 @@ function BoardView({
     draggingCardId.current = null;
     setActiveDragCardId(null);
     setDragOverColId(null);
+    setCardDropInfo(null);
   }
 
   function handleDragOver(colId: string) { setDragOverColId(colId); }
@@ -1484,6 +1524,71 @@ function BoardView({
       }
     } else {
       enqueueKanbanOp({ type: "moveCard", cardId, columnId: targetColId, position });
+      toast.info("Move saved — will sync when online", { duration: 2000 });
+    }
+  }
+
+  /** Drag-over indicator for reordering within (or across) a board column —
+   *  mirrors ListView's per-row indicator so both views feel consistent. */
+  function handleCardDragOver(e: React.DragEvent, targetCardId: string) {
+    e.preventDefault();
+    e.stopPropagation(); // don't let the column's onDragOver also fire
+    const dragId = draggingCardId.current;
+    if (!dragId || dragId === targetCardId) return;
+    const dragIdx   = orderedForBoard.findIndex((c) => c._id === dragId);
+    const targetIdx = orderedForBoard.findIndex((c) => c._id === targetCardId);
+    const before = dragIdx > targetIdx;
+    setCardDropInfo((prev) =>
+      prev?.cardId === targetCardId && prev?.before === before ? prev : { cardId: targetCardId, before }
+    );
+    setDragOverColId(null);
+  }
+
+  /** Drops a card onto another card to reorder it within a tier (or move it
+   *  into a different tier at that exact spot), instead of always appending
+   *  to the end of the target column. */
+  async function handleCardDrop(e: React.DragEvent, targetCardId: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    const cardId = draggingCardId.current;
+    setDragOverColId(null);
+    setActiveDragCardId(null);
+    setCardDropInfo(null);
+    draggingCardId.current = null;
+    if (!cardId || cardId === targetCardId) return;
+
+    const dragCard   = cards.find((c) => c._id === cardId);
+    const targetCard = cards.find((c) => c._id === targetCardId);
+    if (!dragCard || !targetCard) return;
+
+    const dragIdx   = orderedForBoard.findIndex((c) => c._id === cardId);
+    const targetIdx = orderedForBoard.findIndex((c) => c._id === targetCardId);
+    const draggingDown = dragIdx < targetIdx;
+
+    const withoutDrag  = orderedForBoard.filter((c) => c._id !== cardId);
+    const newTargetIdx = withoutDrag.findIndex((c) => c._id === targetCardId);
+    const insertIdx    = draggingDown ? newTargetIdx + 1 : newTargetIdx;
+
+    const newOrder = [
+      ...withoutDrag.slice(0, insertIdx),
+      { ...dragCard, columnId: targetCard.columnId },
+      ...withoutDrag.slice(insertIdx),
+    ];
+
+    const newColCards = newOrder.filter((c) => c.columnId === targetCard.columnId);
+    const position = Math.max(0, newColCards.findIndex((c) => c._id === cardId));
+
+    setLocalMoves((prev) => ({ ...prev, [cardId]: { columnId: targetCard.columnId, position } }));
+
+    if (navigator.onLine) {
+      try {
+        await moveCardMutation({ cardId: cardId as Id<"kanbanCards">, columnId: targetCard.columnId, position });
+      } catch {
+        setLocalMoves((prev) => { const p = { ...prev }; delete p[cardId]; return p; });
+        toast.error("Failed to move card");
+      }
+    } else {
+      enqueueKanbanOp({ type: "moveCard", cardId, columnId: targetCard.columnId, position });
       toast.info("Move saved — will sync when online", { duration: 2000 });
     }
   }
@@ -1709,6 +1814,7 @@ function BoardView({
               isDragTarget={dragOverColId === col.id}
               isColDragging={draggingColId === col.id}
               isColDropTarget={colDropTargetId === col.id}
+              cardDropInfo={cardDropInfo}
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
@@ -1720,6 +1826,8 @@ function BoardView({
               onRemoveColumn={handleRemoveColumn}
               onDragStart={handleDragStart}
               onDragEnd={handleDragEnd}
+              onCardDragOver={handleCardDragOver}
+              onCardDrop={handleCardDrop}
               onColDragStart={handleColDragStart}
               onColDragOver={handleColDragOver}
               onColDrop={handleColDrop}
