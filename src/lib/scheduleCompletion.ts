@@ -61,3 +61,31 @@ export function isMatchDone(c: Completion, matchNumber: number, compLevel: "qm" 
     : c.matches.has(`${compLevel}|${matchNumber}`);
 }
 
+
+// ── Pit duty ──────────────────────────────────────────────────────────────────
+//
+// Pit duty produces no submission, so "done" is an explicit check-in instead.
+// The pending queue is desired state, not a log, so a queued entry always wins
+// over the server — it is the newer of the two by construction.
+
+export interface PitDutyOpLike {
+  rotationId: string;
+  reported: boolean;
+}
+
+/**
+ * Rotation ids this scout has reported for, merging synced check-ins with
+ * check-ins still waiting to go up. A queued un-report removes a rotation the
+ * server still lists, so tapping undo offline does not visibly bounce back.
+ */
+export function resolvePitDutyDone(
+  serverRotationIds: readonly string[],
+  pendingOps: readonly PitDutyOpLike[],
+): Set<string> {
+  const done = new Set(serverRotationIds);
+  for (const op of pendingOps) {
+    if (op.reported) done.add(op.rotationId);
+    else done.delete(op.rotationId);
+  }
+  return done;
+}

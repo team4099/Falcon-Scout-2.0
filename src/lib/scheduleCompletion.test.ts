@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { buildCompletion, isMatchDone, EMPTY_COMPLETION } from "./scheduleCompletion";
+import { buildCompletion, isMatchDone, resolvePitDutyDone, EMPTY_COMPLETION } from "./scheduleCompletion";
 import type { SubmissionKey } from "./scheduleCompletion";
 
 function sub(p: Partial<SubmissionKey>): SubmissionKey {
@@ -82,5 +82,32 @@ describe("buildCompletion", () => {
   test("nothing submitted means nothing is done", () => {
     expect(isMatchDone(EMPTY_COMPLETION, 1, "qm", 449)).toBe(false);
     expect(buildCompletion([]).pitTeams.size).toBe(0);
+  });
+});
+
+describe("resolvePitDutyDone", () => {
+  test("a synced check-in marks the rotation done", () => {
+    expect(resolvePitDutyDone(["rot1"], []).has("rot1")).toBe(true);
+  });
+
+  test("a check-in still in the queue counts immediately, so offline works", () => {
+    const done = resolvePitDutyDone([], [{ rotationId: "rot1", reported: true }]);
+    expect(done.has("rot1")).toBe(true);
+  });
+
+  test("a queued undo beats the server row it has not yet deleted", () => {
+    const done = resolvePitDutyDone(["rot1"], [{ rotationId: "rot1", reported: false }]);
+    expect(done.has("rot1")).toBe(false);
+  });
+
+  test("rotations are independent of each other", () => {
+    const done = resolvePitDutyDone(["rot1"], [{ rotationId: "rot2", reported: true }]);
+    expect(done.has("rot1")).toBe(true);
+    expect(done.has("rot2")).toBe(true);
+    expect(done.has("rot3")).toBe(false);
+  });
+
+  test("nothing reported means nothing done", () => {
+    expect(resolvePitDutyDone([], []).size).toBe(0);
   });
 });

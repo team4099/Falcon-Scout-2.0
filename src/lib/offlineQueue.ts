@@ -169,6 +169,52 @@ export function clearKanbanQueue(): void {
   localStorage.removeItem(KANBAN_QUEUE_KEY);
 }
 
+// ── Pit duty check-in queue ───────────────────────────────────────────────────
+//
+// Unlike the other queues this one holds *desired state*, not an op log: at
+// most one entry per rotation, latest tap wins. A scout who reports and then
+// immediately un-reports while offline should send one final state when the
+// uplink returns, not two contradictory writes.
+
+export interface PitDutyOp {
+  id: string;
+  ts: number;
+  eventKey: string;
+  rotationId: string;
+  /** true = report for duty, false = undo a check-in. */
+  reported: boolean;
+}
+
+const PIT_DUTY_QUEUE_KEY = "falconscout_pit_duty_queue";
+
+export function getPitDutyQueue(): PitDutyOp[] {
+  try {
+    const raw = localStorage.getItem(PIT_DUTY_QUEUE_KEY);
+    return raw ? (JSON.parse(raw) as PitDutyOp[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Queue a check-in state for a rotation, replacing any pending entry for it. */
+export function enqueuePitDutyOp(op: { eventKey: string; rotationId: string; reported: boolean }): string {
+  const entry: PitDutyOp = { ...op, id: crypto.randomUUID(), ts: Date.now() };
+  const queue = getPitDutyQueue().filter((q) => q.rotationId !== op.rotationId);
+  queue.push(entry);
+  localStorage.setItem(PIT_DUTY_QUEUE_KEY, JSON.stringify(queue));
+  return entry.id;
+}
+
+export function dequeuePitDutyOp(id: string): void {
+  const queue = getPitDutyQueue().filter((op) => op.id !== id);
+  localStorage.setItem(PIT_DUTY_QUEUE_KEY, JSON.stringify(queue));
+}
+
+export function clearPitDutyQueue(): void {
+  localStorage.removeItem(PIT_DUTY_QUEUE_KEY);
+}
+
 export function getTotalPendingOps(): number {
-  return getOfflineQueue().length + getChecklistQueue().length + getKanbanQueue().length;
+  return getOfflineQueue().length + getChecklistQueue().length
+    + getKanbanQueue().length + getPitDutyQueue().length;
 }

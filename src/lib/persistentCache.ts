@@ -169,6 +169,7 @@ const NEVER_CLEAR = new Set([
   "falconscout_offline_queue",        // scouting submissions awaiting sync
   "falconscout_checklist_queue",      // checklist submissions awaiting sync
   "falconscout_kanban_queue",         // picklist ops awaiting sync
+  "falconscout_pit_duty_queue",       // pit duty check-ins awaiting sync
   "falconscout_my_submissions",       // local submissions backing My QR Codes
   "falconscout_scanned_submissions",  // data scanned off other scouts' phones
   "falconscout_chunk_buffers",        // partially scanned multi-code submissions

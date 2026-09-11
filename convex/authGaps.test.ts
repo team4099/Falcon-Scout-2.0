@@ -90,6 +90,72 @@ describe("checklist submission requires a signed-in caller", () => {
     expect(mine[0].teamNumber).toBe(9072);
   });
 
+  test("a scout cannot report for a pit rotation they are not rostered on", async () => {
+    const t = convexTest(schema, modules);
+    const { outsiderId, rotationId } = await t.run(async (ctx) => {
+      const rosteredId = await ctx.db.insert("users", { name: "Rostered" });
+      return {
+        outsiderId: await ctx.db.insert("users", { name: "Outsider" }),
+        rotationId: await ctx.db.insert("pitRotations", {
+          eventKey: EVENT, startMatch: 1, endMatch: 10, scoutIds: [rosteredId],
+        }),
+      };
+    });
+    // The roster is read from the rotation row server-side — hiding the button
+    // on the client is not the gate.
+    const as = t.withIdentity({ subject: outsiderId, issuer: "test" });
+    await expect(
+      as.mutation(api.schedules.reportPitDuty, { eventKey: EVENT, rotationId }),
+    ).rejects.toThrow(/not assigned/);
+    expect(await t.run(async (ctx) => ctx.db.query("pitDutyCheckIns").collect())).toHaveLength(0);
+  });
+
+  test("an anonymous caller cannot report for pit duty", async () => {
+    const t = convexTest(schema, modules);
+    const rotationId = await t.run(async (ctx) => {
+      const scoutId = await ctx.db.insert("users", { name: "Scout" });
+      return await ctx.db.insert("pitRotations", {
+        eventKey: EVENT, startMatch: 1, endMatch: 10, scoutIds: [scoutId],
+      });
+    });
+    await expect(
+      t.mutation(api.schedules.reportPitDuty, { eventKey: EVENT, rotationId }),
+    ).rejects.toThrow(/authenticated/);
+  });
+
+  test("reporting twice is idempotent, and undo only removes your own row", async () => {
+    const t = convexTest(schema, modules);
+    const { scoutId, otherId, rotationId } = await t.run(async (ctx) => {
+      const scoutId = await ctx.db.insert("users", { name: "Scout" });
+      const otherId = await ctx.db.insert("users", { name: "Other" });
+      return {
+        scoutId, otherId,
+        rotationId: await ctx.db.insert("pitRotations", {
+          eventKey: EVENT, startMatch: 1, endMatch: 10, scoutIds: [scoutId, otherId],
+        }),
+      };
+    });
+    const as = t.withIdentity({ subject: scoutId, issuer: "test" });
+    const asOther = t.withIdentity({ subject: otherId, issuer: "test" });
+
+    await as.mutation(api.schedules.reportPitDuty, { eventKey: EVENT, rotationId });
+    await as.mutation(api.schedules.reportPitDuty, { eventKey: EVENT, rotationId });
+    await asOther.mutation(api.schedules.reportPitDuty, { eventKey: EVENT, rotationId });
+    // A double tap (or an offline retry) must not stack up rows.
+    expect(await t.run(async (ctx) => ctx.db.query("pitDutyCheckIns").collect())).toHaveLength(2);
+
+    await as.mutation(api.schedules.unreportPitDuty, { rotationId });
+    expect(await as.query(api.schedules.getMyPitDutyCheckIns, { eventKey: EVENT })).toEqual([]);
+    // The other scout's check-in survives.
+    expect(await asOther.query(api.schedules.getMyPitDutyCheckIns, { eventKey: EVENT }))
+      .toHaveLength(1);
+  });
+
+  test("getMyPitDutyCheckIns returns nothing to an anonymous caller", async () => {
+    const t = convexTest(schema, modules);
+    expect(await t.query(api.schedules.getMyPitDutyCheckIns, { eventKey: EVENT })).toEqual([]);
+  });
+
   test("getMySubmissions returns nothing to an anonymous caller", async () => {
     const t = convexTest(schema, modules);
     expect(await t.query(api.forms.getMySubmissions, { eventKey: EVENT })).toEqual([]);

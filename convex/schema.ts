@@ -150,6 +150,20 @@ export default defineSchema({
   })
     .index("by_event", ["eventKey"]),
 
+  // A scout reporting for a pit-duty shift. Pit duty produces no form
+  // submission, so there is nothing else to tell a finished shift from an
+  // upcoming one — this row is the whole record. One row per scout per
+  // rotation; reporting twice is a no-op.
+  pitDutyCheckIns: defineTable({
+    scoutId:    v.id("users"),
+    eventKey:   v.string(),
+    rotationId: v.id("pitRotations"),
+    reportedAt: v.number(),
+  })
+    .index("by_scout_event", ["scoutId", "eventKey"])
+    .index("by_scout_rotation", ["scoutId", "rotationId"])
+    .index("by_event_rotation", ["eventKey", "rotationId"]),
+
   // Per-user settings (API keys, preferences) — synced across devices
   userSettings: defineTable({
     userId:    v.id("users"),

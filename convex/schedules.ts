@@ -235,6 +235,70 @@ export const deletePitRotation = mutation({
 // ── Scout Preferences ─────────────────────────────────────────────────────────
 
 /** Current user's preferences for an event (null if never set) */
+// ── Pit duty check-ins ────────────────────────────────────────────────────────
+
+/** The signed-in scout's pit-duty check-ins at an event. */
+export const getMyPitDutyCheckIns = query({
+  args: { eventKey: v.string() },
+  handler: async (ctx, { eventKey }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    const rows = await ctx.db
+      .query("pitDutyCheckIns")
+      .withIndex("by_scout_event", (q) => q.eq("scoutId", userId).eq("eventKey", eventKey))
+      .collect();
+    return rows.map((r) => ({ rotationId: r.rotationId, reportedAt: r.reportedAt }));
+  },
+});
+
+/** Report for a pit-duty shift. Idempotent — reporting twice keeps the first
+ *  timestamp rather than inserting a second row.
+ *
+ *  A scout may only check in to a rotation they are actually rostered on, and
+ *  the roster is read from the rotation row here rather than trusted from the
+ *  client. Hiding the button is not a gate.
+ */
+export const reportPitDuty = mutation({
+  args: { eventKey: v.string(), rotationId: v.id("pitRotations") },
+  handler: async (ctx, { eventKey, rotationId }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+
+    const rotation = await ctx.db.get(rotationId);
+    if (!rotation || rotation.eventKey !== eventKey) {
+      throw new Error("Pit rotation not found at this event");
+    }
+    if (!rotation.scoutIds.includes(userId)) {
+      throw new Error("You are not assigned to this pit rotation");
+    }
+
+    const existing = await ctx.db
+      .query("pitDutyCheckIns")
+      .withIndex("by_scout_rotation", (q) => q.eq("scoutId", userId).eq("rotationId", rotationId))
+      .first();
+    if (existing) return existing._id;
+
+    return await ctx.db.insert("pitDutyCheckIns", {
+      scoutId: userId, eventKey, rotationId, reportedAt: Date.now(),
+    });
+  },
+});
+
+/** Undo a check-in — a mis-tap on a phone mid-event has to be recoverable.
+ *  Only ever deletes the caller's own row. */
+export const unreportPitDuty = mutation({
+  args: { rotationId: v.id("pitRotations") },
+  handler: async (ctx, { rotationId }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const existing = await ctx.db
+      .query("pitDutyCheckIns")
+      .withIndex("by_scout_rotation", (q) => q.eq("scoutId", userId).eq("rotationId", rotationId))
+      .first();
+    if (existing) await ctx.db.delete(existing._id);
+  },
+});
+
 export const getMyPreferences = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {

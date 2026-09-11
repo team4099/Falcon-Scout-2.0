@@ -1,22 +1,24 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { useQuery } from "convex/react";
 import { useMutation } from "convex/react";
 import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
+import type { Id } from "../../convex/_generated/dataModel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { fetchTBAEventMatches } from "@/lib/api";
 import { lsGet, lsGetStale } from "@/lib/persistentCache";
 import { getMySubmissions as getLocalSubmissions } from "@/lib/submissionStore";
 import {
-  buildCompletion, isMatchDone, EMPTY_COMPLETION,
+  buildCompletion, isMatchDone, resolvePitDutyDone, EMPTY_COMPLETION,
   type Completion, type SubmissionKey,
 } from "@/lib/scheduleCompletion";
+import { enqueuePitDutyOp, dequeuePitDutyOp, getPitDutyQueue } from "@/lib/offlineQueue";
 import type { TBAMatch } from "@/lib/api";
 import type { FormField } from "@/types";
 import {
   CalendarDays, CalendarCheck, ClipboardList, Wrench, Coffee,
-  Loader2, CheckCircle2, Users, ClipboardCheck, CircleDashed,
+  Loader2, CheckCircle2, Users, ClipboardCheck, CircleDashed, Undo2,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -237,8 +239,9 @@ function ChecklistCard({ assignment }: { assignment: ChecklistAssignment }) {
 
 // ── Unified schedule item type ────────────────────────────────────────────────
 
-// `done` drives the Upcoming/Completed split. Pit duty and playoff shifts are
-// presence, not a submission, so nothing marks them done — they stay upcoming.
+// `done` drives the Upcoming/Completed split. Scouting, checklists and pit
+// scouting complete on submission; pit duty and playoff shifts have no form
+// behind them, so they complete when the scout reports for the shift.
 type UnifiedItem =
   | { kind: "scout";    assignment: MatchAssignment;    match: TBAMatch | null; sortKey: number; ts: number | null; done: boolean }
   | { kind: "checklist"; assignment: ChecklistAssignment; sortKey: number; ts: number | null; done: boolean }
@@ -519,13 +522,14 @@ function ScoutingCard({ assignment, match, done = false }: { assignment: MatchAs
 
 // ── Elims pit card ─────────────────────────────────────────────────────────────
 
-function ElimsCard() {
+function ElimsCard({ done, onToggle }: { done: boolean; onToggle: () => void }) {
   return (
     <div
       style={{
         display: "flex", alignItems: "center", gap: 12, padding: "12px 16px",
-        borderRadius: 12, background: G_DIM, border: `1.5px solid ${G_STR}`,
+        borderRadius: 12, background: G_DIM, border: `1.5px solid ${done ? G_MED : G_STR}`,
         transition: "transform 0.1s ease", cursor: "default",
+        opacity: done ? 0.72 : 1,
       }}
       onMouseEnter={e => (e.currentTarget.style.transform = "translateX(3px)")}
       onMouseLeave={e => (e.currentTarget.style.transform = "none")}
@@ -535,29 +539,51 @@ function ElimsCard() {
         background: G, display: "flex", alignItems: "center", justifyContent: "center",
         boxShadow: `0 2px 10px ${G} / 40%`,
       }}>
-        <Wrench size={16} color={G_TXT} />
+        {done ? <CheckCircle2 size={16} color={G_TXT} /> : <Wrench size={16} color={G_TXT} />}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 800, fontSize: 15, color: FG }}>Playoffs</div>
-        <div style={{ fontSize: 12, color: MUTED, marginTop: 1 }}>QF, SF & Finals</div>
+        <div style={{ fontSize: 12, color: MUTED, marginTop: 1 }}>
+          QF, SF &amp; Finals{done ? " · Reported" : ""}
+        </div>
       </div>
-      <span style={{
-        display: "inline-flex", alignItems: "center", gap: 5,
-        padding: "4px 11px", borderRadius: 8,
-        background: G, color: G_TXT, fontSize: 12, fontWeight: 700,
-        border: `1px solid ${G_STR}`, flexShrink: 0,
-        boxShadow: `0 2px 8px ${G} / 30%`,
-      }}>
-        <Wrench size={11} />
-        Elims Pit Duty
-      </span>
+      <ReportPitDutyButton done={done} onToggle={onToggle} />
     </div>
+  );
+}
+
+// ── Report-for-duty button ────────────────────────────────────────────────────
+//
+// Pit duty is the one assignment with no form behind it, so this tap is the
+// only thing that can move it out of Upcoming. It stays undoable — a mis-tap
+// on a phone between matches must not strand a shift in the wrong tab.
+
+function ReportPitDutyButton({ done, onToggle }: { done: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      title={done ? "Undo — move this shift back to Upcoming" : "Report that you're on pit duty for this shift"}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 6,
+        padding: "7px 13px", borderRadius: 9, flexShrink: 0,
+        background: done ? "transparent" : G,
+        color: done ? MUTED : G_TXT,
+        border: `1.5px solid ${done ? SURF_BORD : G_STR}`,
+        fontSize: 12, fontWeight: 800, fontFamily: "inherit",
+        cursor: "pointer", outline: "none",
+        boxShadow: done ? "none" : `0 2px 8px ${G} / 30%`,
+        transition: "background 0.15s ease, color 0.15s ease",
+      }}
+    >
+      {done ? <><Undo2 size={12} />Undo</> : <><Wrench size={12} />Report to pit duty</>}
+    </button>
   );
 }
 
 // ── Qual pit rotation card ─────────────────────────────────────────────────────
 
-function QualPitCard({ rotation }: { rotation: PitRotation }) {
+function QualPitCard({ rotation, done, onToggle }: { rotation: PitRotation; done: boolean; onToggle: () => void }) {
   const span = (rotation.startMatch != null && rotation.endMatch != null)
     ? rotation.endMatch - rotation.startMatch + 1 : null;
   return (
@@ -566,6 +592,7 @@ function QualPitCard({ rotation }: { rotation: PitRotation }) {
         display: "flex", alignItems: "center", gap: 12, padding: "12px 16px",
         borderRadius: 12, background: SURFACE, border: `1px solid ${SURF_BORD}`,
         transition: "transform 0.1s ease", cursor: "default",
+        opacity: done ? 0.72 : 1,
       }}
       onMouseEnter={e => (e.currentTarget.style.transform = "translateX(3px)")}
       onMouseLeave={e => (e.currentTarget.style.transform = "none")}
@@ -575,7 +602,7 @@ function QualPitCard({ rotation }: { rotation: PitRotation }) {
         background: G_DIM, border: `1px solid ${G_MED}`,
         display: "flex", alignItems: "center", justifyContent: "center",
       }}>
-        <Wrench size={16} style={{ color: G }} />
+        {done ? <CheckCircle2 size={16} style={{ color: G }} /> : <Wrench size={16} style={{ color: G }} />}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 800, fontSize: 15, color: FG, fontFamily: "monospace" }}>
@@ -583,17 +610,10 @@ function QualPitCard({ rotation }: { rotation: PitRotation }) {
         </div>
         <div style={{ fontSize: 12, color: MUTED, marginTop: 1 }}>
           {rotation.label ? `${rotation.label} · ` : ""}{span} match{span !== 1 ? "es" : ""}
+          {done && <span style={{ color: G, fontWeight: 700 }}> · Reported</span>}
         </div>
       </div>
-      <span style={{
-        display: "inline-flex", alignItems: "center", gap: 5,
-        padding: "4px 11px", borderRadius: 8,
-        background: G_DIM, color: G, fontSize: 12, fontWeight: 700,
-        border: `1px solid ${G_MED}`, flexShrink: 0,
-      }}>
-        <Wrench size={11} />
-        Pit Duty
-      </span>
+      <ReportPitDutyButton done={done} onToggle={onToggle} />
     </div>
   );
 }
@@ -949,21 +969,30 @@ export default function MySchedulePage() {
   );
   const mySubmissions = useCached(mySubmissionsLive, `my_submissions_${eventKey || "none"}`);
 
+  // localStorage is outside React, so nothing re-renders when it changes. This
+  // counter is the signal: bump it when the tab regains focus (the scout has
+  // just come back from a form) and the reads below re-run.
+  const [storeRev, setStoreRev] = useState(0);
+  useEffect(() => {
+    const bump = () => setStoreRev(r => r + 1);
+    window.addEventListener("focus", bump);
+    document.addEventListener("visibilitychange", bump);
+    return () => {
+      window.removeEventListener("focus", bump);
+      document.removeEventListener("visibilitychange", bump);
+    };
+  }, []);
+
   // Locally stored submissions cover the offline case — they are written before
   // the network call, so an assignment ticks off the moment the scout submits
-  // even with no uplink. Re-read when the tab regains focus (the scout has just
-  // come back from the form) and whenever the server list changes.
-  const [localSubs, setLocalSubs] = useState(() => getLocalSubmissions());
-  useEffect(() => {
-    const reload = () => setLocalSubs(getLocalSubmissions());
-    reload();
-    window.addEventListener("focus", reload);
-    document.addEventListener("visibilitychange", reload);
-    return () => {
-      window.removeEventListener("focus", reload);
-      document.removeEventListener("visibilitychange", reload);
-    };
-  }, [mySubmissions]);
+  // even with no uplink. Re-read on focus, and whenever the server list changes.
+  const localSubs = useMemo(
+    () => getLocalSubmissions(),
+    // mySubmissions is an invalidation key, not an input: a server round-trip
+    // means the local store may have been drained.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [storeRev, mySubmissions]
+  );
 
   const completion = useMemo<Completion>(() => {
     if (!eventKey) return EMPTY_COMPLETION;
@@ -987,6 +1016,48 @@ export default function MySchedulePage() {
   }, [mySubmissions, localSubs, activeTemplates, eventKey]);
 
   const completedChecklistSet = completion.checklists;
+
+  // ── Pit duty check-ins ──────────────────────────────────────────────────────
+  const reportPitDuty   = useMutation(api.schedules.reportPitDuty);
+  const unreportPitDuty = useMutation(api.schedules.unreportPitDuty);
+
+  const myPitCheckInsLive = useQuery(
+    api.schedules.getMyPitDutyCheckIns,
+    eventKey ? { eventKey } : "skip"
+  ) as { rotationId: string; reportedAt: number }[] | undefined;
+  const myPitCheckIns = useCached(myPitCheckInsLive, `my_pit_checkins_${eventKey || "none"}`) as
+    | { rotationId: string; reportedAt: number }[]
+    | undefined;
+
+  // Anything still queued for sync counts straight away, so reporting for duty
+  // works with no uplink — the queue is drained by useOfflineSync. `localRev`
+  // is bumped by a tap so the card flips without waiting for the server.
+  const [localRev, setLocalRev] = useState(0);
+  const pendingPitOps = useMemo(
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    () => getPitDutyQueue(), [storeRev, localRev, myPitCheckIns]
+  );
+
+  const pitDutyDone = useMemo(
+    () => resolvePitDutyDone((myPitCheckIns ?? []).map(c => c.rotationId), pendingPitOps),
+    [myPitCheckIns, pendingPitOps]
+  );
+
+  const togglePitDuty = useCallback((rotationId: string, nextReported: boolean) => {
+    if (!eventKey) return;
+    // Queue first, then fire. If the mutation succeeds the entry is dropped
+    // immediately; if it throws (offline, or a flaky venue network) the entry
+    // stays and useOfflineSync retries it, so the tap is never silently lost.
+    const opId = enqueuePitDutyOp({ eventKey, rotationId, reported: nextReported });
+    setLocalRev(r => r + 1);
+    const call = nextReported
+      ? reportPitDuty({ eventKey, rotationId: rotationId as Id<"pitRotations"> })
+      : unreportPitDuty({ rotationId: rotationId as Id<"pitRotations"> });
+    void call
+      .then(() => { dequeuePitDutyOp(opId); })
+      .catch(() => { /* stays queued for useOfflineSync */ })
+      .finally(() => setLocalRev(r => r + 1));
+  }, [eventKey, reportPitDuty, unreportPitDuty]);
 
   const myPreferences = useCached(
     useQuery(
@@ -1092,12 +1163,12 @@ export default function MySchedulePage() {
       const startM = rot.startMatch ?? 0;
       const startMatch = matchMap[startM] ?? null;
       const ts = startMatch ? (startMatch.actual_time ?? startMatch.predicted_time ?? startMatch.time ?? null) : null;
-      items.push({ kind: "pit", rotation: rot, sortKey: startM + 0.1, ts, done: false });
+      items.push({ kind: "pit", rotation: rot, sortKey: startM + 0.1, ts, done: pitDutyDone.has(rot._id) });
     }
 
     // Elims — always last
     if (elimsRotation) {
-      items.push({ kind: "elims", rotation: elimsRotation, sortKey: 999_999, ts: null, done: false });
+      items.push({ kind: "elims", rotation: elimsRotation, sortKey: 999_999, ts: null, done: pitDutyDone.has(elimsRotation._id) });
     }
 
     // Sort: items with ts by (ts, sortKey), null-ts items by sortKey at end
@@ -1119,7 +1190,7 @@ export default function MySchedulePage() {
       upcomingCount: upcoming.length,
       completedCount: completed.length,
     };
-  }, [assignments, myChecklistAssignments, qualRotations, elimsRotation, matchMap, completion]);
+  }, [assignments, myChecklistAssignments, qualRotations, elimsRotation, matchMap, completion, pitDutyDone]);
 
   // Pre-competition pit scouting splits per team, same as everything else.
   const pitScoutingTeams = Array.isArray(myPitScoutingTeam) ? myPitScoutingTeam : [];
@@ -1400,7 +1471,11 @@ export default function MySchedulePage() {
                           }}>
                             Pit Duty
                           </div>
-                          <QualPitCard rotation={item.rotation} />
+                          <QualPitCard
+                            rotation={item.rotation}
+                            done={item.done}
+                            onToggle={() => togglePitDuty(item.rotation._id, !item.done)}
+                          />
                         </div>
                       );
                     }
@@ -1415,7 +1490,10 @@ export default function MySchedulePage() {
                           }}>
                             Playoffs
                           </div>
-                          <ElimsCard />
+                          <ElimsCard
+                            done={item.done}
+                            onToggle={() => togglePitDuty(item.rotation._id, !item.done)}
+                          />
                         </div>
                       );
                     }
@@ -1441,7 +1519,7 @@ export default function MySchedulePage() {
                 <div style={{ fontSize: 12, color: MUTED, maxWidth: 280 }}>
                   {tab === "upcoming"
                     ? "Every assignment you have is done. Check Completed to review them."
-                    : "Submit a scouting, pit or checklist form and it will move here."}
+                    : "Submit a form, or report for a pit duty shift, and it will move here."}
                 </div>
               </div>
             )}

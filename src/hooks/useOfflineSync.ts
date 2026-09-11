@@ -13,6 +13,8 @@ import {
   legacyChecklistToForm,
   getKanbanQueue,
   dequeueKanbanOp,
+  getPitDutyQueue,
+  dequeuePitDutyOp,
   getTotalPendingOps,
 } from "@/lib/offlineQueue";
 import { getLastSync } from "@/lib/convexCache";
@@ -43,6 +45,8 @@ export function useOfflineSync() {
   const moveCard    = useMutation(api.kanban.moveCard);
   const updateCard  = useMutation(api.kanban.updateCard);
   const removeCard  = useMutation(api.kanban.removeCard);
+  const reportPitDuty   = useMutation(api.schedules.reportPitDuty);
+  const unreportPitDuty = useMutation(api.schedules.unreportPitDuty);
 
   const refreshCounts = useCallback(() => {
     setTotalPending(getTotalPendingOps());
@@ -133,6 +137,32 @@ export function useOfflineSync() {
       }
     }
 
+    // ── Drain pit duty check-ins ─────────────────────────────────────────
+    for (const op of getPitDutyQueue()) {
+      try {
+        if (op.reported) {
+          await reportPitDuty({
+            eventKey: op.eventKey,
+            rotationId: op.rotationId as Id<"pitRotations">,
+          });
+        } else {
+          await unreportPitDuty({ rotationId: op.rotationId as Id<"pitRotations"> });
+        }
+        dequeuePitDutyOp(op.id);
+        anySynced = true;
+      } catch (err: unknown) {
+        // Permanent rejection — the rotation was deleted or the scout was taken
+        // off it while they were offline. Drop it; retrying can never succeed.
+        const msg = err instanceof Error ? err.message : "";
+        if (msg.includes("not found") || msg.includes("not assigned")) {
+          dequeuePitDutyOp(op.id);
+          anySynced = true;
+          continue;
+        }
+        break; // transient — retry next cycle
+      }
+    }
+
     if (anySynced) {
       const now = Date.now();
       writeLastSynced(now);
@@ -140,7 +170,7 @@ export function useOfflineSync() {
     }
     refreshCounts();
     syncingRef.current = false;
-  }, [submitForm, moveCard, updateCard, removeCard, refreshCounts]);
+  }, [submitForm, moveCard, updateCard, removeCard, reportPitDuty, unreportPitDuty, refreshCounts]);
 
   // Called by convexCache when live data arrives
   const markSynced = useCallback(() => {
