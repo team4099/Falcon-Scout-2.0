@@ -1,4 +1,4 @@
-import { Routes, Route, NavLink, useNavigate, useLocation } from "react-router";
+import { Routes, Route, NavLink, useNavigate, useLocation, Link } from "react-router";
 import { useTheme } from "next-themes";
 import { useQuery } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
@@ -451,6 +451,9 @@ function AuthenticatedApp() {
             <Route path="/scheduling" element={<SchedulingPage />} />
             <Route path="/settings"   element={<SettingsPage />} />
             <Route path="/login"      element={<LoginPage />} />
+            {/* Anything else rendered a blank content pane. A stale PWA shortcut
+                or a mistyped URL should say so, not look like a broken app. */}
+            <Route path="*"           element={<NotFound />} />
           </Routes>
         </div>
       </main>
@@ -528,6 +531,26 @@ function useElapsed(ms: number): boolean {
     return () => clearTimeout(t);
   }, [ms]);
   return elapsed;
+}
+
+/** Rendered for any unknown path inside the authenticated shell. */
+function NotFound() {
+  return (
+    <div className="flex flex-col items-center justify-center text-center py-24 gap-3">
+      <p className="text-5xl font-black text-muted-foreground/40 font-mono">404</p>
+      <h2 className="text-lg font-semibold">Page not found</h2>
+      <p className="text-sm text-muted-foreground max-w-sm">
+        That link doesn't point anywhere in FalconScout. It may be an old
+        shortcut from a previous version of the app.
+      </p>
+      <Link
+        to="/"
+        className="mt-2 inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 transition-opacity"
+      >
+        Back to Dashboard
+      </Link>
+    </div>
+  );
 }
 
 export default function App() {

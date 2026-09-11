@@ -136,8 +136,11 @@ function matchSortKey(m: TBAMatch) {
   return (lvl[m.comp_level] ?? 99) * 1_000_000 + m.set_number * 10_000 + m.match_number;
 }
 
+// Must use the same precedence as the sort key below (actual first), or a
+// played match sorts by when it actually ran while displaying its stale
+// predicted time — which showed Q17 at 1:52 PM sitting below Q16 at 1:56 PM.
 function formatTime(m: TBAMatch): string | null {
-  const ts = m.predicted_time ?? m.time;
+  const ts = m.actual_time ?? m.predicted_time ?? m.time;
   if (!ts) return null;
   return new Date(ts * 1000).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }

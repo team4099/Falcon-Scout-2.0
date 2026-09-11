@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { useAdminMutation } from "@/hooks/useAdminMutation";
+import { useUIStore } from "@/store/uiStore";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import type { KanbanColumn, KanbanCard } from "@/types";
@@ -1197,6 +1198,12 @@ function BoardView({
   const [epaStatus, setEpaStatus] = useState<"loading" | "ok" | "error">("loading");
   const [viewMode, setViewMode]         = useState<"board" | "list">("board");
   const [pickedTeams, setPickedTeams]   = useState<Set<number>>(() => getPickedTeams(String(boardId)));
+  const { isAdminMode } = useUIStore();
+  // Distinguishes "TBA had nothing for us" from "you aren't an admin, so the
+  // board can't be populated" — the latter used to be swallowed, leaving a
+  // scout staring at an empty picklist with no explanation. Only the failure
+  // needs state; the non-admin case is derivable during render.
+  const [seedFailed, setSeedFailed] = useState(false);
   const seededRef = useRef(false);
 
   // Optimistic offline state
@@ -1286,6 +1293,10 @@ function BoardView({
   useEffect(() => {
     if (!board || rawCardsCached === undefined || seededRef.current) return;
     if (!navigator.onLine) return; // skip seeding when offline
+    // seedTeams is an admin-only mutation. Calling it as a regular scout always
+    // threw, and the empty catch below hid that — so the shared board only ever
+    // filled if an admin happened to open this page first.
+    if (!isAdminMode) return;
     seededRef.current = true;
 
     const unsortedCol = columns.find((c) => c.id === "unsorted") ?? columns[columns.length - 1];
@@ -1300,15 +1311,17 @@ function BoardView({
         if (!teamNumbers.length) return;
         const added = await seedTeamsMutation({ boardId, eventKey, columnId: unsortedCol!.id, teamNumbers });
         if (added > 0) toast.success(`Added ${added} teams from TBA`);
-      } catch {
-        // TBA might not have data yet
+      } catch (err) {
+        // TBA might not have data yet — but surface anything else.
+        console.error("[FalconScout] Picklist auto-seed failed:", err);
+        setSeedFailed(true);
       } finally {
         setSeeding(false);
       }
     }
     seed();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [board?._id, rawCardsCached !== undefined]);
+  }, [board?._id, rawCardsCached !== undefined, isAdminMode]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
@@ -1625,6 +1638,17 @@ function BoardView({
           </Button>
         </div>
       </div>
+
+      {/* Picklist could not be auto-populated (non-admin, or TBA had nothing) */}
+      {(!isAdminMode || seedFailed) && cards.length === 0 && (
+        <div className="flex items-center gap-2 px-3 py-1.5 mb-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs">
+          <span className="shrink-0">⚠</span>
+          <span>
+            This board is empty and couldn't be filled automatically. Adding the event's
+            teams requires admin — turn on Admin Mode in Settings, then press "Sync Teams".
+          </span>
+        </div>
+      )}
 
       {/* EPA status banner */}
       {epaStatus === "error" && (

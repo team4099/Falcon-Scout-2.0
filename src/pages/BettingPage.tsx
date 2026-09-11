@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { stripEmojis } from "@/lib/utils";
 import { useQuery, useMutation } from "convex/react";
 import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { useCached } from "@/hooks/useCached";
@@ -146,13 +147,6 @@ const TYPE_ICONS: Record<MarketType, React.ElementType> = {
   multi_match_numeric: BarChart3,
   multi_match_count:   ListFilter,
 };
-
-// -- Emoji stripping helper ------------------------------------------------------
-
-/** Strip common circle/arrow emojis that were baked into old DB records. */
-function stripEmojis(text: string): string {
-  return text.replace(/[\u{1F534}\u{1F535}\u{2B06}\u{2B07}\u{26AA}\u{2B55}\u{1F7E0}\u{1F7E1}\u{1F7E2}\u{1F7E3}\u{1F7E4}\u{2764}\u{1F499}\u{1F534}\u{1F535}UPDOWN]/gu, "").replace(/\s{2,}/g, " ").trim();
-}
 
 // -- Alliance Label --------------------------------------------------------------
 

@@ -605,12 +605,16 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, saving, isMobile
                       cellBorder = `1.5px dashed ${SURF_BORD}`;
                     }
 
+                    // Keyed on the Fragment, not its children: a shorthand <>
+                    // fragment cannot carry a key, so React saw this list as
+                    // unkeyed and could reuse the wrong cell's DOM (and its
+                    // isSaving state) when rows re-ordered.
                     return (
-                      <>
+                      <Fragment key={p}>
                         {i === 3 && (
-                          <div key={`div-${m.key}`} style={{ width: "3px", alignSelf: "stretch", background: "oklch(1 0 0/5%)", margin: "2px 0" }} />
+                          <div style={{ width: "3px", alignSelf: "stretch", background: "oklch(1 0 0/5%)", margin: "2px 0" }} />
                         )}
-                        <button key={p}
+                        <button
                           onClick={() => onCellClick(m.match_number, lbl, p)}
                           disabled={isSaving}
                           title={
@@ -648,7 +652,7 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, saving, isMobile
                                 </span>
                           }
                         </button>
-                      </>
+                      </Fragment>
                     );
                   })}
                 </div>
