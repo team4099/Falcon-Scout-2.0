@@ -29,7 +29,7 @@ import {
 import type { TBAMatch, NexusTeamStatus } from "@/lib/api";
 import { EMPTY_TEAM_EPA, parseEpaComponents, totalEpa } from "@/lib/epa";
 import type { TeamEpa } from "@/lib/epa";
-import { ExternalLink, Search, FileText, TrendingUp, TrendingDown, ClipboardList, Trash2, AlertTriangle, ChevronDown, ChevronUp, Clock, SlidersHorizontal, KeyRound, CalendarCheck, Radio, Users2, DollarSign, ArrowRight, Trophy, CalendarDays } from "lucide-react";
+import { ExternalLink, Search, FileText, TrendingUp, TrendingDown, ClipboardList, Trash2, AlertTriangle, ChevronDown, ChevronUp, Clock, KeyRound, CalendarCheck, Radio, Users2, DollarSign, ArrowRight, Trophy, CalendarDays } from "lucide-react";
 import { getTBAKey } from "@/lib/api";
 import TeamDetailPanel from "@/pages/TeamDetailPanel";
 import { useMutation } from "convex/react";
@@ -74,34 +74,6 @@ function parseSubmissions(submissions: Submission[]): Record<string, unknown>[] 
     try { return JSON.parse(s.data) as Record<string, unknown>; }
     catch { return {}; }
   });
-}
-
-/** Average of numeric/counter values across submissions (null if no data). */
-function avgNumeric(parsed: Record<string, unknown>[], fieldId: string): number | null {
-  const vals = parsed
-    .map((d) => d[fieldId])
-    .filter((v) => typeof v === "number") as number[];
-  if (vals.length === 0) return null;
-  return vals.reduce((a, b) => a + b, 0) / vals.length;
-}
-
-/** Percentage of submissions where the checkbox is true. */
-function pctChecked(parsed: Record<string, unknown>[], fieldId: string): number | null {
-  const vals = parsed.map((d) => d[fieldId]).filter((v) => v !== undefined);
-  if (vals.length === 0) return null;
-  return (vals.filter(Boolean).length / vals.length) * 100;
-}
-
-/** Most common value for select fields. */
-function mostCommon(parsed: Record<string, unknown>[], fieldId: string): string | null {
-  const counts: Record<string, number> = {};
-  for (const d of parsed) {
-    const v = String(d[fieldId] ?? "");
-    if (v) counts[v] = (counts[v] ?? 0) + 1;
-  }
-  const entries = Object.entries(counts);
-  if (entries.length === 0) return null;
-  return entries.sort((a, b) => b[1] - a[1])[0][0];
 }
 
 // ── Text popup ────────────────────────────────────────────────────────────────
@@ -485,7 +457,6 @@ function TeamRow({
   avgScore,
   tbaRank,
   fields,
-  visibleColumns,
   onOpenDetail,
 }: {
   teamNumber: number;
@@ -495,7 +466,6 @@ function TeamRow({
   avgScore: number | null;
   tbaRank: Record<string, unknown> | null;
   fields: FormField[];
-  visibleColumns: Set<string>;
   onOpenDetail: () => void;
 }) {
   const [textOpen, setTextOpen] = useState(false);
@@ -540,10 +510,8 @@ function TeamRow({
 
   const parsed = parseSubmissions(submissions);
 
-  // Compute per-field stats
-  const numericFields = fields.filter((f) => f.type === "number" || f.type === "counter" || f.type === "rating");
-  const checkboxFields = fields.filter((f) => f.type === "checkbox");
-  const selectFields = fields.filter((f) => f.type === "select");
+  // Text fields drive the "view notes" shortcut; the table itself has a fixed
+  // set of columns and never renders per-field aggregates.
   const textFields = fields.filter((f) => f.type === "text" || f.type === "textarea");
   const hasTextData = textFields.some((f) =>
     parsed.some((d) => d[f.id] && String(d[f.id]).trim() !== "")
@@ -558,18 +526,6 @@ function TeamRow({
     { label: "Auto", value: epa.auto !== null ? String(epa.auto) : "—", color: epa.auto !== null ? "default" : "muted" },
     { label: "Teleop", value: epa.teleop !== null ? String(epa.teleop) : "—", color: epa.teleop !== null ? "default" : "muted" },
     { label: "Endgame", value: epa.endgame !== null ? String(epa.endgame) : "—", color: epa.endgame !== null ? "default" : "muted" },
-    ...numericFields.filter((f) => visibleColumns.has(f.id)).map((f) => {
-      const av = avgNumeric(parsed, f.id);
-      return { label: f.label, value: av === null ? "—" : (Number.isInteger(av) ? String(av) : av.toFixed(1)), color: (av === null ? "muted" : "default") as "default" | "muted" };
-    }),
-    ...checkboxFields.filter((f) => visibleColumns.has(f.id)).map((f) => {
-      const pct = pctChecked(parsed, f.id);
-      return { label: f.label, value: pct === null ? "—" : `${Math.round(pct)}%`, color: (pct === null ? "muted" : pct >= 50 ? "success" : "muted") as "default" | "primary" | "success" | "muted" };
-    }),
-    ...selectFields.filter((f) => visibleColumns.has(f.id)).map((f) => {
-      const top = mostCommon(parsed, f.id);
-      return { label: f.label, value: top ?? "—", color: (top ? "default" : "muted") as "default" | "muted" };
-    }),
   ];
 
   const actionButtons = (
@@ -680,9 +636,6 @@ function TeamRow({
               "minmax(48px, 1fr)",   // Auto
               "minmax(56px, 1fr)",   // Teleop
               "minmax(64px, 1fr)",   // Endgame
-              ...numericFields.filter((f) => visibleColumns.has(f.id)).map(() => "minmax(52px, 1fr)"),
-              ...checkboxFields.filter((f) => visibleColumns.has(f.id)).map(() => "minmax(52px, 1fr)"),
-              ...selectFields.filter((f) => visibleColumns.has(f.id)).map(() => "minmax(52px, 1fr)"),
             ].join(" "),
           }}
         >
@@ -752,18 +705,12 @@ function StatChip({
 // ── Column header row ───────────────────────────────────────────────────────────────────
 
 function ColumnHeader({
-  fields, visibleColumns, sortKey, sortDir, onSort,
+  sortKey, sortDir, onSort,
 }: {
-  fields: FormField[];
-  visibleColumns: Set<string>;
   sortKey: string | null;
   sortDir: "asc" | "desc";
   onSort: (key: string) => void;
 }) {
-  const numericFields = fields.filter((f) => (f.type === "number" || f.type === "counter" || f.type === "rating") && visibleColumns.has(f.id));
-  const checkboxFields = fields.filter((f) => f.type === "checkbox" && visibleColumns.has(f.id));
-  const selectFields = fields.filter((f) => f.type === "select" && visibleColumns.has(f.id));
-
   // A header cell that sorts. The caret only renders on the active column, so
   // the header stays quiet until you actually sort by something.
   const Th = ({ id, label, title, className = "" }: {
@@ -801,9 +748,6 @@ function ColumnHeader({
             "minmax(48px, 1fr)",   // Auto
             "minmax(56px, 1fr)",   // Teleop
             "minmax(64px, 1fr)",   // Endgame
-            ...numericFields.map(() => "minmax(52px, 1fr)"),
-            ...checkboxFields.map(() => "minmax(52px, 1fr)"),
-            ...selectFields.map(() => "minmax(52px, 1fr)"),
           ].join(" "),
         }}
       >
@@ -814,15 +758,6 @@ function ColumnHeader({
         <Th id="epaAuto"    label="Auto" />
         <Th id="epaTeleop"  label="Teleop" />
         <Th id="epaEndgame" label="Endgame" />
-        {numericFields.map((f) => (
-          <Th key={f.id} id={`field:${f.id}`} label={`⏀ ${f.label}`} title={`Sort by avg ${f.label}`} />
-        ))}
-        {checkboxFields.map((f) => (
-          <Th key={f.id} id={`field:${f.id}`} label={`% ${f.label}`} title={`Sort by % ${f.label}`} />
-        ))}
-        {selectFields.map((f) => (
-          <Th key={f.id} id={`field:${f.id}`} label={`↑ ${f.label}`} title={`Sort by ${f.label}`} />
-        ))}
       </div>
       <div className="w-14 text-right">Links</div>
     </div>
@@ -1713,13 +1648,11 @@ export default function DashboardPage() {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [search, setSearch] = useState("");
   const [selectedTeam, setSelectedTeam] = useState<number | null>(null);
-  const [showColumnPicker, setShowColumnPicker] = useState(false);
   const eventYear = eventKey ? Number(eventKey.slice(0, 4)) : new Date().getFullYear();
 
-  // ── Column visibility — stored as HIDDEN set so new fields are visible by default ──
-  // Load once when eventKey is available. Save happens inside user actions (never on mount)
-  // so there is no race where the initial empty state overwrites saved prefs.
-  const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
+  // The rankings table has a fixed column set (Team / Rank / Avg Score / Event
+  // EPA / Season EPA / Auto / Teleop / Endgame / Links) — no per-form columns,
+  // so there is nothing to show or hide.
   // Active sort column, or null for the natural (team-number) order.
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -1738,38 +1671,6 @@ export default function DashboardPage() {
       return;
     }
     setSortKey(null);
-  }
-
-  useEffect(() => {
-    if (!eventKey) return;
-    try {
-      const saved = localStorage.getItem(`falconscout_hidden_cols_${eventKey}`);
-      setHiddenColumns(saved ? new Set(JSON.parse(saved) as string[]) : new Set());
-    } catch { setHiddenColumns(new Set()); }
-  }, [eventKey]);
-
-  // Derived: a field is visible when it is NOT in hiddenColumns
-  const visibleColumns = useMemo(
-    () => new Set(fields.filter((f) => !hiddenColumns.has(f.id)).map((f) => f.id)),
-    [fields, hiddenColumns]
-  );
-
-  // Save helper — called explicitly after every user action, never automatically
-  function persistHidden(next: Set<string>) {
-    if (!eventKey) return;
-    try {
-      localStorage.setItem(`falconscout_hidden_cols_${eventKey}`, JSON.stringify([...next]));
-    } catch { /* ignore */ }
-  }
-
-  function toggleColumn(id: string) {
-    setHiddenColumns((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      persistHidden(next);
-      return next;
-    });
   }
 
   // Live 1-second ticker for countdowns
@@ -1972,8 +1873,7 @@ export default function DashboardPage() {
     search ? String(t).includes(search) : true
   );
 
-  // Sorting. Built-in keys are resolved here; `field:<id>` keys defer to the
-  // same aggregate the row renders, so the column and its sort never disagree.
+  // Sorting — one resolver per fixed column.
   const sorted = useMemo(() => {
     if (!sortKey) return filtered;
 
@@ -1981,7 +1881,6 @@ export default function DashboardPage() {
       const r = tbaRankings[tn] as { rank?: number } | undefined;
       return r?.rank ?? null;
     };
-    const parsedFor = (tn: number) => parseSubmissions(submissionsByTeam[tn] ?? []);
 
     const value = (tn: number): number | string | null => {
       if (sortKey === "team")       return tn;
@@ -1992,15 +1891,7 @@ export default function DashboardPage() {
       if (sortKey === "epaAuto")    return epaMap[tn]?.auto ?? null;
       if (sortKey === "epaTeleop")  return epaMap[tn]?.teleop ?? null;
       if (sortKey === "epaEndgame") return epaMap[tn]?.endgame ?? null;
-
-      const fieldId = sortKey.startsWith("field:") ? sortKey.slice(6) : null;
-      if (!fieldId) return null;
-      const f = fields.find((x) => x.id === fieldId);
-      if (!f) return null;
-      const parsed = parsedFor(tn);
-      if (f.type === "checkbox") return pctChecked(parsed, fieldId);
-      if (f.type === "select")   return mostCommon(parsed, fieldId);
-      return avgNumeric(parsed, fieldId);
+      return null;
     };
 
     // Teams with no value for the active column sort to the bottom in BOTH
@@ -2017,7 +1908,7 @@ export default function DashboardPage() {
         : (va as number) - (vb as number);
       return sortDir === "asc" ? cmp : -cmp;
     });
-  }, [filtered, sortKey, sortDir, tbaRankings, avgScoreByTeam, epaMap, submissionsByTeam, fields]);
+  }, [filtered, sortKey, sortDir, tbaRankings, avgScoreByTeam, epaMap]);
 
   const totalScouted = (allSubmissions ?? []).length;
   const scoutedUniqueTeams = scoutedTeams.size;
@@ -2123,73 +2014,20 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Search + column picker */}
-          <div className="relative shrink-0 flex gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                className="pl-9"
-                placeholder="Search by team number…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-            <div className="relative">
-              <Button
-                variant="outline"
-                size="icon"
-                className="shrink-0"
-                onClick={() => setShowColumnPicker((v) => !v)}
-                title="Choose visible columns"
-              >
-                <SlidersHorizontal className="h-4 w-4" />
-              </Button>
-
-              {/* Column picker dropdown */}
-              {showColumnPicker && (
-                <div className="absolute right-0 top-full mt-1 z-30 bg-popover border border-border rounded-xl shadow-xl p-3 min-w-[220px] space-y-1">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground px-1 mb-2">Visible columns</p>
-                  {fields.filter((f) => ["number","counter","rating","checkbox","select"].includes(f.type)).map((f) => (
-                    <label key={f.id} className="flex items-center gap-2 px-1 py-1 rounded hover:bg-muted cursor-pointer text-sm">
-                      <input
-                        type="checkbox"
-                        checked={!hiddenColumns.has(f.id)}
-                        onChange={() => toggleColumn(f.id)}
-                        className="accent-primary"
-                      />
-                      <span className="truncate">{f.label}</span>
-                    </label>
-                  ))}
-                  {fields.filter((f) => ["number","counter","rating","checkbox","select"].includes(f.type)).length === 0 && (
-                    <p className="text-xs text-muted-foreground px-1">No columnar fields yet.</p>
-                  )}
-                  <div className="pt-1 flex gap-1">
-                    <button
-                      className="text-[10px] text-primary hover:underline"
-                      onClick={() => {
-                        const next = new Set<string>();
-                        setHiddenColumns(next);
-                        persistHidden(next);
-                      }}
-                    >All</button>
-                    <span className="text-muted-foreground text-[10px]">·</span>
-                    <button
-                      className="text-[10px] text-muted-foreground hover:underline"
-                      onClick={() => {
-                        const next = new Set(fields.map((f) => f.id));
-                        setHiddenColumns(next);
-                        persistHidden(next);
-                      }}
-                    >None</button>
-                  </div>
-                </div>
-              )}
-            </div>
+          {/* Search */}
+          <div className="relative shrink-0">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              className="pl-9"
+              placeholder="Search by team number…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
           </div>
 
           {fields.length === 0 && (
             <p className="text-xs text-amber-500 dark:text-amber-400 shrink-0">
-              ⚠ No active scouting form — columns will appear once a form template is active.
+              ⚠ No active scouting form — scouts can't submit match data until a form template is active.
             </p>
           )}
 
@@ -2205,7 +2043,7 @@ export default function DashboardPage() {
             {/* Column header — desktop only (mobile uses card layout) */}
             <div className="hidden sm:block overflow-x-auto shrink-0">
               <div className="min-w-[540px]">
-                <ColumnHeader fields={fields} visibleColumns={visibleColumns} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                <ColumnHeader sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               </div>
             </div>
 
@@ -2249,7 +2087,6 @@ export default function DashboardPage() {
                         avgScore={avgScoreByTeam[teamNumber as number] ?? null}
                         tbaRank={tbaRankings[teamNumber as number] ?? null}
                         fields={fields}
-                        visibleColumns={visibleColumns}
                         onOpenDetail={() => setSelectedTeam(teamNumber as number)}
                       />
                     );
@@ -2295,7 +2132,6 @@ export default function DashboardPage() {
                         avgScore={avgScoreByTeam[teamNumber as number] ?? null}
                         tbaRank={tbaRankings[teamNumber as number] ?? null}
                         fields={fields}
-                        visibleColumns={visibleColumns}
                         onOpenDetail={() => setSelectedTeam(teamNumber as number)}
                       />
                     );
