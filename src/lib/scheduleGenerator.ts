@@ -308,6 +308,18 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
     return pitBusyBlocks.get(scoutId)?.has(bi) ?? false;
   }
 
+  // 6b. Proportional block targets — scouts who opted into wantsMoreMatches
+  // should end up with ~50% more blocks than everyone else. Every block has
+  // exactly 6 slots, so total block-assignments across all scouts always
+  // equals B * 6; targets are each scout's weighted share of that total.
+  const MORE_MATCHES_WEIGHT = 1.5;
+  const totalBlockSlots = B * 6;
+  const weightOf = (id: string) => (prefMap.get(id)?.wantsMoreMatches ? MORE_MATCHES_WEIGHT : 1);
+  const sumWeights = scouts.reduce((acc, s) => acc + weightOf(s._id), 0) || 1;
+  const targetBlocks = new Map<string, number>();
+  for (const s of scouts)
+    targetBlocks.set(s._id, (totalBlockSlots * weightOf(s._id)) / sumWeights);
+
   // 7. Assign scouts to blocks
   const newAssignments: GeneratedMatchAssignment[] = [];
 
@@ -341,11 +353,15 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
 
     function candidateScore(s: ScoutInfo): number {
       const count = scoutBlockCounts.get(s._id) ?? 0;
-      const underserved = count < 2 ? 10000 : 0;
+      // Absolute floor still wins first: nobody should be starved below the
+      // documented 2-block minimum just because their proportional target
+      // (e.g. a non-wantsMoreMatches scout) happens to be lower than that.
+      const underMinimum = count < 2 ? 10000 : 0;
+      const target = targetBlocks.get(s._id) ?? 2;
+      const deficit = target - count;
       let affinity = 0;
       for (const id of alreadyInBlock) affinity += prefScore(s._id, id);
-      const more = prefMap.get(s._id)?.wantsMoreMatches ? 50 : 0;
-      return underserved + affinity * 200 + more - count * 10;
+      return underMinimum + deficit * 100 + affinity * 200;
     }
 
     const scored = [...candidatePool].sort((a, b) => candidateScore(b) - candidateScore(a));
@@ -508,6 +524,34 @@ export function runTests(): TestResult[] {
     const out = generateSchedule({ qualMatches: matches, scouts, preferences: prefs, existingPitRotations: [], existingMatchAssignments: [] });
     const s1 = out.stats.scoutBlockCounts["s1"] ?? 0;
     assert(s1 >= 2, `wantsMore scout s1 has only ${s1} blocks`);
+  });
+
+  // T11 ── wantsMoreMatches scouts land ~50% above everyone else
+  test("T11 wantsMoreMatches scouts average ~1.5x the block count of everyone else", () => {
+    const scouts = makeScouts(16); const matches = makeMatches(80);
+    // s1-s4 opt into more matches; s5-s16 do not.
+    const prefs = makePrefs(scouts, [
+      { wantsMoreMatches: true }, { wantsMoreMatches: true }, { wantsMoreMatches: true }, { wantsMoreMatches: true },
+    ]);
+    const out = generateSchedule({ qualMatches: matches, scouts, preferences: prefs, existingPitRotations: [], existingMatchAssignments: [] });
+    const moreIds = ["s1", "s2", "s3", "s4"];
+    const avg = (ids: string[]) => ids.reduce((sum, id) => sum + (out.stats.scoutBlockCounts[id] ?? 0), 0) / ids.length;
+    const moreAvg = avg(moreIds);
+    const restAvg = avg(scouts.map(s => s._id).filter(id => !moreIds.includes(id)));
+    const ratio = moreAvg / restAvg;
+    assert(ratio > 1.25 && ratio < 1.75, `Expected ~1.5x ratio, got ${ratio.toFixed(2)} (more=${moreAvg}, rest=${restAvg})`);
+  });
+
+  // T12 ── Scouts who don't opt into pit rotation are never auto-assigned pit duty
+  test("T12 Scouts without wantsPitRotation are fully excluded from new pit rotations", () => {
+    const scouts = makeScouts(14); const matches = makeMatches(40);
+    const prefs = makePrefs(scouts, [{ wantsPitRotation: true }, { wantsPitRotation: true }]);
+    const out = generateSchedule({ qualMatches: matches, scouts, preferences: prefs, existingPitRotations: [], existingMatchAssignments: [] });
+    const pitAssigned = new Set(out.newPitRotations.flatMap(r => r.scoutIds));
+    for (const s of scouts) {
+      if (s._id === "s1" || s._id === "s2") continue;
+      assert(!pitAssigned.has(s._id), `${s._id} did not opt into pit rotation but was auto-assigned pit duty`);
+    }
   });
 
   // T9 ── No duplicate positions within a block

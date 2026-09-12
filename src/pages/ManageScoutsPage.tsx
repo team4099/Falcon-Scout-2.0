@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { useCached } from "@/hooks/useCached";
@@ -35,6 +35,9 @@ import {
   Ban,
   ShieldCheck,
   Clock,
+  Pencil,
+  Save,
+  XCircle,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -53,6 +56,7 @@ interface ScoutPreference {
   preferredPartners: string[];
   wantsMoreMatches: boolean;
   wantsPitRotation: boolean;
+  wantsPitScouting?: boolean;
   updatedAt: number;
 }
 
@@ -865,6 +869,7 @@ export default function ManageScoutsPage() {
   const upsertPitRotation    = useAdminMutation(api.schedules.upsertPitRotation);
   const setScheduleExclusions = useAdminMutation(api.schedules.setScheduleExclusions);
   const deleteSubmissions    = useAdminMutation(api.forms.deleteSubmissions);
+  const adminSetPreferences = useAdminMutation(api.schedules.adminSetPreferences);
   const grantTemporaryAdmin  = useMutation(api.admin.grantTemporaryAdmin);
   const revokeTemporaryAdmin = useMutation(api.admin.revokeTemporaryAdmin);
 
@@ -875,6 +880,14 @@ export default function ManageScoutsPage() {
   const [togglingAdmin, setTogglingAdmin] = useState(false);
   const [deletingScoutReports, setDeletingScoutReports] = useState(false);
   const [deletingAllReports, setDeletingAllReports] = useState(false);
+  const [editingPrefs, setEditingPrefs] = useState(false);
+  const [savingPrefs, setSavingPrefs] = useState(false);
+  const [prefsDraft, setPrefsDraft] = useState<{
+    preferredPartners: string[];
+    wantsMoreMatches: boolean;
+    wantsPitRotation: boolean;
+    wantsPitScouting: boolean;
+  } | null>(null);
 
   // Derived: excluded scout set
   const excludedSet = new Set(dbExcludedScoutIds ?? []);
@@ -918,6 +931,53 @@ export default function ManageScoutsPage() {
   const prefsById: Record<string, ScoutPreference> = {};
   for (const p of (allPreferences ?? [])) prefsById[p.scoutId] = p;
   const selectedPrefs = selectedUserId ? prefsById[selectedUserId] ?? null : null;
+
+  // Exit preference-edit mode whenever the selected scout changes
+  useEffect(() => {
+    setEditingPrefs(false);
+    setPrefsDraft(null);
+  }, [selectedUserId]);
+
+  function startEditingPrefs() {
+    setPrefsDraft({
+      preferredPartners: selectedPrefs?.preferredPartners ?? [],
+      wantsMoreMatches: selectedPrefs?.wantsMoreMatches ?? false,
+      wantsPitRotation: selectedPrefs?.wantsPitRotation ?? false,
+      wantsPitScouting: selectedPrefs?.wantsPitScouting ?? false,
+    });
+    setEditingPrefs(true);
+  }
+
+  function toggleDraftPartner(id: string) {
+    setPrefsDraft(d => d && {
+      ...d,
+      preferredPartners: d.preferredPartners.includes(id)
+        ? d.preferredPartners.filter(p => p !== id)
+        : [...d.preferredPartners, id],
+    });
+  }
+
+  async function handleSavePrefs() {
+    if (!selectedUserId || !prefsDraft || !eventKey) return;
+    setSavingPrefs(true);
+    try {
+      await adminSetPreferences({
+        scoutId: selectedUserId as any,
+        eventKey,
+        preferredPartners: prefsDraft.preferredPartners as any,
+        wantsMoreMatches: prefsDraft.wantsMoreMatches,
+        wantsPitRotation: prefsDraft.wantsPitRotation,
+        wantsPitScouting: prefsDraft.wantsPitScouting,
+      });
+      toast.success("Preferences updated");
+      setEditingPrefs(false);
+      setPrefsDraft(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update preferences");
+    } finally {
+      setSavingPrefs(false);
+    }
+  }
 
   // Assignments & pit rotations for selected scout
   const scoutAssignments: MatchAssignment[] = selectedUserId
@@ -1705,7 +1765,7 @@ export default function ManageScoutsPage() {
                     })()}
 
                     {/* Preferences section */}
-                    {selectedPrefs && (
+                    {(selectedPrefs || eventKey) && (
                       <div style={{
                         borderRadius: 13,
                         background: "oklch(0.65 0.18 270 / 8%)",
@@ -1721,54 +1781,173 @@ export default function ManageScoutsPage() {
                         }}>
                           <SlidersHorizontal size={13} style={{ color: "oklch(0.7 0.18 270)" }} />
                           <span style={{ fontWeight: 700, fontSize: 12, color: "oklch(0.75 0.18 270)", textTransform: "uppercase", letterSpacing: "0.07em" }}>Scout Preferences</span>
-                          <span style={{ marginLeft: "auto", fontSize: 11, color: "oklch(0.5 0.1 270)" }}>
-                            {new Date(selectedPrefs.updatedAt).toLocaleDateString()}
-                          </span>
+                          {selectedPrefs && !editingPrefs && (
+                            <span style={{ marginLeft: "auto", fontSize: 11, color: "oklch(0.5 0.1 270)" }}>
+                              {new Date(selectedPrefs.updatedAt).toLocaleDateString()}
+                            </span>
+                          )}
+                          {!editingPrefs ? (
+                            <button
+                              type="button"
+                              onClick={startEditingPrefs}
+                              title="Edit preferences"
+                              style={{
+                                marginLeft: selectedPrefs ? 8 : "auto", display: "flex", alignItems: "center", gap: 4,
+                                padding: "3px 8px", borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: "pointer",
+                                background: "oklch(0.65 0.18 270 / 12%)", border: "1px solid oklch(0.65 0.18 270 / 30%)",
+                                color: "oklch(0.75 0.18 270)",
+                              }}
+                            >
+                              <Pencil size={11} /> Edit
+                            </button>
+                          ) : (
+                            <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                              <button
+                                type="button"
+                                onClick={() => { setEditingPrefs(false); setPrefsDraft(null); }}
+                                disabled={savingPrefs}
+                                title="Cancel"
+                                style={{
+                                  display: "flex", alignItems: "center", gap: 4,
+                                  padding: "3px 8px", borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: "pointer",
+                                  background: "oklch(1 0 0 / 4%)", border: "1px solid oklch(1 0 0 / 10%)",
+                                  color: "var(--muted-foreground)",
+                                }}
+                              >
+                                <XCircle size={11} /> Cancel
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleSavePrefs}
+                                disabled={savingPrefs}
+                                title="Save preferences"
+                                style={{
+                                  display: "flex", alignItems: "center", gap: 4,
+                                  padding: "3px 8px", borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: "pointer",
+                                  background: "oklch(0.65 0.18 270 / 20%)", border: "1px solid oklch(0.65 0.18 270 / 40%)",
+                                  color: "oklch(0.8 0.18 270)", opacity: savingPrefs ? 0.6 : 1,
+                                }}
+                              >
+                                <Save size={11} /> {savingPrefs ? "Saving…" : "Save"}
+                              </button>
+                            </div>
+                          )}
                         </div>
                         <div style={{ padding: "10px 13px", display: "flex", flexDirection: "column", gap: 8 }}>
-                          {selectedPrefs.preferredPartners.length > 0 && (
-                            <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-                              <UserPlus size={13} style={{ color: "oklch(0.7 0.18 270)", marginTop: 2, flexShrink: 0 }} />
-                              <div style={{ flex: 1 }}>
-                                <div style={{ fontSize: 11, fontWeight: 700, color: "oklch(0.7 0.18 270)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em" }}>Preferred partners</div>
-                                <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                                  {selectedPrefs.preferredPartners.map(pid => {
-                                    const partner = (allUsers ?? []).find(u => u._id === pid);
-                                    return partner ? (
-                                      <span key={pid} style={{
-                                        padding: "3px 9px", borderRadius: 20, fontSize: 12, fontWeight: 600,
-                                        background: "oklch(0.65 0.18 270 / 15%)",
-                                        border: "1px solid oklch(0.65 0.18 270 / 30%)",
-                                        color: "var(--foreground)",
-                                      }}>{partner.name ?? partner.email ?? "Scout"}</span>
-                                    ) : null;
+                          {!editingPrefs ? (
+                            <>
+                              {!selectedPrefs && (
+                                <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>
+                                  This scout hasn't submitted preferences yet. Click Edit to set them.
+                                </div>
+                              )}
+                              {selectedPrefs && selectedPrefs.preferredPartners.length > 0 && (
+                                <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                                  <UserPlus size={13} style={{ color: "oklch(0.7 0.18 270)", marginTop: 2, flexShrink: 0 }} />
+                                  <div style={{ flex: 1 }}>
+                                    <div style={{ fontSize: 11, fontWeight: 700, color: "oklch(0.7 0.18 270)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em" }}>Preferred partners</div>
+                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                                      {selectedPrefs.preferredPartners.map(pid => {
+                                        const partner = (allUsers ?? []).find(u => u._id === pid);
+                                        return partner ? (
+                                          <span key={pid} style={{
+                                            padding: "3px 9px", borderRadius: 20, fontSize: 12, fontWeight: 600,
+                                            background: "oklch(0.65 0.18 270 / 15%)",
+                                            border: "1px solid oklch(0.65 0.18 270 / 30%)",
+                                            color: "var(--foreground)",
+                                          }}>{partner.name ?? partner.email ?? "Scout"}</span>
+                                        ) : null;
+                                      })}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                              {selectedPrefs && (
+                                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                  <span style={{
+                                    display: "flex", alignItems: "center", gap: 5,
+                                    padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600,
+                                    background: selectedPrefs.wantsMoreMatches ? "oklch(0.65 0.18 270 / 15%)" : "oklch(1 0 0 / 4%)",
+                                    border: `1px solid ${selectedPrefs.wantsMoreMatches ? "oklch(0.65 0.18 270 / 35%)" : "oklch(1 0 0 / 10%)"}`,
+                                    color: selectedPrefs.wantsMoreMatches ? "oklch(0.75 0.18 270)" : "var(--muted-foreground)",
+                                  }}>
+                                    {selectedPrefs.wantsMoreMatches ? <CheckCircle2 size={11} /> : <ClipboardCheck size={11} />}
+                                    More matches
+                                  </span>
+                                  <span style={{
+                                    display: "flex", alignItems: "center", gap: 5,
+                                    padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600,
+                                    background: selectedPrefs.wantsPitRotation ? "oklch(0.65 0.18 270 / 15%)" : "oklch(1 0 0 / 4%)",
+                                    border: `1px solid ${selectedPrefs.wantsPitRotation ? "oklch(0.65 0.18 270 / 35%)" : "oklch(1 0 0 / 10%)"}`,
+                                    color: selectedPrefs.wantsPitRotation ? "oklch(0.75 0.18 270)" : "var(--muted-foreground)",
+                                  }}>
+                                    {selectedPrefs.wantsPitRotation ? <CheckCircle2 size={11} /> : <WrenchIcon size={11} />}
+                                    Pit rotation
+                                  </span>
+                                  <span style={{
+                                    display: "flex", alignItems: "center", gap: 5,
+                                    padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600,
+                                    background: selectedPrefs.wantsPitScouting ? "oklch(0.65 0.18 270 / 15%)" : "oklch(1 0 0 / 4%)",
+                                    border: `1px solid ${selectedPrefs.wantsPitScouting ? "oklch(0.65 0.18 270 / 35%)" : "oklch(1 0 0 / 10%)"}`,
+                                    color: selectedPrefs.wantsPitScouting ? "oklch(0.75 0.18 270)" : "var(--muted-foreground)",
+                                  }}>
+                                    {selectedPrefs.wantsPitScouting ? <CheckCircle2 size={11} /> : <ClipboardList size={11} />}
+                                    Pit scouting
+                                  </span>
+                                </div>
+                              )}
+                            </>
+                          ) : prefsDraft && (
+                            <>
+                              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                {([
+                                  { key: "wantsMoreMatches" as const, label: "More matches", icon: ClipboardCheck },
+                                  { key: "wantsPitRotation" as const, label: "Pit rotation", icon: WrenchIcon },
+                                  { key: "wantsPitScouting" as const, label: "Pit scouting", icon: ClipboardList },
+                                ]).map(({ key, label, icon: Icon }) => {
+                                  const on = prefsDraft[key];
+                                  return (
+                                    <button
+                                      key={key}
+                                      type="button"
+                                      onClick={() => setPrefsDraft(d => d && { ...d, [key]: !d[key] })}
+                                      style={{
+                                        display: "flex", alignItems: "center", gap: 5, cursor: "pointer",
+                                        padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600,
+                                        background: on ? "oklch(0.65 0.18 270 / 18%)" : "oklch(1 0 0 / 4%)",
+                                        border: `1px solid ${on ? "oklch(0.65 0.18 270 / 45%)" : "oklch(1 0 0 / 12%)"}`,
+                                        color: on ? "oklch(0.8 0.18 270)" : "var(--muted-foreground)",
+                                      }}
+                                    >
+                                      {on ? <CheckCircle2 size={11} /> : <Icon size={11} />}
+                                      {label}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              <div>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: "oklch(0.7 0.18 270)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" }}>Preferred partners</div>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 5, maxHeight: 140, overflowY: "auto" }}>
+                                  {(allUsers ?? []).filter(u => u._id !== selectedUserId).map(u => {
+                                    const on = prefsDraft.preferredPartners.includes(u._id);
+                                    return (
+                                      <button
+                                        key={u._id}
+                                        type="button"
+                                        onClick={() => toggleDraftPartner(u._id)}
+                                        style={{
+                                          padding: "3px 9px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                                          background: on ? "oklch(0.65 0.18 270 / 18%)" : "oklch(1 0 0 / 4%)",
+                                          border: `1px solid ${on ? "oklch(0.65 0.18 270 / 45%)" : "oklch(1 0 0 / 12%)"}`,
+                                          color: on ? "var(--foreground)" : "var(--muted-foreground)",
+                                        }}
+                                      >{u.name ?? u.email ?? "Scout"}</button>
+                                    );
                                   })}
                                 </div>
                               </div>
-                            </div>
+                            </>
                           )}
-                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                            <span style={{
-                              display: "flex", alignItems: "center", gap: 5,
-                              padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600,
-                              background: selectedPrefs.wantsMoreMatches ? "oklch(0.65 0.18 270 / 15%)" : "oklch(1 0 0 / 4%)",
-                              border: `1px solid ${selectedPrefs.wantsMoreMatches ? "oklch(0.65 0.18 270 / 35%)" : "oklch(1 0 0 / 10%)"}`,
-                              color: selectedPrefs.wantsMoreMatches ? "oklch(0.75 0.18 270)" : "var(--muted-foreground)",
-                            }}>
-                              {selectedPrefs.wantsMoreMatches ? <CheckCircle2 size={11} /> : <ClipboardCheck size={11} />}
-                              More matches
-                            </span>
-                            <span style={{
-                              display: "flex", alignItems: "center", gap: 5,
-                              padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600,
-                              background: selectedPrefs.wantsPitRotation ? "oklch(0.65 0.18 270 / 15%)" : "oklch(1 0 0 / 4%)",
-                              border: `1px solid ${selectedPrefs.wantsPitRotation ? "oklch(0.65 0.18 270 / 35%)" : "oklch(1 0 0 / 10%)"}`,
-                              color: selectedPrefs.wantsPitRotation ? "oklch(0.75 0.18 270)" : "var(--muted-foreground)",
-                            }}>
-                              {selectedPrefs.wantsPitRotation ? <CheckCircle2 size={11} /> : <WrenchIcon size={11} />}
-                              Pit rotation
-                            </span>
-                          </div>
                         </div>
                       </div>
                     )}

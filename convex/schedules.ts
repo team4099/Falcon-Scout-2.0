@@ -387,6 +387,35 @@ export const listAllPreferences = query({
   },
 });
 
+/**
+ * Admin override: set (create or replace) another scout's preferences for an
+ * event. Used in Manage Scouts so admins can correct/bias preferences when
+ * too many scouts pick the same option or a job is short-staffed.
+ */
+export const adminSetPreferences = mutation({
+  args: {
+    scoutId:           v.id("users"),
+    eventKey:          v.string(),
+    preferredPartners: v.array(v.id("users")),
+    wantsMoreMatches:  v.boolean(),
+    wantsPitRotation:  v.boolean(),
+    wantsPitScouting:  v.boolean(),
+  },
+  handler: async (ctx, { scoutId, eventKey, preferredPartners, wantsMoreMatches, wantsPitRotation, wantsPitScouting }) => {
+    await requireAdmin(ctx);
+    const existing = await ctx.db
+      .query("scoutPreferences")
+      .withIndex("by_scout_event", (q) => q.eq("scoutId", scoutId).eq("eventKey", eventKey))
+      .first();
+    const data = { preferredPartners, wantsMoreMatches, wantsPitRotation, wantsPitScouting, updatedAt: Date.now() };
+    if (existing) {
+      await ctx.db.patch(existing._id, data);
+    } else {
+      await ctx.db.insert("scoutPreferences", { scoutId, eventKey, ...data });
+    }
+  },
+});
+
 // ── Schedule Exclusions ───────────────────────────────────────────────────────
 
 /** Get the permanently excluded scout IDs for an event */
