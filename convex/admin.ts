@@ -4,6 +4,8 @@ import {
   TEMP_ADMIN_DURATION_MS,
   isAdminEmail,
   isCurrentUserAdminEligible,
+  isSignedIn,
+  requireAdmin,
   requireInherentAdmin,
 } from "./adminAuth";
 
@@ -100,5 +102,36 @@ export const revokeTemporaryAdmin = mutation({
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .first();
     if (existing) await ctx.db.delete(existing._id);
+  },
+});
+
+/**
+ * IDs of every user currently tagged as drive team. Used to exclude them from
+ * match-scouting auto-generation and place them on every auto-generated pit
+ * rotation (see src/lib/scheduleGenerator.ts).
+ */
+export const listDriveTeamIds = query({
+  args: {},
+  handler: async (ctx) => {
+    if (!(await isSignedIn(ctx))) return [];
+    const rows = await ctx.db.query("driveTeamMembers").collect();
+    return rows.map((r) => r.userId);
+  },
+});
+
+/** Tag or untag a user as drive team. Admin-only (any admin, not just inherent). */
+export const setDriveTeamMember = mutation({
+  args: { userId: v.id("users"), isDriveTeam: v.boolean() },
+  handler: async (ctx, { userId, isDriveTeam }) => {
+    await requireAdmin(ctx);
+    const existing = await ctx.db
+      .query("driveTeamMembers")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .first();
+    if (isDriveTeam) {
+      if (!existing) await ctx.db.insert("driveTeamMembers", { userId });
+    } else {
+      if (existing) await ctx.db.delete(existing._id);
+    }
   },
 });

@@ -4,13 +4,23 @@
  * Auto-generate match assignments + pit rotations for a FRC scouting event.
  *
  * Rules enforced:
- *  - Qual matches only (no elims)
+ *  - Qual matches only (no elims) — elims pit rotation is always manual
+ *    (see the separate ElimsRotationPanel UI; this generator never touches it)
  *  - Matches organised in blocks of 5; same 6 scouts cover all 5 matches in a block
- *  - Each scout scouts at least 2 blocks (10 matches) minimum
+ *  - Each scout scouts at least 2 blocks (10 matches) minimum, except drive
+ *    team scouts, who never scout matches at all (see below)
  *  - Scouts who opt into pit duty get one block of 10 consecutive qual matches
  *    on pit duty (2 consecutive 5-match blocks); max 6 scouts on pit at once
- *  - Scouts on pit duty for a match cannot also scout that match
- *  - Gaps filled preferentially by scouts who indicated wantsMoreMatches
+ *  - Drive team scouts are excluded from match scouting entirely and are
+ *    placed on every qual pit-rotation window for the whole event (a window
+ *    every 10 matches, covering the full schedule) — they have nowhere else
+ *    to be assigned, so pit duty must fully cover the event when any exist
+ *  - Pit rotation is planned BEFORE match scouting and always wins: a scout
+ *    on pit duty for a match cannot also scout that match. If that leaves too
+ *    few scouts to fill a block, the leftover positions are reported as
+ *    blank spaces rather than silently double-booking someone
+ *  - wantsMoreMatches scouts are targeted for ~50% more blocks than everyone
+ *    else (proportional target, not a flat bonus)
  *  - Preferred partner pairs/triplets are placed on the same alliance side
  *    within a scouting block (bitmask-optimised alliance splitting)
  *  - Existing pit rotations are honoured as-is
@@ -67,6 +77,12 @@ export interface SchedulerInput {
   existingMatchAssignments: ExistingMatchAssignment[];
   /** Scout IDs to skip entirely — they receive no auto-generated assignments. */
   excludedScoutIds?: string[];
+  /**
+   * Drive team scout IDs. Excluded from match scouting entirely; placed on
+   * every auto-generated qual pit-rotation window instead (a window every
+   * 10 matches, covering the whole event), since they have no other duty.
+   */
+  driveTeamScoutIds?: string[];
 }
 
 export interface GeneratedPitRotation {
@@ -190,6 +206,14 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
     };
   }
 
+  // Drive team scouts never scout matches — they're pit-only. Match-scouting
+  // logic below uses `matchPool` (scouts minus drive team); pit-rotation
+  // planning and preference lookups keep using the full `scouts` list.
+  const driveTeamIds = new Set(
+    (input.driveTeamScoutIds ?? []).filter(id => scouts.some(s => s._id === id))
+  );
+  const matchPool = scouts.filter(s => !driveTeamIds.has(s._id));
+
   // 1. Build 5-match blocks
   const sorted = [...qualMatches].sort((a, b) => a.matchNumber - b.matchNumber);
   const blocks = chunk(sorted, 5);
@@ -229,13 +253,49 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
     }
   }
 
-  // 4. Plan new pit rotations (scouts who opted in, not already assigned)
+  // 4. Plan new pit rotations.
+  //  - No drive team: original behaviour — one window per up-to-6 opted-in
+  //    wanters, spaced across the event, each wanter serves exactly one shift.
+  //  - With a drive team: pit must be staffed for the entire event (drive
+  //    team scouts have nowhere else to go), so a window is generated for
+  //    every consecutive 10-match chunk from the first to the last qual
+  //    match. Drive team scouts go in every window; wantsPitRotation scouts
+  //    are folded in (one shift each, same as before) to help staff them.
+  const driveTeamCapped = scouts.filter(s => driveTeamIds.has(s._id)).map(s => s._id).slice(0, 6);
+  if (driveTeamIds.size > 6) {
+    warnings.push(
+      `${driveTeamIds.size} drive team scouts but pit rotations cap at 6 — ` +
+      `only the first 6 will be placed in each auto-generated pit window.`
+    );
+  }
+
   const pitWanters = scouts.filter(s =>
-    prefMap.get(s._id)?.wantsPitRotation && !scoutsAlreadyInPit.has(s._id)
+    prefMap.get(s._id)?.wantsPitRotation && !driveTeamIds.has(s._id) && !scoutsAlreadyInPit.has(s._id)
   );
   const newPitRotations: GeneratedPitRotation[] = [];
 
-  if (pitWanters.length > 0 && B >= 2) {
+  if (driveTeamCapped.length > 0 && B >= 1) {
+    const remainingCap = Math.max(0, 6 - driveTeamCapped.length);
+    let wIdx = 0;
+    for (let bi = 0; bi < B; bi += 2) {
+      const endBi = Math.min(bi + 1, B - 1);
+      const start = blockStart(bi);
+      const end = blockEnd(endBi);
+      const grp = [...driveTeamCapped];
+      for (let k = 0; k < remainingCap && wIdx < pitWanters.length; k++) {
+        grp.push(pitWanters[wIdx]._id);
+        wIdx++;
+      }
+      for (const id of grp) markPitBusy(id, start, end);
+      newPitRotations.push({ label: `Auto Pit ${Math.floor(bi / 2) + 1}`, startMatch: start, endMatch: end, scoutIds: grp });
+    }
+    if (wIdx < pitWanters.length) {
+      warnings.push(
+        `${pitWanters.length - wIdx} scout(s) opted into pit rotation but there was no room left ` +
+        `alongside the drive team's full-event pit schedule to give them a shift.`
+      );
+    }
+  } else if (pitWanters.length > 0 && B >= 2) {
     const numWindows = Math.ceil(pitWanters.length / 6);
 
     // Space windows evenly, each window = 2 consecutive blocks (10 matches)
@@ -290,9 +350,9 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
     return blocks[bi].every(m => POSITIONS.every(p => existingSlots.has(`${m.matchNumber}-${p}`)));
   }
 
-  // 6. Seed block counts from existing assignments
+  // 6. Seed block counts from existing assignments (match-eligible scouts only)
   const scoutBlockCounts = new Map<string, number>();
-  for (const s of scouts) scoutBlockCounts.set(s._id, 0);
+  for (const s of matchPool) scoutBlockCounts.set(s._id, 0);
   for (let bi = 0; bi < B; bi++) {
     if (blockFullyAssigned(bi)) continue;
     const seen = new Set<string>();
@@ -310,14 +370,14 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
 
   // 6b. Proportional block targets — scouts who opted into wantsMoreMatches
   // should end up with ~50% more blocks than everyone else. Every block has
-  // exactly 6 slots, so total block-assignments across all scouts always
-  // equals B * 6; targets are each scout's weighted share of that total.
+  // exactly 6 slots, so total block-assignments across all match-eligible
+  // scouts always equals B * 6; targets are each scout's weighted share.
   const MORE_MATCHES_WEIGHT = 1.5;
   const totalBlockSlots = B * 6;
   const weightOf = (id: string) => (prefMap.get(id)?.wantsMoreMatches ? MORE_MATCHES_WEIGHT : 1);
-  const sumWeights = scouts.reduce((acc, s) => acc + weightOf(s._id), 0) || 1;
+  const sumWeights = matchPool.reduce((acc, s) => acc + weightOf(s._id), 0) || 1;
   const targetBlocks = new Map<string, number>();
-  for (const s of scouts)
+  for (const s of matchPool)
     targetBlocks.set(s._id, (totalBlockSlots * weightOf(s._id)) / sumWeights);
 
   // 7. Assign scouts to blocks
@@ -326,14 +386,10 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
   for (let bi = 0; bi < B; bi++) {
     if (blockFullyAssigned(bi)) continue;
 
-    const avail = scouts.filter(s => !isPitBusy(s._id, bi));
+    const avail = matchPool.filter(s => !isPitBusy(s._id, bi));
     if (avail.length === 0) {
       warnings.push(`Block ${bi + 1} (Q${blockStart(bi)}–Q${blockEnd(bi)}): no scouts available, skipping.`);
       continue;
-    }
-    if (avail.length < 6) {
-      warnings.push(`Block ${bi + 1} (Q${blockStart(bi)}–Q${blockEnd(bi)}): only ${avail.length} of 6 scouts available — filling partial slots.`);
-      // Fall through — assignPositions sequential fallback handles partial fills
     }
 
     // Which positions in this block already have assignments?
@@ -371,6 +427,23 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
     // Alliance-aware position assignment
     const assigned = assignPositions(allSix, openPositions, fixedPos, prefScore);
 
+    // Pit rotation is planned first and always wins (step 4, above), so if
+    // there weren't enough available scouts to cover every open position,
+    // some positions in this block are left blank. Report exactly which,
+    // and call out pit-rotation overlap as the cause when that's why.
+    const filled = new Set(assigned.keys());
+    const blanks = openPositions.filter(p => !filled.has(p));
+    if (blanks.length > 0) {
+      const pitBusyCount = matchPool.length - avail.length;
+      warnings.push(
+        `Block ${bi + 1} (Q${blockStart(bi)}–Q${blockEnd(bi)}): ${blanks.length} position(s) left blank ` +
+        `(${blanks.join(", ")}) — only ${avail.length} scout(s) available` +
+        (pitBusyCount > 0
+          ? `, ${pitBusyCount} on pit duty during this window. Pit rotation is prioritized over match scouting.`
+          : ` out of ${matchPool.length} match-eligible scouts.`)
+      );
+    }
+
     // Emit for every match in block
     for (const m of blocks[bi]) {
       for (const [pos, scoutId] of assigned) {
@@ -385,8 +458,9 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
       scoutBlockCounts.set(id, (scoutBlockCounts.get(id) ?? 0) + 1);
   }
 
-  // 8. Warn about scouts below 2-block minimum
-  for (const s of scouts) {
+  // 8. Warn about scouts below 2-block minimum (match-eligible scouts only —
+  // drive team scouts are intentionally never assigned match blocks)
+  for (const s of matchPool) {
     const count = scoutBlockCounts.get(s._id) ?? 0;
     const nonBusy = Array.from({ length: B }, (_, i) => i).filter(bi => !isPitBusy(s._id, bi)).length;
     if (count < 2 && nonBusy >= 2)
@@ -526,6 +600,32 @@ export function runTests(): TestResult[] {
     assert(s1 >= 2, `wantsMore scout s1 has only ${s1} blocks`);
   });
 
+  // T9 ── No duplicate positions within a block
+  test("T9 Each match has 6 distinct scouts (no position duplication)", () => {
+    const scouts = makeScouts(12); const matches = makeMatches(25);
+    const out = generateSchedule({ qualMatches: matches, scouts, preferences: makePrefs(scouts), existingPitRotations: [], existingMatchAssignments: [] });
+    const blockGroups = chunk([...matches].sort((a,b) => a.matchNumber - b.matchNumber), 5);
+    for (const block of blockGroups) {
+      const mn = block[0].matchNumber;
+      const ids = POSITIONS.map(p => out.matchAssignments.find(a => a.matchNumber === mn && a.position === p)?.scoutId).filter(Boolean);
+      assert(new Set(ids).size === 6, `Block at Q${mn}: only ${new Set(ids).size} unique scouts`);
+    }
+  });
+
+  // T10 ── Pre-existing pit + generate schedule compatibility
+  test("T10 Pre-existing pit rotation + new schedule fills remaining blocks correctly", () => {
+    const scouts = makeScouts(10); const matches = makeMatches(20);
+    const existingPit: ExistingPitRotation[] = [{ scoutIds: ["s1","s2","s3"], startMatch: 11, endMatch: 20 }];
+    const out = generateSchedule({ qualMatches: matches, scouts, preferences: makePrefs(scouts), existingPitRotations: existingPit, existingMatchAssignments: [] });
+    const pitSet = new Set([11,12,13,14,15,16,17,18,19,20]);
+    for (const a of out.matchAssignments)
+      if (pitSet.has(a.matchNumber))
+        assert(!["s1","s2","s3"].includes(a.scoutId), `Pit scout ${a.scoutId} scouting Q${a.matchNumber}`);
+    for (let mn = 1; mn <= 10; mn++)
+      for (const p of POSITIONS)
+        assert(out.matchAssignments.some(a => a.matchNumber === mn && a.position === p), `Q${mn} ${p} not filled`);
+  });
+
   // T11 ── wantsMoreMatches scouts land ~50% above everyone else
   test("T11 wantsMoreMatches scouts average ~1.5x the block count of everyone else", () => {
     const scouts = makeScouts(16); const matches = makeMatches(80);
@@ -554,30 +654,44 @@ export function runTests(): TestResult[] {
     }
   });
 
-  // T9 ── No duplicate positions within a block
-  test("T9 Each match has 6 distinct scouts (no position duplication)", () => {
-    const scouts = makeScouts(12); const matches = makeMatches(25);
-    const out = generateSchedule({ qualMatches: matches, scouts, preferences: makePrefs(scouts), existingPitRotations: [], existingMatchAssignments: [] });
-    const blockGroups = chunk([...matches].sort((a,b) => a.matchNumber - b.matchNumber), 5);
-    for (const block of blockGroups) {
-      const mn = block[0].matchNumber;
-      const ids = POSITIONS.map(p => out.matchAssignments.find(a => a.matchNumber === mn && a.position === p)?.scoutId).filter(Boolean);
-      assert(new Set(ids).size === 6, `Block at Q${mn}: only ${new Set(ids).size} unique scouts`);
-    }
+  // T13 ── Drive team scouts are excluded from match scouting entirely
+  test("T13 Drive team scouts never receive a match assignment", () => {
+    const scouts = makeScouts(14); const matches = makeMatches(40);
+    const out = generateSchedule({
+      qualMatches: matches, scouts, preferences: makePrefs(scouts),
+      existingPitRotations: [], existingMatchAssignments: [],
+      driveTeamScoutIds: ["s1", "s2"],
+    });
+    for (const a of out.matchAssignments)
+      assert(a.scoutId !== "s1" && a.scoutId !== "s2", `Drive team scout ${a.scoutId} was assigned Q${a.matchNumber}`);
   });
 
-  // T10 ── Pre-existing pit + generate schedule compatibility
-  test("T10 Pre-existing pit rotation + new schedule fills remaining blocks correctly", () => {
-    const scouts = makeScouts(10); const matches = makeMatches(20);
-    const existingPit: ExistingPitRotation[] = [{ scoutIds: ["s1","s2","s3"], startMatch: 11, endMatch: 20 }];
-    const out = generateSchedule({ qualMatches: matches, scouts, preferences: makePrefs(scouts), existingPitRotations: existingPit, existingMatchAssignments: [] });
-    const pitSet = new Set([11,12,13,14,15,16,17,18,19,20]);
-    for (const a of out.matchAssignments)
-      if (pitSet.has(a.matchNumber))
-        assert(!["s1","s2","s3"].includes(a.scoutId), `Pit scout ${a.scoutId} scouting Q${a.matchNumber}`);
-    for (let mn = 1; mn <= 10; mn++)
-      for (const p of POSITIONS)
-        assert(out.matchAssignments.some(a => a.matchNumber === mn && a.position === p), `Q${mn} ${p} not filled`);
+  // T14 ── Drive team scouts cover every pit window across the whole event
+  test("T14 Drive team scouts appear in every generated pit rotation", () => {
+    const scouts = makeScouts(14); const matches = makeMatches(40); // B = 8 blocks -> 4 windows
+    const out = generateSchedule({
+      qualMatches: matches, scouts, preferences: makePrefs(scouts),
+      existingPitRotations: [], existingMatchAssignments: [],
+      driveTeamScoutIds: ["s1"],
+    });
+    assert(out.newPitRotations.length === 4, `Expected 4 full-event pit windows, got ${out.newPitRotations.length}`);
+    for (const rot of out.newPitRotations)
+      assert(rot.scoutIds.includes("s1"), `Window Q${rot.startMatch}-Q${rot.endMatch} missing drive team scout s1`);
+    // Windows must be contiguous and cover the whole event (Q1-Q40)
+    const covered = out.newPitRotations.flatMap(r => Array.from({ length: r.endMatch - r.startMatch + 1 }, (_, i) => r.startMatch + i));
+    for (let mn = 1; mn <= 40; mn++) assert(covered.includes(mn), `Q${mn} not covered by any pit window`);
+  });
+
+  // T15 ── Drive team scouts don't count toward the 2-block match minimum
+  test("T15 No 2-block-minimum warning for drive team scouts", () => {
+    const scouts = makeScouts(14); const matches = makeMatches(40);
+    const out = generateSchedule({
+      qualMatches: matches, scouts, preferences: makePrefs(scouts),
+      existingPitRotations: [], existingMatchAssignments: [],
+      driveTeamScoutIds: ["s1"],
+    });
+    assert(!out.warnings.some(w => w.includes("Scout 1") && w.includes("2-block minimum")),
+      "Drive team scout incorrectly warned for missing the 2-block match minimum");
   });
 
   return results;

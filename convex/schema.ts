@@ -346,4 +346,14 @@ export default defineSchema({
     expiresAt:  v.number(),
   })
     .index("by_user", ["userId"]),
+
+  // ── Drive team tag ────────────────────────────────────────────────────────
+  // Admin-assigned, team-wide (not per-event): a drive team member is
+  // excluded from match-scouting auto-generation entirely and placed on
+  // every auto-generated qual pit-rotation window instead. One row per
+  // tagged user.
+  driveTeamMembers: defineTable({
+    userId: v.id("users"),
+  })
+    .index("by_user", ["userId"]),
 });

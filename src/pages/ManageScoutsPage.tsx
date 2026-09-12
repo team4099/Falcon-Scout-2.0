@@ -864,6 +864,9 @@ export default function ManageScoutsPage() {
   const adminStatusByUser: Record<string, { isInherentAdmin: boolean; tempAdminExpiresAt: number | null }> = {};
   for (const s of adminStatuses ?? []) adminStatusByUser[s.userId] = s;
 
+  const driveTeamIds = useQuery(api.admin.listDriveTeamIds) as string[] | undefined;
+  const driveTeamSet = new Set(driveTeamIds ?? []);
+
   // Mutations
   const clearMatchAssignment = useAdminMutation(api.schedules.clearMatchAssignment);
   const upsertPitRotation    = useAdminMutation(api.schedules.upsertPitRotation);
@@ -872,12 +875,14 @@ export default function ManageScoutsPage() {
   const adminSetPreferences = useAdminMutation(api.schedules.adminSetPreferences);
   const grantTemporaryAdmin  = useMutation(api.admin.grantTemporaryAdmin);
   const revokeTemporaryAdmin = useMutation(api.admin.revokeTemporaryAdmin);
+  const setDriveTeamMember  = useAdminMutation(api.admin.setDriveTeamMember);
 
   // Saving state
   const [clearingSlot, setClearingSlot]   = useState<string | null>(null);
   const [togglingRot,  setTogglingRot]    = useState<string | null>(null);
   const [togglingExclude, setTogglingExclude] = useState(false);
   const [togglingAdmin, setTogglingAdmin] = useState(false);
+  const [togglingDriveTeam, setTogglingDriveTeam] = useState(false);
   const [deletingScoutReports, setDeletingScoutReports] = useState(false);
   const [deletingAllReports, setDeletingAllReports] = useState(false);
   const [editingPrefs, setEditingPrefs] = useState(false);
@@ -1056,6 +1061,19 @@ export default function ManageScoutsPage() {
       toast.error(err instanceof Error ? err.message : "Couldn't revoke admin access.");
     } finally {
       setTogglingAdmin(false);
+    }
+  }
+
+  async function handleToggleDriveTeam(userId: string, isDriveTeam: boolean) {
+    setTogglingDriveTeam(true);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await setDriveTeamMember({ userId: userId as any, isDriveTeam });
+      toast.success(isDriveTeam ? "Tagged as drive team." : "Removed drive team tag.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't update drive team tag.");
+    } finally {
+      setTogglingDriveTeam(false);
     }
   }
 
@@ -1763,6 +1781,41 @@ export default function ManageScoutsPage() {
                         </div>
                       );
                     })()}
+
+                    {/* ── Drive Team tag — excludes from match scouting, adds to every pit rotation ── */}
+                    <div style={{
+                      display: "flex", alignItems: "center", gap: 10,
+                      padding: "12px 14px", borderRadius: 13,
+                      background: driveTeamSet.has(selectedUser._id) ? "oklch(0.7 0.19 25 / 8%)" : "oklch(1 0 0 / 3%)",
+                      border: driveTeamSet.has(selectedUser._id)
+                        ? "1px solid oklch(0.7 0.19 25 / 30%)"
+                        : "1px solid oklch(1 0 0 / 8%)",
+                      marginBottom: 4,
+                    }}>
+                      <div style={{
+                        width: 32, height: 32, borderRadius: 9, flexShrink: 0,
+                        background: driveTeamSet.has(selectedUser._id) ? "oklch(0.7 0.19 25 / 20%)" : "oklch(1 0 0 / 6%)",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                      }}>
+                        <WrenchIcon size={15} style={{ color: driveTeamSet.has(selectedUser._id) ? "oklch(0.7 0.19 25)" : "var(--muted-foreground)" }} />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: driveTeamSet.has(selectedUser._id) ? "oklch(0.7 0.19 25)" : "var(--foreground)" }}>
+                          Drive Team
+                        </div>
+                        <div style={{ fontSize: 11, color: "var(--muted-foreground)", lineHeight: 1.4, marginTop: 1 }}>
+                          Excludes from match scouting; auto-assigns to every qual pit rotation.
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={togglingDriveTeam}
+                        onClick={() => handleToggleDriveTeam(selectedUser._id, !driveTeamSet.has(selectedUser._id))}
+                      >
+                        {driveTeamSet.has(selectedUser._id) ? "Remove Tag" : "Tag as Drive Team"}
+                      </Button>
+                    </div>
 
                     {/* Preferences section */}
                     {(selectedPrefs || eventKey) && (

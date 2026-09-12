@@ -1957,6 +1957,10 @@ export default function SchedulingPage() {
   ) as string[] | undefined;
   const dbExcludedSet = useMemo(() => new Set(dbExcludedScoutIds ?? []), [dbExcludedScoutIds]);
 
+  // Drive team: excluded from match scouting entirely, placed on every
+  // auto-generated qual pit rotation (tagged in Manage Scouts).
+  const driveTeamIds = useQuery(api.admin.listDriveTeamIds) as string[] | undefined;
+
   const setMatchAssignment       = useAdminMutation(api.schedules.setMatchAssignment);
   const clearMatchAssignment     = useAdminMutation(api.schedules.clearMatchAssignment);
   const clearAllMatchAssignments = useAdminMutation(api.schedules.clearAllMatchAssignments);
@@ -2227,7 +2231,12 @@ export default function SchedulingPage() {
   }
 
   // ── Auto-generate handler ─────────────────────────────────────────────────
-  const handleAutoGenerate = useCallback(async () => {
+  // mode "full": combined match + pit rotation generation (top-level button).
+  // mode "pitOnly": pit rotations tab's own Auto-Assign — computed the same
+  // way (pit rotation planning always runs first, unaffected by this flag)
+  // but match assignments are stripped from the result before it's shown, so
+  // Apply only touches pit rotations.
+  const handleAutoGenerate = useCallback(async (mode: "full" | "pitOnly" = "full") => {
     if (!currentEvent || !allUsers || !matches.length) return;
     setAutoGenRunning(true);
     try {
@@ -2263,13 +2272,16 @@ export default function SchedulingPage() {
         existingPitRotations: existingPit,
         existingMatchAssignments: existingAssigns,
         excludedScoutIds: [...new Set([...excludedScoutIds, ...dbExcludedSet])],
+        driveTeamScoutIds: driveTeamIds ?? [],
       });
 
-      setAutoGenResult(result);
+      setAutoGenResult(mode === "pitOnly"
+        ? { ...result, matchAssignments: [], warnings: result.warnings.filter(w => /pit|drive team/i.test(w)) }
+        : result);
     } finally {
       setAutoGenRunning(false);
     }
-  }, [currentEvent, allUsers, matches, allPreferences, allAssignments, pitRotations, excludedScoutIds, dbExcludedSet]);
+  }, [currentEvent, allUsers, matches, allPreferences, allAssignments, pitRotations, excludedScoutIds, dbExcludedSet, driveTeamIds]);
 
   const handleAutoApply = useCallback(async () => {
     if (!autoGenResult || !currentEvent) return;
@@ -2373,7 +2385,7 @@ export default function SchedulingPage() {
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {allUsers && matches.length > 0 && (
                 <button
-                  onClick={handleAutoGenerate}
+                  onClick={() => handleAutoGenerate("full")}
                   disabled={autoGenRunning}
                   style={{
                     display: "flex", alignItems: "center", gap: 7,
@@ -2700,6 +2712,25 @@ export default function SchedulingPage() {
                   </span>
                   <div style={{ flex: 1, height: 1, background: SURF_BORD }} />
                 </div>
+
+                {/* Auto-Assign — qual only, one window every 10 matches; elims stays manual */}
+                {!readOnly && allUsers && matches.length > 0 && (
+                  <button
+                    onClick={() => handleAutoGenerate("pitOnly")}
+                    disabled={autoGenRunning}
+                    style={{
+                      display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                      padding: "7px 12px", borderRadius: 9, fontSize: 12, fontWeight: 700,
+                      background: G_DIM, color: G, border: `1.5px solid ${G_STR}`,
+                      cursor: autoGenRunning ? "wait" : "pointer", flexShrink: 0,
+                      opacity: autoGenRunning ? 0.7 : 1, alignSelf: "flex-start",
+                    }}
+                  >
+                    {autoGenRunning
+                      ? <><Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />Generating…</>
+                      : <><Zap size={12} />Auto-Assign Pit Rotations{driveTeamIds && driveTeamIds.length > 0 ? ` (${driveTeamIds.length} drive team)` : ""}</>}
+                  </button>
+                )}
 
                 {/* Opt-in note */}
                 {pitHiddenCount > 0 && (
