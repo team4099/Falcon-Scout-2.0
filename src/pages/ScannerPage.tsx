@@ -36,6 +36,7 @@ import {
   AlertTriangle,
   Upload,
   Layers,
+  Aperture,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -133,12 +134,15 @@ export default function ScannerPage() {
   const submitForm = useMutation(api.forms.submitForm);
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const readerRef = useRef<BrowserQRCodeReader | null>(null);
   const controlsRef = useRef<{ stop: () => void } | null>(null);
   const lastScannedRef = useRef<string>(""); // debounce duplicate rapid scans
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [scanning, setScanning] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [capturing, setCapturing] = useState(false);
   const [scanned, setScanned] = useState<ScannedSubmission[]>([]);
   const [clearConfirm, setClearConfirm] = useState(false);
   const [chunksProgress, setChunksProgress] = useState<{
@@ -278,6 +282,7 @@ export default function ScannerPage() {
 
     try {
       const reader = new BrowserQRCodeReader();
+      readerRef.current = reader;
       controlsRef.current = await reader.decodeFromVideoDevice(
         undefined,              // undefined = default (back) camera
         videoRef.current,
@@ -298,12 +303,43 @@ export default function ScannerPage() {
   const stopScanner = useCallback(() => {
     controlsRef.current?.stop();
     controlsRef.current = null;
+    readerRef.current = null;
     setScanning(false);
     setChunksProgress(null);
   }, []);
 
+  // ── Manual capture: grab the current frame and decode it once ────────────
+
+  const captureFrame = useCallback(() => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const reader = readerRef.current;
+    if (!video || !canvas || !reader || video.readyState < 2) return;
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    setCapturing(true);
+    try {
+      const result = reader.decodeFromCanvas(canvas);
+      handleScan(result.getText());
+    } catch {
+      toast.error("No QR code found in that frame — line it up and try again.", {
+        duration: 2000,
+      });
+    } finally {
+      setCapturing(false);
+    }
+  }, [handleScan]);
+
   // Stop camera on unmount
-  useEffect(() => () => { controlsRef.current?.stop(); }, []);
+  useEffect(() => () => {
+    controlsRef.current?.stop();
+    readerRef.current = null;
+  }, []);
 
   // Retry upload for pending/failed scans when we come online
   useEffect(() => {
@@ -353,6 +389,7 @@ export default function ScannerPage() {
           muted
           playsInline
         />
+        <canvas ref={canvasRef} className="hidden" />
 
         {/* Scanning overlay */}
         {scanning && (
@@ -425,9 +462,18 @@ export default function ScannerPage() {
             <ScanLine className="h-4 w-4" /> Start Scanning
           </Button>
         ) : (
-          <Button variant="outline" onClick={stopScanner} className="px-8 gap-2">
-            <CameraOff className="h-4 w-4" /> Stop
-          </Button>
+          <>
+            <Button
+              onClick={captureFrame}
+              disabled={capturing}
+              className="px-8 gap-2"
+            >
+              <Aperture className="h-4 w-4" /> Capture
+            </Button>
+            <Button variant="outline" onClick={stopScanner} className="gap-2">
+              <CameraOff className="h-4 w-4" /> Stop
+            </Button>
+          </>
         )}
         {pendingCount > 0 && navigator.onLine && (
           <Button

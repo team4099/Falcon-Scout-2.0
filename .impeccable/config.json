@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/pages/ScannerPage.tsx"
+        ],
+        "createdAt": "2026-09-12T22:12:51.452Z",
+        "reason": "corner brackets are a QR-viewfinder reticle overlay (two-sided border on a small square), not a card side-tab accent; pre-existing, unrelated to this change"
+      }
+    ]
+  }
+}
