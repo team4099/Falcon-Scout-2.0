@@ -1216,7 +1216,7 @@ export default function MySchedulePage() {
           </div>
           <div>
             <h1 style={{ fontSize: 22, fontWeight: 800, color: FG, margin: 0, lineHeight: 1.2, letterSpacing: "-0.02em" }}>
-              My Schedule
+              My Assignments
             </h1>
             <p style={{ fontSize: 13, color: MUTED, margin: 0 }}>
               {currentEvent

@@ -61,16 +61,16 @@ import BettingPage from "@/pages/BettingPage";
 // list below) because non-admins can view everyone's assignments read-only;
 // SchedulingPage itself gates editing on isAdminMode.
 const BASE_NAV = [
-  { to: "/",          label: "Dashboard",   icon: LayoutDashboard },
-  { to: "/matches",   label: "Matches",      icon: CalendarDays    },
-  { to: "/data",      label: "Data Viewer",  icon: BarChart2       },
-  { to: "/scout",     label: "Scout Match",  icon: ClipboardList   },
-  { to: "/schedule",  label: "My Schedule",  icon: CalendarDays    },
-  { to: "/scheduling", label: "Scheduling",  icon: CalendarDays    },
-  { to: "/betting",   label: "FalconBet",    icon: DollarSign      },
-  { to: "/qrcodes",   label: "My QR Codes",  icon: QrCode          },
-  { to: "/scanner",   label: "QR Scanner",   icon: ScanLine        },
-  { to: "/kanban",    label: "Picklist",     icon: Columns         },
+  { to: "/",          label: "Dashboard",       icon: LayoutDashboard },
+  { to: "/matches",   label: "Matches",         icon: CalendarDays    },
+  { to: "/scheduling", label: "Scheduling",     icon: CalendarDays    },
+  { to: "/schedule",  label: "My Assignments",  icon: CalendarDays    },
+  { to: "/scout",     label: "Scout Match",     icon: ClipboardList   },
+  { to: "/betting",   label: "FalconBet",       icon: DollarSign      },
+  { to: "/qrcodes",   label: "My QR Codes",     icon: QrCode          },
+  { to: "/scanner",   label: "QR Scanner",      icon: ScanLine        },
+  { to: "/kanban",    label: "Picklist",        icon: Columns         },
+  { to: "/data",      label: "Data Viewer",     icon: BarChart2       },
 ];
 
 function NavItem({ to, label, icon: Icon }: { to: string; label: string; icon: React.ElementType }) {
