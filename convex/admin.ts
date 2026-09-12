@@ -44,11 +44,13 @@ export const listAdminStatuses = query({
     if (!isAdminEmail(identity?.email)) return [];
 
     const now = Date.now();
-    const [users, grants] = await Promise.all([
+    const [users, grants, labels] = await Promise.all([
       ctx.db.query("users").collect(),
       ctx.db.query("temporaryAdminGrants").collect(),
+      ctx.db.query("adminLabels").collect(),
     ]);
     const grantByUser = new Map(grants.map((g) => [g.userId, g]));
+    const labelByUser = new Map(labels.map((l) => [l.userId, l.label]));
 
     return users.map((u) => {
       const grant = grantByUser.get(u._id);
@@ -56,8 +58,35 @@ export const listAdminStatuses = query({
         userId: u._id,
         isInherentAdmin: isAdminEmail(u.email),
         tempAdminExpiresAt: grant && grant.expiresAt > now ? grant.expiresAt : null,
+        label: labelByUser.get(u._id) ?? null,
       };
     });
+  },
+});
+
+/**
+ * Set (or clear, with an empty string) the admin-status label shown in
+ * Manage Scouts for a user — overrides the default "Permanent team lead"/
+ * "Temporary Admin" wording. Admin-only.
+ */
+export const setAdminLabel = mutation({
+  args: { userId: v.id("users"), label: v.string() },
+  handler: async (ctx, { userId, label }) => {
+    await requireAdmin(ctx);
+    const trimmed = label.trim();
+    const existing = await ctx.db
+      .query("adminLabels")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .first();
+    if (!trimmed) {
+      if (existing) await ctx.db.delete(existing._id);
+      return;
+    }
+    if (existing) {
+      await ctx.db.patch(existing._id, { label: trimmed });
+    } else {
+      await ctx.db.insert("adminLabels", { userId, label: trimmed });
+    }
   },
 });
 
@@ -87,6 +116,13 @@ export const grantTemporaryAdmin = mutation({
       await ctx.db.patch(existing._id, { expiresAt, grantedBy: granterId });
     } else {
       await ctx.db.insert("temporaryAdminGrants", { userId, grantedBy: granterId, expiresAt });
+      // Seed a default status label on a fresh grant only — renewing an
+      // active grant shouldn't clobber a label the admin already customized.
+      const existingLabel = await ctx.db
+        .query("adminLabels")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .first();
+      if (!existingLabel) await ctx.db.insert("adminLabels", { userId, label: "Temporary Admin" });
     }
     return { expiresAt };
   },
@@ -133,5 +169,63 @@ export const setDriveTeamMember = mutation({
     } else {
       if (existing) await ctx.db.delete(existing._id);
     }
+  },
+});
+
+/**
+ * Full user docs for every currently-deactivated (soft-deleted) user, for
+ * the "Deactivated" restore list in Manage Scouts. Deactivated users are
+ * filtered out of users.listUsers, so this is the only place their name is
+ * still resolvable while they're hidden.
+ */
+export const listDeactivatedUsers = query({
+  args: {},
+  handler: async (ctx) => {
+    if (!(await isCurrentUserAdminEligible(ctx))) return [];
+    const rows = await ctx.db.query("deactivatedUsers").collect();
+    const users = await Promise.all(rows.map((r) => ctx.db.get(r.userId)));
+    return rows.map((r, i) => ({
+      userId: r.userId,
+      deactivatedAt: r.deactivatedAt,
+      user: users[i],
+    }));
+  },
+});
+
+/**
+ * Soft-delete a user: hides them from Manage Scouts and every scout pool
+ * (schedule generation, pit assignment, ...) without touching their account
+ * or past submissions. Automatically reversed the next time they sign back
+ * in (see users.reactivateSelf). Can't be used on an inherent admin.
+ */
+export const deactivateUser = mutation({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const callerId = await requireAdmin(ctx);
+    if (userId === callerId) throw new Error("You can't deactivate your own account.");
+    const target = await ctx.db.get(userId);
+    if (target && isAdminEmail(target.email)) {
+      throw new Error("This account is a designated team lead and can't be deactivated.");
+    }
+    const existing = await ctx.db
+      .query("deactivatedUsers")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .first();
+    if (!existing) {
+      await ctx.db.insert("deactivatedUsers", { userId, deactivatedAt: Date.now(), deactivatedBy: callerId });
+    }
+  },
+});
+
+/** Manually restore a deactivated user before they sign back in themselves. */
+export const reactivateUser = mutation({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    await requireAdmin(ctx);
+    const existing = await ctx.db
+      .query("deactivatedUsers")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .first();
+    if (existing) await ctx.db.delete(existing._id);
   },
 });

@@ -356,4 +356,28 @@ export default defineSchema({
     userId: v.id("users"),
   })
     .index("by_user", ["userId"]),
+
+  // ── Admin status label ───────────────────────────────────────────────────
+  // Free-text label admins can set to override the default admin-status
+  // wording shown in Manage Scouts (e.g. "Permanent team lead — always has
+  // admin access"). Seeded to "Temporary Admin" the first time a fresh
+  // temporary grant is created; editable after that.
+  adminLabels: defineTable({
+    userId: v.id("users"),
+    label:  v.string(),
+  })
+    .index("by_user", ["userId"]),
+
+  // ── Deactivated users (soft delete) ──────────────────────────────────────
+  // Admin-set: hides a user from Manage Scouts and every scout-picking
+  // process (schedule generation, pit assignment, etc. all source scouts
+  // from users.listUsers, which filters these out) without deleting their
+  // account or historical data. Cleared automatically the next time the user
+  // signs back in (see users.reactivateSelf, called from App.tsx on auth).
+  deactivatedUsers: defineTable({
+    userId:        v.id("users"),
+    deactivatedAt: v.number(),
+    deactivatedBy: v.id("users"),
+  })
+    .index("by_user", ["userId"]),
 });

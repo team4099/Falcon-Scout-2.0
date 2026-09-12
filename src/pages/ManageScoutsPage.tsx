@@ -29,7 +29,6 @@ import {
   CalendarCheck,
   Trash2,
   UserMinus,
-  UserPlus as UserPlusIcon,
   Eye,
   AlertTriangle,
   Ban,
@@ -769,15 +768,19 @@ function StatCard({
   value,
   sub,
   accent,
+  onClick,
 }: {
   icon: React.ElementType;
   label: string;
   value: string | number;
   sub: string;
   accent?: boolean;
+  onClick?: () => void;
 }) {
+  const Tag = onClick ? "button" : "div";
   return (
-    <div
+    <Tag
+      onClick={onClick}
       style={{
         background: accent ? "oklch(0.85 0.18 95 / 10%)" : "oklch(1 0 0 / 3%)",
         border: accent ? "1px solid oklch(0.85 0.18 95 / 35%)" : "1px solid oklch(1 0 0 / 8%)",
@@ -788,6 +791,9 @@ function StatCard({
         gap: 6,
         minWidth: 0,
         flex: 1,
+        textAlign: "left" as const,
+        cursor: onClick ? "pointer" : "default",
+        font: "inherit",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -819,6 +825,74 @@ function StatCard({
         {value}
       </div>
       <div style={{ fontSize: 11, color: "var(--muted-foreground)" }}>{sub}</div>
+    </Tag>
+  );
+}
+
+// ─── Report Ranking Modal ───────────────────────────────────────────────────────
+
+function ReportRankingModal({
+  ranking,
+  onClose,
+}: {
+  ranking: { user: User; count: number }[];
+  onClose: () => void;
+}) {
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 999,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        background: "oklch(0 0 0 / 70%)", backdropFilter: "blur(4px)", padding: 16,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(420px, 100%)", maxHeight: "80vh",
+          borderRadius: 16, background: "var(--card, #111)",
+          border: "1px solid oklch(0.85 0.18 95 / 30%)",
+          overflow: "hidden", display: "flex", flexDirection: "column",
+        }}
+      >
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8,
+          padding: "14px 18px", borderBottom: "1px solid oklch(1 0 0 / 8%)",
+          background: "oklch(0.85 0.18 95 / 8%)",
+        }}>
+          <Trophy size={16} style={{ color: "oklch(0.75 0.18 95)" }} />
+          <span style={{ fontWeight: 800, fontSize: 14, color: "oklch(0.75 0.18 95)" }}>Report Ranking</span>
+          <button
+            onClick={onClose}
+            style={{ marginLeft: "auto", border: "none", background: "transparent", cursor: "pointer", color: "var(--muted-foreground)", display: "flex" }}
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <ScrollArea style={{ flex: 1 }}>
+          <div style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: 4 }}>
+            {ranking.length === 0 && (
+              <div style={{ padding: "24px 12px", textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>No reports yet.</div>
+            )}
+            {ranking.map(({ user, count }, i) => (
+              <div key={user._id} style={{
+                display: "flex", alignItems: "center", gap: 10,
+                padding: "8px 10px", borderRadius: 10,
+                background: i === 0 && count > 0 ? "oklch(0.85 0.18 95 / 10%)" : "transparent",
+              }}>
+                <span style={{ width: 20, textAlign: "center", fontSize: 12, fontWeight: 800, color: "var(--muted-foreground)" }}>{i + 1}</span>
+                <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: count > 0 ? "var(--foreground)" : "var(--muted-foreground)" }}>{displayName(user)}</span>
+                <span style={{
+                  fontSize: 12, fontWeight: 800, padding: "2px 9px", borderRadius: 20,
+                  background: count > 0 ? "oklch(0.85 0.18 95 / 15%)" : "oklch(1 0 0 / 4%)",
+                  color: count > 0 ? "oklch(0.75 0.18 95)" : "var(--muted-foreground)",
+                }}>{count}</span>
+              </div>
+            ))}
+          </div>
+        </ScrollArea>
+      </div>
     </div>
   );
 }
@@ -829,6 +903,15 @@ export default function ManageScoutsPage() {
   const { isAdminMode } = useUIStore();
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [openSubmission, setOpenSubmission] = useState<Submission | null>(null);
+  const [showRanking, setShowRanking] = useState(false);
+  const [editingLabelFor, setEditingLabelFor] = useState<string | null>(null);
+  const [labelDraft, setLabelDraft] = useState("");
+  const [savingLabel, setSavingLabel] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [savingName, setSavingName] = useState(false);
+  const [deactivating, setDeactivating] = useState<string | null>(null);
+  const [showDeactivated, setShowDeactivated] = useState(false);
 
   const currentEvent = useCached(useQuery(api.events.getCurrentEvent), "current_event");
   const eventKey = currentEvent?.eventKey ?? "";
@@ -859,9 +942,9 @@ export default function ManageScoutsPage() {
   // admin state and the grant/revoke controls; everyone else gets [] back.
   const isInherentAdmin = useQuery(api.admin.isCurrentUserInherentAdmin);
   const adminStatuses = useQuery(api.admin.listAdminStatuses) as
-    | { userId: string; isInherentAdmin: boolean; tempAdminExpiresAt: number | null }[]
+    | { userId: string; isInherentAdmin: boolean; tempAdminExpiresAt: number | null; label: string | null }[]
     | undefined;
-  const adminStatusByUser: Record<string, { isInherentAdmin: boolean; tempAdminExpiresAt: number | null }> = {};
+  const adminStatusByUser: Record<string, { isInherentAdmin: boolean; tempAdminExpiresAt: number | null; label: string | null }> = {};
   for (const s of adminStatuses ?? []) adminStatusByUser[s.userId] = s;
 
   const driveTeamIds = useQuery(api.admin.listDriveTeamIds) as string[] | undefined;
@@ -876,6 +959,13 @@ export default function ManageScoutsPage() {
   const grantTemporaryAdmin  = useMutation(api.admin.grantTemporaryAdmin);
   const revokeTemporaryAdmin = useMutation(api.admin.revokeTemporaryAdmin);
   const setDriveTeamMember  = useAdminMutation(api.admin.setDriveTeamMember);
+  const setAdminLabel       = useAdminMutation(api.admin.setAdminLabel);
+  const setUserName         = useAdminMutation(api.users.setUserName);
+  const deactivateUser      = useAdminMutation(api.admin.deactivateUser);
+  const reactivateUser      = useAdminMutation(api.admin.reactivateUser);
+  const deactivatedUsers = useQuery(api.admin.listDeactivatedUsers) as
+    | { userId: string; deactivatedAt: number; user: User | null }[]
+    | undefined;
 
   // Saving state
   const [clearingSlot, setClearingSlot]   = useState<string | null>(null);
@@ -931,16 +1021,21 @@ export default function ManageScoutsPage() {
 
   const topScout = scoutsWithSubs[0] ?? null;
   const topCount = topScout ? (submissionsByScout[topScout._id]?.length ?? 0) : 0;
+  const reportRanking = [...(allUsers ?? [])]
+    .map(user => ({ user, count: submissionsByScout[user._id]?.length ?? 0 }))
+    .sort((a, b) => b.count - a.count);
 
   // Preferences map by scoutId
   const prefsById: Record<string, ScoutPreference> = {};
   for (const p of (allPreferences ?? [])) prefsById[p.scoutId] = p;
   const selectedPrefs = selectedUserId ? prefsById[selectedUserId] ?? null : null;
 
-  // Exit preference-edit mode whenever the selected scout changes
+  // Exit preference-edit / name-edit / label-edit mode whenever the selected scout changes
   useEffect(() => {
     setEditingPrefs(false);
     setPrefsDraft(null);
+    setEditingName(false);
+    setEditingLabelFor(null);
   }, [selectedUserId]);
 
   function startEditingPrefs() {
@@ -990,9 +1085,6 @@ export default function ManageScoutsPage() {
     : [];
   const scoutPitRotations: PitRotation[] = selectedUserId
     ? (allPitRotations ?? []).filter(r => r.scoutIds.includes(selectedUserId))
-    : [];
-  const otherPitRotations: PitRotation[] = selectedUserId
-    ? (allPitRotations ?? []).filter(r => !r.scoutIds.includes(selectedUserId))
     : [];
 
   // Handlers
@@ -1061,6 +1153,50 @@ export default function ManageScoutsPage() {
       toast.error(err instanceof Error ? err.message : "Couldn't revoke admin access.");
     } finally {
       setTogglingAdmin(false);
+    }
+  }
+
+  async function handleSaveName(userId: string) {
+    const trimmed = nameDraft.trim();
+    if (!trimmed) { toast.error("Name can't be empty."); return; }
+    setSavingName(true);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await setUserName({ userId: userId as any, name: trimmed });
+      setEditingName(false);
+      toast.success("Name updated.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't update name.");
+    } finally {
+      setSavingName(false);
+    }
+  }
+
+  async function handleDeactivateUser(userId: string, name: string) {
+    if (!window.confirm(`Deactivate ${name}? They'll be hidden from Manage Scouts and excluded from schedule generation until they sign in again.`)) return;
+    setDeactivating(userId);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await deactivateUser({ userId: userId as any });
+      toast.success(`${name} deactivated.`);
+      setSelectedUserId(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't deactivate user.");
+    } finally {
+      setDeactivating(null);
+    }
+  }
+
+  async function handleReactivateUser(userId: string, name: string) {
+    setDeactivating(userId);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await reactivateUser({ userId: userId as any });
+      toast.success(`${name} restored.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't restore user.");
+    } finally {
+      setDeactivating(null);
     }
   }
 
@@ -1236,6 +1372,7 @@ export default function ManageScoutsPage() {
               label="Top Scout"
               value={topScout ? displayName(topScout).split(" ")[0] : "—"}
               sub={topScout ? `${topCount} report${topCount !== 1 ? "s" : ""}` : "no reports yet"}
+              onClick={() => setShowRanking(true)}
             />
           </div>
 
@@ -1416,6 +1553,49 @@ export default function ManageScoutsPage() {
                     </>
                   )}
 
+                  {/* Deactivated (soft-deleted) users — restorable */}
+                  {(deactivatedUsers ?? []).length > 0 && (
+                    <>
+                      <Separator style={{ margin: "10px 4px" }} />
+                      <button
+                        onClick={() => setShowDeactivated(s => !s)}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 6, width: "100%",
+                          padding: "6px 4px 4px", marginBottom: 2, border: "none", background: "transparent", cursor: "pointer",
+                        }}
+                      >
+                        <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted-foreground)" }}>
+                          Deactivated
+                        </span>
+                        <div style={{ flex: 1, height: 1, background: "oklch(1 0 0 / 8%)", borderRadius: 999 }} />
+                        <span style={{ fontSize: 10, fontWeight: 700, color: "var(--muted-foreground)" }}>{deactivatedUsers!.length}</span>
+                        <ChevronRight size={12} style={{ color: "var(--muted-foreground)", transform: showDeactivated ? "rotate(90deg)" : "none" }} />
+                      </button>
+                      {showDeactivated && deactivatedUsers!.map(({ userId, user }) => (
+                        <div key={userId} style={{
+                          display: "flex", alignItems: "center", gap: 8,
+                          padding: "6px 8px", borderRadius: 9, opacity: 0.7,
+                        }}>
+                          <Avatar user={user ?? { _id: userId }} size={24} />
+                          <div style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, color: "var(--muted-foreground)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {user ? displayName(user) : "Unknown"}
+                          </div>
+                          <button
+                            onClick={() => handleReactivateUser(userId, user ? displayName(user) : "Scout")}
+                            disabled={deactivating === userId}
+                            style={{
+                              border: "none", background: "transparent", cursor: "pointer",
+                              padding: "3px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700,
+                              color: "oklch(0.6 0.18 180)",
+                            }}
+                          >
+                            Restore
+                          </button>
+                        </div>
+                      ))}
+                    </>
+                  )}
+
                   {/* No users at all */}
                   {(allUsers ?? []).length === 0 && (
                     <div
@@ -1485,18 +1665,51 @@ export default function ManageScoutsPage() {
 
                   <Avatar user={selectedUser} size={40} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontWeight: 700,
-                        fontSize: 15,
-                        color: "var(--foreground)",
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {displayName(selectedUser)}
-                    </div>
+                    {editingName ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <input
+                          autoFocus
+                          value={nameDraft}
+                          onChange={(e) => setNameDraft(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") handleSaveName(selectedUser._id); if (e.key === "Escape") setEditingName(false); }}
+                          style={{
+                            flex: 1, fontSize: 14, fontWeight: 700, padding: "3px 7px", borderRadius: 6,
+                            border: "1px solid oklch(0.85 0.18 95 / 40%)",
+                            background: "oklch(1 0 0 / 5%)", color: "var(--foreground)",
+                          }}
+                        />
+                        <button onClick={() => handleSaveName(selectedUser._id)} disabled={savingName} style={{ border: "none", background: "transparent", cursor: "pointer", color: "oklch(0.75 0.18 95)", display: "flex" }} title="Save">
+                          <Save size={14} />
+                        </button>
+                        <button onClick={() => setEditingName(false)} disabled={savingName} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted-foreground)", display: "flex" }} title="Cancel">
+                          <XCircle size={14} />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => { setEditingName(true); setNameDraft(displayName(selectedUser)); }}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 6, maxWidth: "100%",
+                          border: "none", background: "transparent", cursor: "pointer", padding: 0,
+                          font: "inherit", textAlign: "left",
+                        }}
+                        title="Edit name"
+                      >
+                        <div
+                          style={{
+                            fontWeight: 700,
+                            fontSize: 15,
+                            color: "var(--foreground)",
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                        >
+                          {displayName(selectedUser)}
+                        </div>
+                        <Pencil size={11} style={{ opacity: 0.5, flexShrink: 0 }} />
+                      </button>
+                    )}
                     {selectedUser.email && (
                       <div
                         style={{
@@ -1596,30 +1809,6 @@ export default function ManageScoutsPage() {
                 <ScrollArea style={{ flex: 1 }}>
                   <div style={{ padding: "14px 18px 20px", display: "flex", flexDirection: "column", gap: 8 }}>
 
-                    {/* ── Delete all reports (this scout) ── */}
-                    {selectedSubmissions.length > 0 && (
-                      <button
-                        onClick={handleDeleteScoutReports}
-                        disabled={deletingScoutReports}
-                        style={{
-                          display: "flex", alignItems: "center", gap: 8,
-                          padding: "9px 12px",
-                          borderRadius: 11,
-                          background: "oklch(0.55 0.18 30 / 8%)",
-                          border: "1px solid oklch(0.55 0.18 30 / 25%)",
-                          color: "oklch(0.72 0.18 30)",
-                          fontSize: 12.5, fontWeight: 700,
-                          cursor: deletingScoutReports ? "default" : "pointer",
-                          opacity: deletingScoutReports ? 0.6 : 1,
-                        }}
-                      >
-                        <Trash2 size={13} />
-                        {deletingScoutReports
-                          ? "Deleting…"
-                          : `Delete all ${selectedSubmissions.length} report${selectedSubmissions.length !== 1 ? "s" : ""}`}
-                      </button>
-                    )}
-
                     {/* ── Exclude from Schedule toggle ── */}
                     <div style={{
                       borderRadius: 13,
@@ -1705,6 +1894,62 @@ export default function ManageScoutsPage() {
                     {/* ── Admin Access ── (inherent admins only — czhao, yabdulkadir) */}
                     {isInherentAdmin && (() => {
                       const status = adminStatusByUser[selectedUser._id];
+                      const isEditingLabel = editingLabelFor === selectedUser._id;
+
+                      async function saveLabel() {
+                        setSavingLabel(true);
+                        try {
+                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                          await setAdminLabel({ userId: selectedUser!._id as any, label: labelDraft });
+                          setEditingLabelFor(null);
+                        } catch (err) {
+                          toast.error(err instanceof Error ? err.message : "Couldn't update label.");
+                        } finally {
+                          setSavingLabel(false);
+                        }
+                      }
+
+                      function LabelEditor({ fallback }: { fallback: string }) {
+                        if (isEditingLabel) {
+                          return (
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+                              <input
+                                autoFocus
+                                value={labelDraft}
+                                onChange={(e) => setLabelDraft(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === "Enter") saveLabel(); if (e.key === "Escape") setEditingLabelFor(null); }}
+                                placeholder={fallback}
+                                style={{
+                                  flex: 1, fontSize: 12, padding: "3px 7px", borderRadius: 6,
+                                  border: "1px solid oklch(0.85 0.18 95 / 40%)",
+                                  background: "oklch(1 0 0 / 5%)", color: "var(--foreground)",
+                                }}
+                              />
+                              <button onClick={saveLabel} disabled={savingLabel} style={{ border: "none", background: "transparent", cursor: "pointer", color: "oklch(0.75 0.18 95)", display: "flex" }} title="Save">
+                                <Save size={13} />
+                              </button>
+                              <button onClick={() => setEditingLabelFor(null)} disabled={savingLabel} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted-foreground)", display: "flex" }} title="Cancel">
+                                <XCircle size={13} />
+                              </button>
+                            </div>
+                          );
+                        }
+                        return (
+                          <button
+                            onClick={() => { setEditingLabelFor(selectedUser!._id); setLabelDraft(status?.label ?? fallback); }}
+                            style={{
+                              display: "flex", alignItems: "center", gap: 5, marginTop: 1,
+                              border: "none", background: "transparent", cursor: "pointer", padding: 0,
+                              color: "inherit", font: "inherit", textAlign: "left",
+                            }}
+                            title="Edit label"
+                          >
+                            <span>{status?.label ?? fallback}</span>
+                            <Pencil size={10} style={{ opacity: 0.6, flexShrink: 0 }} />
+                          </button>
+                        );
+                      }
+
                       if (status?.isInherentAdmin) {
                         return (
                           <div style={{
@@ -1715,8 +1960,8 @@ export default function ManageScoutsPage() {
                             marginBottom: 4,
                           }}>
                             <ShieldCheck size={16} style={{ color: "oklch(0.75 0.18 95)", flexShrink: 0 }} />
-                            <div style={{ fontSize: 12.5, fontWeight: 700, color: "oklch(0.75 0.18 95)" }}>
-                              Permanent team lead — always has admin access
+                            <div style={{ fontSize: 12.5, fontWeight: 700, color: "oklch(0.75 0.18 95)", flex: 1, minWidth: 0 }}>
+                              <LabelEditor fallback="Permanent team lead — always has admin access" />
                             </div>
                           </div>
                         );
@@ -1745,18 +1990,19 @@ export default function ManageScoutsPage() {
                                 fontSize: 13, fontWeight: 700,
                                 color: hasTempAdmin ? "oklch(0.75 0.18 95)" : "var(--foreground)",
                               }}>
-                                Admin Access
+                                {hasTempAdmin ? <LabelEditor fallback="Temporary Admin" /> : "Admin Access"}
                               </div>
-                              <div style={{ fontSize: 11, color: "var(--muted-foreground)", lineHeight: 1.4, marginTop: 1, display: "flex", alignItems: "center", gap: 4 }}>
-                                {hasTempAdmin ? (
-                                  <>
-                                    <Clock size={11} />
-                                    {formatRemaining(status!.tempAdminExpiresAt!)}
-                                  </>
-                                ) : (
-                                  "Grant 12 hours of admin access."
-                                )}
-                              </div>
+                              {hasTempAdmin && (
+                                <div style={{ fontSize: 11, color: "var(--muted-foreground)", lineHeight: 1.4, marginTop: 1, display: "flex", alignItems: "center", gap: 4 }}>
+                                  <Clock size={11} />
+                                  {formatRemaining(status!.tempAdminExpiresAt!)}
+                                </div>
+                              )}
+                              {!hasTempAdmin && (
+                                <div style={{ fontSize: 11, color: "var(--muted-foreground)", lineHeight: 1.4, marginTop: 1 }}>
+                                  Grant 12 hours of admin access.
+                                </div>
+                              )}
                             </div>
                             {hasTempAdmin ? (
                               <Button
@@ -2131,44 +2377,9 @@ export default function ManageScoutsPage() {
                             </button>
                           </div>
                         ))}
-                        {/* Rotations this scout is NOT in — add option */}
-                        {otherPitRotations.length > 0 && (
-                          <>
-                            {scoutPitRotations.length > 0 && (
-                              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: "0.07em", padding: "4px 2px 0" }}>Add to rotation</div>
-                            )}
-                            {otherPitRotations.map(rot => (
-                              <div key={rot._id} style={{
-                                display: "flex", alignItems: "center", gap: 8,
-                                padding: "6px 8px", borderRadius: 9,
-                                background: "oklch(1 0 0 / 3%)",
-                                border: "1px solid oklch(1 0 0 / 8%)",
-                                opacity: 0.75,
-                              }}>
-                                <WrenchIcon size={13} style={{ color: "var(--muted-foreground)", flexShrink: 0 }} />
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                  <div style={{ fontWeight: 600, fontSize: 12, color: "var(--muted-foreground)" }}>{rot.label ?? (rot.isElims ? "Elims Pit" : `Q${rot.startMatch}–Q${rot.endMatch}`)}</div>
-                                </div>
-                                <button
-                                  onClick={() => handleTogglePitRotation(rot, true)}
-                                  disabled={togglingRot === rot._id}
-                                  style={{
-                                    border: "none", background: "transparent", cursor: "pointer",
-                                    padding: "4px", borderRadius: 6, color: "oklch(0.6 0.18 180)",
-                                    display: "flex", alignItems: "center",
-                                    opacity: togglingRot === rot._id ? 0.4 : 1,
-                                  }}
-                                  title="Add to rotation"
-                                >
-                                  <UserPlusIcon size={13} />
-                                </button>
-                              </div>
-                            ))}
-                          </>
-                        )}
-                        {scoutPitRotations.length === 0 && otherPitRotations.length === 0 && (
+                        {scoutPitRotations.length === 0 && (
                           <div style={{ padding: "14px 8px", textAlign: "center", fontSize: 12, color: "var(--muted-foreground)" }}>
-                            No pit rotations created yet.
+                            Not assigned to any pit rotation.
                           </div>
                         )}
                       </div>
@@ -2213,6 +2424,54 @@ export default function ManageScoutsPage() {
                         <SubmissionCard key={sub._id} submission={sub} onOpen={() => setOpenSubmission(sub)} />
                       ))
                     )}
+
+                    {/* ── Delete all reports (this scout) — bottom of the panel ── */}
+                    {selectedSubmissions.length > 0 && (
+                      <button
+                        onClick={handleDeleteScoutReports}
+                        disabled={deletingScoutReports}
+                        style={{
+                          display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                          padding: "9px 12px",
+                          borderRadius: 11,
+                          background: "oklch(0.55 0.18 30 / 8%)",
+                          border: "1px solid oklch(0.55 0.18 30 / 25%)",
+                          color: "oklch(0.72 0.18 30)",
+                          fontSize: 12.5, fontWeight: 700,
+                          cursor: deletingScoutReports ? "default" : "pointer",
+                          opacity: deletingScoutReports ? 0.6 : 1,
+                          marginTop: 8,
+                        }}
+                      >
+                        <Trash2 size={13} />
+                        {deletingScoutReports
+                          ? "Deleting…"
+                          : `Delete all ${selectedSubmissions.length} report${selectedSubmissions.length !== 1 ? "s" : ""}`}
+                      </button>
+                    )}
+
+                    {/* ── Deactivate user (soft delete) — most destructive action, always last ── */}
+                    {!adminStatusByUser[selectedUser._id]?.isInherentAdmin && (
+                      <button
+                        onClick={() => handleDeactivateUser(selectedUser._id, displayName(selectedUser))}
+                        disabled={deactivating === selectedUser._id}
+                        style={{
+                          display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                          padding: "9px 12px",
+                          borderRadius: 11,
+                          background: "oklch(0.577 0.245 27 / 8%)",
+                          border: "1px solid oklch(0.577 0.245 27 / 30%)",
+                          color: "var(--destructive)",
+                          fontSize: 12.5, fontWeight: 700,
+                          cursor: deactivating === selectedUser._id ? "default" : "pointer",
+                          opacity: deactivating === selectedUser._id ? 0.6 : 1,
+                          marginTop: 8,
+                        }}
+                      >
+                        <Ban size={13} />
+                        {deactivating === selectedUser._id ? "Deactivating…" : "Deactivate User"}
+                      </button>
+                    )}
                   </div>
                 </ScrollArea>
               </div>
@@ -2239,6 +2498,10 @@ export default function ManageScoutsPage() {
             )}
           </div>
         </div>
+      )}
+
+      {showRanking && (
+        <ReportRankingModal ranking={reportRanking} onClose={() => setShowRanking(false)} />
       )}
 
       {/* Submission Detail Modal */}

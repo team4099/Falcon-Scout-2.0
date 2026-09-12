@@ -1,7 +1,7 @@
 import { query, mutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
-import { requireUser } from "./adminAuth";
+import { requireAdmin, requireUser } from "./adminAuth";
 
 export const viewer = query({
   args: {},
@@ -20,11 +20,52 @@ export const getUser = query({
   },
 });
 
+/**
+ * All users, minus anyone an admin has soft-deleted (see
+ * convex/admin.ts's deactivateUser). This is the single pool every
+ * scout-picking process (Manage Scouts, scheduling, pit assignment, ...)
+ * draws from, so filtering here is what makes deactivation apply everywhere.
+ */
 export const listUsers = query({
   args: {},
   handler: async (ctx) => {
     await requireUser(ctx);
-    return await ctx.db.query("users").collect();
+    const [users, deactivated] = await Promise.all([
+      ctx.db.query("users").collect(),
+      ctx.db.query("deactivatedUsers").collect(),
+    ]);
+    if (deactivated.length === 0) return users;
+    const deactivatedSet = new Set(deactivated.map((d) => d.userId));
+    return users.filter((u) => !deactivatedSet.has(u._id));
+  },
+});
+
+/** Rename a user. Admin-only. */
+export const setUserName = mutation({
+  args: { userId: v.id("users"), name: v.string() },
+  handler: async (ctx, { userId, name }) => {
+    await requireAdmin(ctx);
+    const trimmed = name.trim();
+    if (!trimmed) throw new Error("Name can't be empty.");
+    await ctx.db.patch(userId, { name: trimmed });
+  },
+});
+
+/**
+ * Called once per session by the client right after a successful sign-in
+ * (see App.tsx). Clears a soft-delete so a deactivated user who signs back
+ * in is immediately restored everywhere, per the "until they sign in again"
+ * rule — a no-op for everyone else.
+ */
+export const reactivateSelf = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await requireUser(ctx);
+    const existing = await ctx.db
+      .query("deactivatedUsers")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .first();
+    if (existing) await ctx.db.delete(existing._id);
   },
 });
 

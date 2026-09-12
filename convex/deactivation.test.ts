@@ -1,0 +1,119 @@
+/**
+ * Manage Scouts admin actions added alongside the drive-team feature:
+ * soft-deleting (deactivating) a user, renaming a user, and setting the
+ * admin-status label. Deactivation is the highest-stakes one — it must be
+ * admin-gated, hide the user everywhere users.listUsers is the source of
+ * truth, and self-heal the moment the user signs back in.
+ */
+import { convexTest } from "convex-test";
+import { describe, expect, test } from "vitest";
+import { api } from "./_generated/api";
+import schema from "./schema";
+
+const modules = import.meta.glob("./**/*.ts");
+
+async function realAdmin(t: ReturnType<typeof convexTest>) {
+  const chiefId = await t.run((ctx) =>
+    ctx.db.insert("users", { name: "Chief", email: "czhao@team4099.com" }),
+  );
+  return { chiefId, as: t.withIdentity({ subject: chiefId, issuer: "test", email: "czhao@team4099.com" }) };
+}
+
+describe("deactivateUser / reactivateUser", () => {
+  test("a non-admin cannot deactivate anyone", async () => {
+    const t = convexTest(schema, modules);
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
+    const otherId = await t.run((ctx) => ctx.db.insert("users", { name: "Other" }));
+    const scoutAs = t.withIdentity({ subject: scoutId, issuer: "test" });
+    await expect(
+      scoutAs.mutation(api.admin.deactivateUser, { userId: otherId }),
+    ).rejects.toThrow(/Admin access required/i);
+  });
+
+  test("deactivating a user hides them from listUsers; reactivating restores them", async () => {
+    const t = convexTest(schema, modules);
+    const { as: chiefAs } = await realAdmin(t);
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
+    const scoutAs = t.withIdentity({ subject: scoutId, issuer: "test" });
+
+    expect((await scoutAs.query(api.users.listUsers, {})).some((u) => u._id === scoutId)).toBe(true);
+
+    await chiefAs.mutation(api.admin.deactivateUser, { userId: scoutId });
+    expect((await chiefAs.query(api.users.listUsers, {})).some((u) => u._id === scoutId)).toBe(false);
+
+    await chiefAs.mutation(api.admin.reactivateUser, { userId: scoutId });
+    expect((await chiefAs.query(api.users.listUsers, {})).some((u) => u._id === scoutId)).toBe(true);
+  });
+
+  test("signing back in (reactivateSelf) clears a deactivation", async () => {
+    const t = convexTest(schema, modules);
+    const { as: chiefAs } = await realAdmin(t);
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
+    const scoutAs = t.withIdentity({ subject: scoutId, issuer: "test" });
+
+    await chiefAs.mutation(api.admin.deactivateUser, { userId: scoutId });
+    expect((await chiefAs.query(api.users.listUsers, {})).some((u) => u._id === scoutId)).toBe(false);
+
+    await scoutAs.mutation(api.users.reactivateSelf, {});
+    expect((await chiefAs.query(api.users.listUsers, {})).some((u) => u._id === scoutId)).toBe(true);
+  });
+
+  test("an inherent admin's account can't be deactivated", async () => {
+    const t = convexTest(schema, modules);
+    const { as: chiefAs } = await realAdmin(t);
+    const otherChiefId = await t.run((ctx) =>
+      ctx.db.insert("users", { name: "Yusuf", email: "yabdulkadir@team4099.com" }),
+    );
+    await expect(
+      chiefAs.mutation(api.admin.deactivateUser, { userId: otherChiefId }),
+    ).rejects.toThrow(/designated team lead/i);
+  });
+});
+
+describe("setUserName", () => {
+  test("a non-admin cannot rename anyone", async () => {
+    const t = convexTest(schema, modules);
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
+    const scoutAs = t.withIdentity({ subject: scoutId, issuer: "test" });
+    await expect(
+      scoutAs.mutation(api.users.setUserName, { userId: scoutId, name: "New Name" }),
+    ).rejects.toThrow(/Admin access required/i);
+  });
+
+  test("an admin can rename a scout", async () => {
+    const t = convexTest(schema, modules);
+    const { as: chiefAs } = await realAdmin(t);
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
+    await chiefAs.mutation(api.users.setUserName, { userId: scoutId, name: "Renamed Scout" });
+    const users = await chiefAs.query(api.users.listUsers, {});
+    expect(users.find((u) => u._id === scoutId)?.name).toBe("Renamed Scout");
+  });
+});
+
+describe("setAdminLabel", () => {
+  test("a non-admin cannot set a label", async () => {
+    const t = convexTest(schema, modules);
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
+    const scoutAs = t.withIdentity({ subject: scoutId, issuer: "test" });
+    await expect(
+      scoutAs.mutation(api.admin.setAdminLabel, { userId: scoutId, label: "Whatever" }),
+    ).rejects.toThrow(/Admin access required/i);
+  });
+
+  test("granting temporary admin seeds the label to 'Temporary Admin' only on a fresh grant", async () => {
+    const t = convexTest(schema, modules);
+    const { as: chiefAs } = await realAdmin(t);
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
+
+    await chiefAs.mutation(api.admin.grantTemporaryAdmin, { userId: scoutId });
+    let statuses = await chiefAs.query(api.admin.listAdminStatuses, {});
+    expect(statuses.find((s) => s.userId === scoutId)?.label).toBe("Temporary Admin");
+
+    // Custom label set by the admin ...
+    await chiefAs.mutation(api.admin.setAdminLabel, { userId: scoutId, label: "Pit Boss" });
+    // ... survives a renewal of the same active grant.
+    await chiefAs.mutation(api.admin.grantTemporaryAdmin, { userId: scoutId });
+    statuses = await chiefAs.query(api.admin.listAdminStatuses, {});
+    expect(statuses.find((s) => s.userId === scoutId)?.label).toBe("Pit Boss");
+  });
+});

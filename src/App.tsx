@@ -1,6 +1,6 @@
 import { Routes, Route, NavLink, Navigate, useNavigate, useLocation, Link } from "react-router";
 import { useTheme } from "next-themes";
-import { useQuery } from "convex/react";
+import { useQuery, useMutation } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import { useCached } from "@/hooks/useCached";
 import { useAuthActions, useConvexAuth } from "@convex-dev/auth/react";
@@ -560,11 +560,19 @@ export default function App() {
   const viewer = useQuery(api.users.viewer);
   const online = useOnlineStatus();
   const backendTimedOut = useElapsed(BACKEND_TIMEOUT_MS);
+  const reactivateSelf = useMutation(api.users.reactivateSelf);
 
   // Persist the viewer to localStorage whenever it arrives from Convex
   useEffect(() => {
     if (viewer) setCachedViewer(viewer as Record<string, unknown>);
   }, [viewer]);
+
+  // If an admin soft-deleted this account while they were away, signing
+  // back in restores them everywhere — fire once per fresh authenticated
+  // session. A no-op for everyone who was never deactivated.
+  useEffect(() => {
+    if (isAuthenticated) reactivateSelf({}).catch(() => {});
+  }, [isAuthenticated, reactivateSelf]);
 
   // Read the cached session once per mount rather than on every render.
   const offlineReady = useMemo(
