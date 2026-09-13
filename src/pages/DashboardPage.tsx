@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { useNavigate } from "react-router";
 import { useUIStore } from "@/store/uiStore";
 import { useQuery } from "convex/react";
 import { useAdminMutation } from "@/hooks/useAdminMutation";
@@ -22,14 +21,13 @@ import {
   fetchTBAEventMatches,
   fetchTBATeamAvatar,
   fetchTBATeamInfo,
-  fetchNexusTeamStatus,
   getCacheError,
   statboticsEventTeamsCacheKey,
 } from "@/lib/api";
-import type { TBAMatch, NexusTeamStatus } from "@/lib/api";
+import type { TBAMatch } from "@/lib/api";
 import { EMPTY_TEAM_EPA, parseEpaComponents, totalEpa } from "@/lib/epa";
 import type { TeamEpa } from "@/lib/epa";
-import { ExternalLink, Search, FileText, TrendingUp, TrendingDown, ClipboardList, Trash2, AlertTriangle, ChevronDown, ChevronUp, Clock, KeyRound, CalendarCheck, Radio, Users2, DollarSign, ArrowRight, Trophy, CalendarDays } from "lucide-react";
+import { ExternalLink, Search, FileText, TrendingUp, ClipboardList, Trash2, AlertTriangle, ChevronDown, ChevronUp, Clock, KeyRound, CalendarCheck, Trophy, CalendarDays } from "lucide-react";
 import { getTBAKey } from "@/lib/api";
 import TeamDetailPanel from "@/pages/TeamDetailPanel";
 import { useMutation } from "convex/react";
@@ -1099,7 +1097,7 @@ function MyScouting({
         const tb = b.match ? (matchTime(b.match) ?? 9e12) : 9e12;
         return ta - tb;
       })
-      .slice(0, 5);
+      .slice(0, 1);
   }, [assignments, matchData, nowMs]);
 
   const loading = assignmentsLive === undefined;
@@ -1111,27 +1109,20 @@ function MyScouting({
         <div className="h-6 w-6 rounded-md bg-primary/15 flex items-center justify-center">
           <CalendarCheck className="h-3.5 w-3.5 text-primary" />
         </div>
-        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">My Assignments</p>
-        {!loading && assignments.length > 0 && (
-          <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-primary/15 text-primary">
-            {upcoming.length} upcoming
-          </span>
-        )}
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Next Assignment</p>
       </div>
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1.5">
         {loading ? (
           <div className="space-y-1.5 p-1">
-            {[0,1,2].map((i) => (
-              <div key={i} className="flex items-center gap-2 px-2 py-2 rounded-lg">
-                <div className="h-7 w-7 rounded-md bg-muted animate-pulse shrink-0" />
-                <div className="space-y-1 flex-1">
-                  <div className="h-2.5 w-14 bg-muted rounded animate-pulse" />
-                  <div className="h-2 w-20 bg-muted rounded animate-pulse" />
-                </div>
+            <div className="flex items-center gap-2 px-2 py-2 rounded-lg">
+              <div className="h-7 w-7 rounded-md bg-muted animate-pulse shrink-0" />
+              <div className="space-y-1 flex-1">
+                <div className="h-2.5 w-14 bg-muted rounded animate-pulse" />
+                <div className="h-2 w-20 bg-muted rounded animate-pulse" />
               </div>
-            ))}
+            </div>
           </div>
         ) : upcoming.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full py-6 gap-2 text-center">
@@ -1190,240 +1181,6 @@ function MyScouting({
   );
 }
 
-// ── Next 3 Matches (event-wide, Nexus-powered) ─────────────────────────────────
-
-function NextThreeMatches({
-  eventKey,
-  matchData,
-  epaMap,
-  tbaRankings,
-  nowMs,
-}: {
-  eventKey: string;
-  matchData: TBAMatch[];
-  epaMap: Record<number, TeamEpa>;
-  tbaRankings: Record<number, Record<string, unknown>>;
-  nowMs: number;
-}) {
-  // Next 3 unplayed matches across the whole event
-  const next3 = useMemo(() => {
-    return matchData
-      .filter((m) => !isConsideredPlayed(m, nowMs))
-      .sort((a, b) => (matchTime(a) ?? 9e12) - (matchTime(b) ?? 9e12))
-      .slice(0, 3);
-  }, [matchData, nowMs]);
-
-  // Poll Nexus for each unique team in the next 3 matches
-  const allTeamNums = useMemo(() => {
-    const nums = new Set<number>();
-    for (const m of next3) {
-      for (const tk of [...m.alliances.red.team_keys, ...m.alliances.blue.team_keys]) {
-        nums.add(Number(tk.replace("frc", "")));
-      }
-    }
-    return [...nums];
-  }, [next3]);
-
-  const [nexusMap, setNexusMap] = useState<Record<number, NexusTeamStatus | null>>({});
-
-  useEffect(() => {
-    if (!eventKey || allTeamNums.length === 0) return;
-    let cancelled = false;
-
-    async function pollAll() {
-      const results = await Promise.all(
-        allTeamNums.map((tn) =>
-          fetchNexusTeamStatus(eventKey, tn).then((s) => ({ tn, s }))
-        )
-      );
-      if (cancelled) return;
-      const map: Record<number, NexusTeamStatus | null> = {};
-      for (const { tn, s } of results) map[tn] = s;
-      setNexusMap(map);
-    }
-
-    pollAll();
-    const id = setInterval(pollAll, 30_000);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [eventKey, allTeamNums.join(",")]);
-
-  function rank(tn: number) {
-    const r = tbaRankings[tn];
-    return r ? (r as { rank: number }).rank : null;
-  }
-
-  // Loading skeleton — matchData not yet fetched
-  const isLoading = matchData.length === 0;
-
-  return (
-    <div className="shrink-0 space-y-2">
-      <div className="flex items-center gap-1.5">
-        <Radio className="h-3.5 w-3.5 text-primary" />
-        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Next Matches On Field</p>
-      </div>
-
-      {isLoading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="rounded-xl border border-border bg-card p-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="h-3.5 w-10 bg-muted rounded animate-pulse" />
-                <div className="h-3 w-12 bg-muted rounded animate-pulse" />
-              </div>
-              <div className="space-y-1.5">
-                <div className="h-5 bg-muted/60 rounded animate-pulse" />
-                <div className="h-5 bg-muted/40 rounded animate-pulse" />
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : next3.length === 0 ? (
-        <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl border border-border bg-card text-muted-foreground">
-          <Radio className="h-4 w-4 shrink-0 opacity-40" />
-          <p className="text-xs">No upcoming matches — all done or schedule not yet loaded.</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          {next3.map((match, idx) => {
-            const t = matchTime(match);
-            const ms = t ? t * 1000 - nowMs : null;
-            const isFirst = idx === 0;
-            const timeStr = t
-              ? new Date(t * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-              : null;
-
-            return (
-              <div
-                key={match.key}
-                className={`rounded-xl border p-3 flex flex-col gap-2 ${
-                  isFirst
-                    ? "border-primary/40 bg-primary/5"
-                    : "border-border bg-card"
-                }`}
-              >
-                {/* Header row */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5">
-                    {isFirst && <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />}
-                    <p className="text-sm font-bold font-mono tracking-tight">{matchLabel(match)}</p>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    {isFirst && (
-                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-primary/20 text-primary border border-primary/30">NEXT</span>
-                    )}
-                    {timeStr && (
-                      <span className="text-[10px] text-muted-foreground font-mono">{timeStr}</span>
-                    )}
-                    {ms !== null && ms > 0 && (
-                      <span className={`text-[10px] font-mono tabular-nums ${
-                        ms < 5 * 60_000 ? "text-red-400 font-bold" : "text-muted-foreground"
-                      }`}>
-                        {formatCountdown(ms)}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Alliances */}
-                {(["red", "blue"] as const).map((side) => (
-                  <div key={side} className="flex items-center gap-1.5">
-                    <span className={`text-[9px] font-bold uppercase tracking-widest w-5 shrink-0 ${
-                      side === "red" ? "text-red-400" : "text-blue-400"
-                    }`}>
-                      {side === "red" ? "R" : "B"}
-                    </span>
-                    <div className="flex gap-1 flex-wrap">
-                      {match.alliances[side].team_keys.map((tk) => {
-                        const tn = Number(tk.replace("frc", ""));
-                        const nx = nexusMap[tn];
-                        const r = rank(tn);
-                        const epa = epaMap[tn]?.event ?? null;
-                        const isUs = tn === MY_TEAM;
-                        const nxStatus = nx?.status?.toLowerCase() ?? "";
-                        const onField = nxStatus.includes("onfield") || nxStatus.includes("field");
-                        const onDeck = nxStatus.includes("ondeck") || nxStatus.includes("deck");
-                        const queuing = nxStatus.includes("queu");
-
-                        return (
-                          <div
-                            key={tk}
-                            className={`flex flex-col items-center px-1.5 py-0.5 rounded-lg border min-w-[52px] relative ${
-                              isUs
-                                ? side === "red"
-                                  ? "bg-red-500/15 border-red-400/50 ring-1 ring-red-400/50"
-                                  : "bg-blue-500/15 border-blue-400/50 ring-1 ring-blue-400/50"
-                                : side === "red"
-                                  ? "bg-red-500/5 border-red-500/20"
-                                  : "bg-blue-500/5 border-blue-500/20"
-                            }`}
-                          >
-                            {r && <span className="text-[8px] text-muted-foreground">#{r}</span>}
-                            <span className={`text-[11px] font-bold leading-tight ${
-                              isUs ? "text-foreground" : "text-foreground/80"
-                            }`}>
-                              {tn}{isUs && <span className="text-yellow-400"> ★</span>}
-                            </span>
-                            {epa !== null && (
-                              <span className="text-[8px] text-muted-foreground font-mono">{epa.toFixed(0)}</span>
-                            )}
-                            {(onField || onDeck || queuing) && (
-                              <span className={`absolute -top-1 -right-1 h-2 w-2 rounded-full border border-background ${
-                                onField ? "bg-green-400 animate-pulse" :
-                                onDeck  ? "bg-yellow-400" :
-                                          "bg-primary"
-                              }`} />
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                    {match.alliances[side].score >= 0 && (
-                      <span className="ml-auto text-sm font-bold tabular-nums">
-                        {match.alliances[side].score}
-                      </span>
-                    )}
-                  </div>
-                ))}
-
-                {match.alliances.red.team_keys.concat(match.alliances.blue.team_keys).some((tk) => {
-                  const s = nexusMap[Number(tk.replace("frc", ""))]?.status?.toLowerCase() ?? "";
-                  return s.includes("onfield") || s.includes("field") || s.includes("deck") || s.includes("queu");
-                }) && (
-                  <div className="flex items-center gap-1 pt-1 border-t border-border">
-                    <Users2 className="h-3 w-3 text-muted-foreground" />
-                    <div className="flex gap-1 flex-wrap">
-                      {match.alliances.red.team_keys.concat(match.alliances.blue.team_keys).map((tk) => {
-                        const tn = Number(tk.replace("frc", ""));
-                        const nx = nexusMap[tn];
-                        if (!nx) return null;
-                        const s = nx.status.toLowerCase();
-                        if (s.includes("noshow") || s === "" || s.includes("post") || s.includes("scoring")) return null;
-                        return (
-                          <span key={tk} className="text-[9px] font-semibold">
-                            {tn}:{" "}
-                            <span className={`${
-                              s.includes("onfield") || s.includes("field") ? "text-green-400" :
-                              s.includes("deck")   ? "text-yellow-400" :
-                                                     "text-primary"
-                            }`}>
-                              {s.includes("onfield") || s.includes("field") ? "Field" :
-                               s.includes("deck")   ? "Deck" : "Q"}
-                            </span>
-                          </span>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ── TBA Key Warning Banner ─────────────────────────────────────────────────────
 
 function TbaKeyWarningBanner() {
@@ -1471,109 +1228,6 @@ function TbaKeyWarningBanner() {
       >
         ×
       </button>
-    </div>
-  );
-}
-
-// ── Falcon Bets Widget ──────────────────────────────────────────────────────
-
-function formatCoinsShort(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
-
-function FalconBetsWidget({ eventKey }: { eventKey: string }) {
-  const navigate = useNavigate();
-  // useCached so the widget still renders from localStorage when offline
-  const balance = useCached(useQuery(api.betting.getMyBalance, { eventKey }), `bet_balance_${eventKey}`);
-  const markets = useCached(useQuery(api.betting.listMarkets, { eventKey }), `bet_markets_${eventKey}`);
-  const myBets  = useCached(useQuery(api.betting.listMyBets,  { eventKey }), `bet_mybets_${eventKey}`);
-
-  const openMarkets = (markets ?? []).filter((m) => m.status === "open");
-  const pendingBets = (myBets ?? []).filter((b) => !b.settled);
-  const settledBets = (myBets ?? []).filter((b) => b.settled);
-  const netPnL = balance
-    ? (balance.totalWon ?? 0) - (balance.totalLost ?? 0)
-    : 0;
-
-  // Find the hottest open market (most total wagered)
-  const hotMarket = openMarkets.length > 0
-    ? openMarkets.reduce((best, m) => {
-        const mTotal = m.options.reduce((s: number, o: { seedPool: number }) => s + o.seedPool, 0);
-        const bTotal = best.options.reduce((s: number, o: { seedPool: number }) => s + o.seedPool, 0);
-        return mTotal > bTotal ? m : best;
-      })
-    : null;
-
-  return (
-    <div
-      className="group rounded-xl border border-border bg-card p-3 cursor-pointer h-full flex flex-col"
-      onClick={() => navigate("/betting")}
-    >
-      <div className="flex flex-col flex-1">
-        {/* Header */}
-        <div className="flex items-center gap-2 pb-2 border-b border-border mb-2">
-          <div className="h-6 w-6 rounded-md bg-primary/15 flex items-center justify-center">
-            <DollarSign className="h-3.5 w-3.5 text-primary" />
-          </div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">FalconBet</p>
-          <div className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground font-semibold opacity-0 group-hover:opacity-100 transition-opacity">
-            Open
-            <ArrowRight className="h-3 w-3" />
-          </div>
-        </div>
-
-        {/* Stats 2×2 grid */}
-        <div className="grid grid-cols-2 gap-1.5 flex-1">
-          <div className="rounded-lg bg-muted/50 border border-border/50 px-2 py-1.5 text-center">
-            <p className="text-[9px] text-muted-foreground font-medium uppercase tracking-wider">Balance</p>
-            <p className="text-base font-black text-primary font-mono tabular-nums">
-              {balance ? formatCoinsShort(balance.balance) : "…"}
-            </p>
-          </div>
-          <div className="rounded-lg bg-muted/50 border border-border/50 px-2 py-1.5 text-center">
-            <p className="text-[9px] text-muted-foreground font-medium uppercase tracking-wider">Net P&L</p>
-            <p className={`text-base font-black font-mono tabular-nums ${
-              netPnL > 0 ? "text-amber-400" : netPnL < 0 ? "text-red-400" : "text-muted-foreground"
-            }`}>
-              {netPnL > 0 ? "+" : ""}{formatCoinsShort(netPnL)}
-            </p>
-          </div>
-          <div className="rounded-lg bg-muted/50 border border-border/50 px-2 py-1.5 text-center">
-            <p className="text-[9px] text-muted-foreground font-medium uppercase tracking-wider">Open</p>
-            <p className="text-base font-black text-foreground font-mono tabular-nums">
-              {openMarkets.length}
-            </p>
-          </div>
-          <div className="rounded-lg bg-muted/50 border border-border/50 px-2 py-1.5 text-center">
-            <p className="text-[9px] text-muted-foreground font-medium uppercase tracking-wider">Pending</p>
-            <p className="text-base font-black text-primary font-mono tabular-nums">
-              {pendingBets.length}
-            </p>
-          </div>
-        </div>
-
-        {/* Hot market preview */}
-        {hotMarket && (
-          <div className="mt-2 rounded-lg bg-muted/30 border border-border/50 px-2 py-1.5 flex items-center gap-1.5">
-            <span className="text-[9px] font-bold uppercase tracking-wider text-primary shrink-0">Hot</span>
-            <p className="text-[11px] text-foreground/80 truncate flex-1">{hotMarket.title}</p>
-          </div>
-        )}
-
-        {/* Bottom stats */}
-        {balance && (settledBets.length > 0 || (balance.totalBegs ?? 0) > 0) && (
-          <div className="flex gap-3 mt-1.5 text-[9px] text-muted-foreground flex-wrap">
-            <span className="flex items-center gap-1">
-              <TrendingUp className="h-2.5 w-2.5 text-amber-400" /> Won: {formatCoinsShort(balance.totalWon ?? 0)}
-            </span>
-            <span className="flex items-center gap-1">
-              <TrendingDown className="h-2.5 w-2.5 text-red-400" /> Lost: {formatCoinsShort(balance.totalLost ?? 0)}
-            </span>
-          </div>
-        )}
-      </div>
     </div>
   );
 }
@@ -1975,9 +1629,17 @@ export default function DashboardPage() {
         </div>
       ) : (
         <>
-          {/* ── Bento top row: Next Match (2/3) + My Assignments sidebar (1/3) ── */}
+          {/* ── Bento top row: Next Assignment (1/3) + Next Match on field (2/3) ── */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 shrink-0 items-stretch">
-            {/* Next match banner — spans 2 cols on desktop, stretches full height */}
+            {/* Next scouting assignment — single upcoming row */}
+            <div className="lg:col-span-1 min-h-[100px]">
+              <MyScouting
+                eventKey={eventKey}
+                matchData={matchData}
+                nowMs={nowMs}
+              />
+            </div>
+            {/* Next 4099 match on field — spans 2 cols on desktop, stretches full height */}
             <div className="lg:col-span-2 flex flex-col">
               <NextMatchBanner
                 match={nextMatch}
@@ -1987,30 +1649,6 @@ export default function DashboardPage() {
                 epaMap={epaMap}
                 tbaRankings={tbaRankings}
               />
-            </div>
-            {/* My scouting assignments sidebar */}
-            <div className="lg:col-span-1 min-h-[160px] max-h-[260px] lg:max-h-none">
-              <MyScouting
-                eventKey={eventKey}
-                matchData={matchData}
-                nowMs={nowMs}
-              />
-            </div>
-          </div>
-
-          {/* ── Next 3 event matches + Falcon Bets side-by-side ── */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 shrink-0 items-stretch">
-            <div className="lg:col-span-2">
-              <NextThreeMatches
-                eventKey={eventKey}
-                matchData={matchData}
-                epaMap={epaMap}
-                tbaRankings={tbaRankings}
-                nowMs={nowMs}
-              />
-            </div>
-            <div className="lg:col-span-1">
-              <FalconBetsWidget eventKey={eventKey} />
             </div>
           </div>
 
