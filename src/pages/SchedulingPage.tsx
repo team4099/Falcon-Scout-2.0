@@ -826,7 +826,7 @@ interface CycleRowProps {
 }
 
 function CycleRow({
-  cycleMatches, cycleNumber, assignMap, pinnedId, onCycleClick, saving, readOnly,
+  cycleMatches, assignMap, pinnedId, onCycleClick, saving, readOnly,
   COL, cellPad, cellMinH, cellFontSize, isLandscapePhone,
 }: CycleRowProps) {
   const first = cycleMatches[0];
@@ -838,13 +838,9 @@ function CycleRow({
     <Fragment>
       <div
         aria-hidden
-        style={{ display: "flex", alignItems: "center", gap: 8, margin: "5px 0 3px", userSelect: "none" }}
+        style={{ margin: "5px 0 3px" }}
       >
-        <div style={{ flex: 1, height: 2, borderRadius: 2, background: G_MED }} />
-        <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: MUTED, whiteSpace: "nowrap" }}>
-          Cycle {cycleNumber}
-        </span>
-        <div style={{ flex: 1, height: 2, borderRadius: 2, background: G_MED }} />
+        <div style={{ height: 2, borderRadius: 2, background: G_MED }} />
       </div>
       <div style={{ display: "grid", gridTemplateColumns: COL, gap: 0, alignItems: "center", borderRadius: 8 }}>
         <div style={{
@@ -2328,7 +2324,7 @@ export default function SchedulingPage() {
 
   const totalSlots  = matches.length * 6;
   const filledSlots = (allAssignments ?? []).length;
-  const pct = totalSlots > 0 ? Math.round((filledSlots / totalSlots) * 100) : 0;
+  const pct = totalSlots > 0 ? Math.min(100, Math.round((filledSlots / totalSlots) * 100)) : 0;
 
   return (
     <>

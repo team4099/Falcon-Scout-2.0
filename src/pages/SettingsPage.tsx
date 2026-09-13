@@ -446,17 +446,15 @@ export default function SettingsPage() {
         <Separator />
 
         <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium">Clear data cache</p>
-            <p className="text-xs text-muted-foreground">
-              Forces team lists, rankings and match data to refresh on next load.
-              Your scouting data and anything waiting to sync is kept.
-            </p>
-          </div>
+          <p className="text-sm font-medium">Clear data cache</p>
           <Button variant="outline" size="sm" onClick={() => setClearCacheConfirm(true)}>
             Clear Cache
           </Button>
         </div>
+        <p className="text-xs text-muted-foreground -mt-2">
+          Forces team lists, rankings and match data to refresh on next load.
+          Your scouting data and anything waiting to sync is kept.
+        </p>
 
         <AlertDialog open={clearCacheConfirm} onOpenChange={setClearCacheConfirm}>
           <AlertDialogContent>
