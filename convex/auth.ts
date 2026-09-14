@@ -42,6 +42,21 @@ const devProviders =
             isAnonymous: true as const,
           }),
         }),
+        // Second dev-only provider so admin-only screens (Form Builder, Manage
+        // Scouts, Scheduling edit mode, resolving bets) are reachable on
+        // localhost without a real @team4099.com Google account. The email
+        // here is only treated as admin-eligible when ALLOW_DEV_LOGIN is set
+        // (see DEV_ADMIN_EMAIL in convex/adminAuth.ts) — same gate as this
+        // whole provider, so it's a no-op on any deployment that didn't
+        // explicitly opt in.
+        Anonymous({
+          id: "dev-admin",
+          profile: () => ({
+            name: "Dev Admin",
+            email: "devadmin@team4099.com",
+            isAnonymous: true as const,
+          }),
+        }),
       ]
     : [];
 

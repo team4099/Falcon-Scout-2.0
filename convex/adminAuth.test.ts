@@ -215,6 +215,34 @@ describe("temporary admin grants", () => {
   });
 });
 
+describe("dev admin login (localhost bypass)", () => {
+  const devAdmin = { subject: "devadmin|1", issuer: "test", email: "devadmin@team4099.com" };
+
+  test("devadmin@team4099.com is NOT admin-eligible when ALLOW_DEV_LOGIN is unset", async () => {
+    const t = convexTest(schema, modules);
+    expect(await t.withIdentity(devAdmin).query(api.admin.isCurrentUserAdmin, {})).toBe(false);
+    await expect(
+      t.withIdentity(devAdmin).mutation(api.events.setCurrentEvent, { eventKey: "e", eventName: "E" }),
+    ).rejects.toThrow(/Admin access required/i);
+  });
+
+  test("devadmin@team4099.com is admin-eligible when ALLOW_DEV_LOGIN=true (matches the dev-only anonymous provider gate in convex/auth.ts)", async () => {
+    const original = process.env.ALLOW_DEV_LOGIN;
+    process.env.ALLOW_DEV_LOGIN = "true";
+    try {
+      const t = convexTest(schema, modules);
+      expect(await t.withIdentity(devAdmin).query(api.admin.isCurrentUserAdmin, {})).toBe(true);
+      await t.withIdentity(devAdmin).mutation(api.events.setCurrentEvent, {
+        eventKey: "2025devtest",
+        eventName: "Dev Admin Test",
+      });
+    } finally {
+      if (original === undefined) delete process.env.ALLOW_DEV_LOGIN;
+      else process.env.ALLOW_DEV_LOGIN = original;
+    }
+  });
+});
+
 describe("scout-level mutations stay usable by non-admins", () => {
   test("a signed-in scout can submit a form and move a picklist card", async () => {
     const t = convexTest(schema, modules);

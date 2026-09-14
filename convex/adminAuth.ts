@@ -30,11 +30,25 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
  */
 const ADMIN_EMAILS = new Set(["czhao@team4099.com", "yabdulkadir@team4099.com"]);
 
+/**
+ * The email stamped on the "Dev login (Admin)" anonymous account in
+ * convex/auth.ts, so devs can exercise admin-only screens on localhost
+ * without a real @team4099.com Google account. Only counts as an admin when
+ * ALLOW_DEV_LOGIN is set, which per convex/auth.ts should only ever be true
+ * on a local `convex dev` deployment — never on the production deployment
+ * Vercel talks to — so this grants nothing on a real deployment even if the
+ * email somehow ended up there.
+ */
+const DEV_ADMIN_EMAIL = "devadmin@team4099.com";
+
 /** How long a temporary admin grant lasts before it must be renewed. */
 export const TEMP_ADMIN_DURATION_MS = 12 * 60 * 60 * 1000;
 
 export function isAdminEmail(email: string | null | undefined): boolean {
-  return !!email && ADMIN_EMAILS.has(email.trim().toLowerCase());
+  if (!email) return false;
+  const normalized = email.trim().toLowerCase();
+  if (ADMIN_EMAILS.has(normalized)) return true;
+  return normalized === DEV_ADMIN_EMAIL && process.env.ALLOW_DEV_LOGIN === "true";
 }
 
 /** Whether `userId` currently holds an unexpired temporary admin grant. */
