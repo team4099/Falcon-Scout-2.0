@@ -7,14 +7,13 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import {
   BarChart2, ScatterChart as ScatterIcon, TrendingUp,
-  Hexagon, BarChart, Plus, X, Activity, ChevronDown, ChevronUp,
+  Plus, X, Activity, ChevronDown, ChevronUp,
 } from "lucide-react";
 import {
   BarChart as ReBarChart, Bar,
   ScatterChart as ReScatterChart, Scatter,
   LineChart, Line,
-  RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell,
 } from "recharts";
 import { fetchStatboticsEventTeams, fetchStatboticsEventTeamMatches, fetchTBAEventTeams } from "@/lib/api";
@@ -40,7 +39,7 @@ function useIsMobile(breakpoint = 640) {
 
 interface FormField { id: string; type: string; label: string; }
 interface Submission { _id: string; teamNumber: number; matchNumber: number; compLevel?: "qm" | "elim"; data: string; }
-type ChartType = "bar" | "scatter" | "line" | "radar" | "histogram" | "boxplot";
+type ChartType = "bar" | "scatter" | "line" | "boxplot";
 
 interface AxisOpt { id: string; label: string; group: "scouting" | "epa" | "match"; }
 interface ChartCfg {
@@ -54,8 +53,6 @@ const CHART_DEFS: { type: ChartType; label: string; icon: React.ElementType; des
   { type: "bar",       label: "Bar",       icon: BarChart2,    desc: "Avg per team" },
   { type: "scatter",   label: "Scatter",   icon: ScatterIcon,  desc: "A vs B per match" },
   { type: "line",      label: "Line",      icon: TrendingUp,   desc: "Trend over matches" },
-  { type: "radar",     label: "Radar",     icon: Hexagon,      desc: "Multi-metric spider" },
-  { type: "histogram", label: "Histogram", icon: BarChart,     desc: "Value distribution" },
   { type: "boxplot",   label: "Box Plot",  icon: Activity,     desc: "Spread per team" },
 ];
 
@@ -78,7 +75,11 @@ const clr = (i: number) => COLORS[i % COLORS.length];
 // ─────────────────────────────── Data helpers ─────────────────────────────────
 
 function getNum(row: Record<string, unknown>, key: string): number | null {
-  const v = row[key];
+  // "_match" is a display label (e.g. "Q5", "SF2M1") on scouting rows, with the
+  // actual match number kept separately in "_matchNum". Statbotics-sourced rows
+  // (matchEpaRows) have no "_matchNum" and store the raw number directly in
+  // "_match", so fall back to that when "_matchNum" isn't present.
+  const v = key === "_match" && row["_matchNum"] !== undefined ? row["_matchNum"] : row[key];
   if (typeof v === "number" && isFinite(v)) return v;
   if (typeof v === "string" && v !== "") { const n = Number(v); if (isFinite(n)) return n; }
   return null;
@@ -186,34 +187,6 @@ function buildTeamRows(
   });
 }
 
-// Radar-specific tooltip — shows the actual raw average, not the 0–100 normalised value
-function RadarTip({ active, payload, label }: {
-  active?: boolean;
-  payload?: { name: string; color: string; payload: Record<string, unknown> }[];
-  label?: string;
-}) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="rounded-lg border border-border bg-popover text-popover-foreground px-3 py-2 shadow-xl text-xs space-y-1">
-      {label && <p className="font-semibold">{label}</p>}
-      {payload.map((p, i) => {
-        const rawKey = `__raw_${p.name}`;
-        const rawVal = p.payload[rawKey];
-        const display = typeof rawVal === "number"
-          ? (Number.isInteger(rawVal) ? String(rawVal) : rawVal.toFixed(2))
-          : "N/A";
-        return (
-          <div key={i} className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full shrink-0" style={{ background: p.color }} />
-            <span className="text-muted-foreground">Team #{p.name}:</span>
-            <span className="font-mono font-semibold">{display}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 // ─────────────────────────────── Chart renderers ──────────────────────────────
 
 // Chart chrome inherits `color` from the chart container (see ChartInner's
@@ -225,12 +198,13 @@ const AXIS_LINE  = { stroke: "currentColor", opacity: 0.35 };
 const MARGIN = { top: 12, right: 16, left: 4, bottom: 56 };
 
 // Bottom-axis tick: dy=10 pushes label clearly below the tick line
-function AxisTickX({ x, y, payload, textAnchor }: {
-  x?: number; y?: number; payload?: { value: unknown }; textAnchor?: string;
+function AxisTickX({ x, y, payload, textAnchor, angle }: {
+  x?: number; y?: number; payload?: { value: unknown }; textAnchor?: string; angle?: number;
 }) {
   return (
     <text x={x} y={y} textAnchor={(textAnchor ?? "middle") as "inherit" | "start" | "end" | "middle"}
-      style={{ fill: "currentColor", fontSize: 11, opacity: 0.75 }} dy={10}>
+      style={{ fill: "currentColor", fontSize: 11, opacity: 0.75 }} dy={10}
+      transform={angle ? `rotate(${angle} ${x} ${y})` : undefined}>
       {String(payload?.value ?? "")}
     </text>
   );
@@ -253,12 +227,22 @@ function AxisTickY({ x, y, payload, textAnchor }: {
 const EPA_IDS = new Set(["epa_total","epa_auto","epa_teleop","epa_endgame"]);
 function isEpaAxis(id: string) { return EPA_IDS.has(id); }
 
-function ChartInner({ cfg, rows, teamRows, matchEpaRows, fields, axes }: {
+// Above this many overlaid lines, a line chart turns into unreadable "spaghetti" —
+// nudge the user toward the team filter instead of silently rendering a mess.
+const LINE_SPAGHETTI_THRESHOLD = 8;
+function TooManyLinesHint({ count }: { count: number }) {
+  return (
+    <div className="absolute top-1 right-1 z-10 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-600 dark:text-amber-400">
+      {count} teams shown — click <strong>Edit</strong> to filter for a clearer view
+    </div>
+  );
+}
+
+function ChartInner({ cfg, rows, teamRows, matchEpaRows, axes }: {
   cfg: ChartCfg;
   rows: Record<string, unknown>[];          // one row per scouting submission
   teamRows: Record<string, unknown>[];       // one row per team (EPA + avg scouting)
   matchEpaRows: Record<string, unknown>[];   // one row per (team, match) with per-match EPA
-  fields: FormField[];
   axes: AxisOpt[];
 }) {
   // Normalise cfgTeamFilter: old persisted charts may not have a teams field
@@ -272,8 +256,7 @@ function ChartInner({ cfg, rows, teamRows, matchEpaRows, fields, axes }: {
     ? source.filter((r) => cfgTeamFilter.includes(r._team as number))
     : source;
 
-  // Radar reads teamRows directly, so we allow it through even with no scouting submissions
-  if (!filtered.length && cfg.type !== "radar") {
+  if (!filtered.length) {
     return <Empty msg={useTeamRows ? "No Statbotics data for this event" : "No scouting submissions yet"} />;
   }
 
@@ -431,35 +414,38 @@ function ChartInner({ cfg, rows, teamRows, matchEpaRows, fields, axes }: {
             return pt;
           });
           return (
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={data} margin={MARGIN}>
-                <CartesianGrid {...GRID_PROPS} />
-                <XAxis dataKey="x" tick={<AxisTickX />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
-                  label={{ value: xLabel, position: "insideBottom", offset: -36, fill: "currentColor", fontSize: 11 }} />
-                <YAxis tick={<AxisTickY />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
-                  label={{ value: yLabel, angle: -90, position: "insideLeft", fill: "currentColor", fontSize: 11 }} />
-                <Tooltip content={({ active, payload, label: xVal }) => {
-                  if (!active || !payload?.length) return null;
-                  const entries = payload.filter((p) => p.value !== undefined && p.value !== null);
-                  return (
-                    <div className="rounded-lg border border-border bg-popover px-3 py-2 shadow-xl text-xs space-y-1">
-                      <p className="font-bold">Match {xVal}</p>
-                      {entries.map((p, i) => (
-                        <div key={i} className="flex items-center gap-2">
-                          <span className="h-2 w-2 rounded-full shrink-0" style={{ background: p.color }} />
-                          <span className="text-muted-foreground">#{p.name}:</span>
-                          <span className="font-mono font-semibold">{typeof p.value === "number" ? p.value.toFixed(2) : p.value}</span>
-                        </div>
-                      ))}
-                    </div>
-                  );
-                }} />
-                {filteredTeams.map((t, i) => (
-                  <Line key={t} type="monotone" dataKey={t} name={t} stroke={clr(i)} strokeWidth={2.5}
-                    dot={false} activeDot={{ r: 5, stroke: clr(i), fill: clr(i) }} connectNulls />
-                ))}
-              </LineChart>
-            </ResponsiveContainer>
+            <div style={{ position: "relative", width: "100%", height: "100%" }}>
+              {filteredTeams.length > LINE_SPAGHETTI_THRESHOLD && <TooManyLinesHint count={filteredTeams.length} />}
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={data} margin={MARGIN}>
+                  <CartesianGrid {...GRID_PROPS} />
+                  <XAxis dataKey="x" tick={<AxisTickX />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
+                    label={{ value: xLabel, position: "insideBottom", offset: -36, fill: "currentColor", fontSize: 11 }} />
+                  <YAxis tick={<AxisTickY />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
+                    label={{ value: yLabel, angle: -90, position: "insideLeft", fill: "currentColor", fontSize: 11 }} />
+                  <Tooltip content={({ active, payload, label: xVal }) => {
+                    if (!active || !payload?.length) return null;
+                    const entries = payload.filter((p) => p.value !== undefined && p.value !== null);
+                    return (
+                      <div className="rounded-lg border border-border bg-popover px-3 py-2 shadow-xl text-xs space-y-1">
+                        <p className="font-bold">Match {xVal}</p>
+                        {entries.map((p, i) => (
+                          <div key={i} className="flex items-center gap-2">
+                            <span className="h-2 w-2 rounded-full shrink-0" style={{ background: p.color }} />
+                            <span className="text-muted-foreground">#{p.name}:</span>
+                            <span className="font-mono font-semibold">{typeof p.value === "number" ? p.value.toFixed(2) : p.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }} />
+                  {filteredTeams.map((t, i) => (
+                    <Line key={t} type="monotone" dataKey={t} name={t} stroke={clr(i)} strokeWidth={2.5}
+                      dot={false} activeDot={{ r: 5, stroke: clr(i), fill: clr(i) }} connectNulls />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           );
         }
 
@@ -475,39 +461,42 @@ function ChartInner({ cfg, rows, teamRows, matchEpaRows, fields, axes }: {
         });
 
         return (
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data} margin={MARGIN}>
-              <CartesianGrid {...GRID_PROPS} />
-              <XAxis dataKey="x" tick={<AxisTickX />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
-                label={{ value: xLabel, position: "insideBottom", offset: -36, fill: "currentColor", fontSize: 11 }} />
-              <YAxis tick={<AxisTickY />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
-                label={{ value: yLabel, angle: -90, position: "insideLeft", fill: "currentColor", fontSize: 11 }} />
-              <Tooltip
-                content={({ active, payload, label: xVal }) => {
-                  if (!active || !payload?.length) return null;
-                  const entries = payload.filter((p) => p.value !== undefined && p.value !== null);
-                  return (
-                    <div className="rounded-lg border border-border bg-popover px-3 py-2 shadow-xl text-xs space-y-1">
-                      <p className="font-bold">Match {xVal}</p>
-                      {entries.map((p, i) => (
-                        <div key={i} className="flex items-center gap-2">
-                          <span className="h-2 w-2 rounded-full shrink-0" style={{ background: p.color }} />
-                          <span className="text-muted-foreground">#{p.name}:</span>
-                          <span className="font-mono font-semibold">{typeof p.value === "number" ? p.value.toFixed(2) : p.value}</span>
-                        </div>
-                      ))}
-                    </div>
-                  );
-                }}
-              />
-              {filteredTeams.map((t, i) => (
-                <Line key={t} type="monotone" dataKey={t} name={t}
-                  stroke={clr(i)} strokeWidth={2.5} dot={false}
-                  activeDot={{ r: 5, stroke: clr(i), fill: clr(i) }}
-                  connectNulls />
-              ))}
-            </LineChart>
-          </ResponsiveContainer>
+          <div style={{ position: "relative", width: "100%", height: "100%" }}>
+            {filteredTeams.length > LINE_SPAGHETTI_THRESHOLD && <TooManyLinesHint count={filteredTeams.length} />}
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={data} margin={MARGIN}>
+                <CartesianGrid {...GRID_PROPS} />
+                <XAxis dataKey="x" tick={<AxisTickX />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
+                  label={{ value: xLabel, position: "insideBottom", offset: -36, fill: "currentColor", fontSize: 11 }} />
+                <YAxis tick={<AxisTickY />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
+                  label={{ value: yLabel, angle: -90, position: "insideLeft", fill: "currentColor", fontSize: 11 }} />
+                <Tooltip
+                  content={({ active, payload, label: xVal }) => {
+                    if (!active || !payload?.length) return null;
+                    const entries = payload.filter((p) => p.value !== undefined && p.value !== null);
+                    return (
+                      <div className="rounded-lg border border-border bg-popover px-3 py-2 shadow-xl text-xs space-y-1">
+                        <p className="font-bold">Match {xVal}</p>
+                        {entries.map((p, i) => (
+                          <div key={i} className="flex items-center gap-2">
+                            <span className="h-2 w-2 rounded-full shrink-0" style={{ background: p.color }} />
+                            <span className="text-muted-foreground">#{p.name}:</span>
+                            <span className="font-mono font-semibold">{typeof p.value === "number" ? p.value.toFixed(2) : p.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }}
+                />
+                {filteredTeams.map((t, i) => (
+                  <Line key={t} type="monotone" dataKey={t} name={t}
+                    stroke={clr(i)} strokeWidth={2.5} dot={false}
+                    activeDot={{ r: 5, stroke: clr(i), fill: clr(i) }}
+                    connectNulls />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
         );
       }
 
@@ -573,7 +562,9 @@ function ChartInner({ cfg, rows, teamRows, matchEpaRows, fields, axes }: {
       return pt;
     });
     return (
-      <ResponsiveContainer width="100%" height="100%">
+      <div style={{ position: "relative", width: "100%", height: "100%" }}>
+        {teams.length > LINE_SPAGHETTI_THRESHOLD && <TooManyLinesHint count={teams.length} />}
+        <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data} margin={MARGIN}>
           <CartesianGrid {...GRID_PROPS} />
           <XAxis dataKey="x" tick={<AxisTickX />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
@@ -609,194 +600,10 @@ function ChartInner({ cfg, rows, teamRows, matchEpaRows, fields, axes }: {
             />
           ))}
         </LineChart>
-      </ResponsiveContainer>
+        </ResponsiveContainer>
+      </div>
     );
   }
-
-
-  // ── Radar ────────────────────────────────────────────────────────────────────
-  if (cfg.type === "radar") {
-    // Require at least 1 team selected
-    const radarTeamNums = cfgTeamFilter.length ? cfgTeamFilter : [];
-    if (!radarTeamNums.length) {
-      return (
-        <div className="flex flex-col items-center justify-center h-full gap-2 text-center px-4">
-          <p className="text-sm text-muted-foreground">Select 1–3 teams to compare in this radar.</p>
-          <p className="text-xs text-muted-foreground opacity-60">Click <strong>Edit</strong> on this card to choose teams.</p>
-        </div>
-      );
-    }
-
-    // Build combined axis list: scouting numeric fields + EPA fields
-    const scoutingAxes = fields
-      .filter((f) => f.type === "number" || f.type === "counter" || f.type === "checkbox")
-      .map((f) => ({ id: f.id, label: f.label }));
-
-    // Include EPA axes that have at least one non-null value across teamRows
-    const epaRadarAxes = EPA_AXES.filter((a) =>
-      teamRows.some((r) => getNum(r, a.id) !== null)
-    ).map((a) => ({ id: a.id, label: a.label }));
-
-    const allAxes = [...scoutingAxes, ...epaRadarAxes];
-
-    if (allAxes.length < 2) {
-      return <Empty msg="Need at least 2 numeric fields or EPA data loaded for a radar chart" />;
-    }
-
-    const radarTeamStrs = radarTeamNums.map(String);
-    const byTeam = groupBy(teamRows, "_teamStr");
-
-    // Normalise per axis: max value across ALL teams (not just selected)
-    const axisMaxes: Record<string, number> = {};
-    for (const ax of allAxes) {
-      const vals = teamRows.map((r) => getNum(r, ax.id)).filter((v): v is number => v !== null);
-      axisMaxes[ax.id] = vals.length && Math.max(...vals) > 0 ? Math.max(...vals) : 1;
-    }
-
-    const radarData = allAxes.map((ax) => {
-      const pt: Record<string, unknown> = { field: ax.label };
-      for (const t of radarTeamStrs) {
-        const row = byTeam[t]?.[0];
-        const rawVal = row ? (getNum(row, ax.id) ?? 0) : 0;
-        // Normalised 0-100 value drives the spoke length
-        pt[t] = Number(((rawVal / axisMaxes[ax.id]) * 100).toFixed(1));
-        // Raw value stored separately so the tooltip can display actual averages
-        pt[`__raw_${t}`] = rawVal;
-      }
-      return pt;
-    });
-
-    return (
-      <ResponsiveContainer width="100%" height="100%">
-        <RadarChart data={radarData} margin={{ top: 28, right: 72, left: 72, bottom: 28 }}>
-          {/* Concentric circular rings + radial spoke lines */}
-          <PolarGrid
-            gridType="circle"
-            stroke="rgba(255,255,255,0.15)"
-            radialLines={true}
-          />
-
-          {/* Spoke labels — field names around the outside, white */}
-          <PolarAngleAxis
-            dataKey="field"
-            tick={{ fill: "currentColor", fontSize: 11, fontWeight: 500 }}
-            tickLine={{ stroke: "rgba(255,255,255,0.3)" }}
-          />
-
-          {/* Radius axis — vertical at top-centre (angle=90), white ticks */}
-          <PolarRadiusAxis
-            angle={90}
-            domain={[0, 100]}
-            tickCount={5}
-            tick={{ fill: "currentColor", fontSize: 9, opacity: 0.7 }}
-            axisLine={{ stroke: "rgba(255,255,255,0.25)" }}
-            tickLine={false}
-            tickFormatter={(v: number) => `${v}%`}
-          />
-
-          <Tooltip content={<RadarTip />} />
-          <Legend
-            formatter={(v) => `Team #${v}`}
-            wrapperStyle={{ color: "var(--foreground)", fontSize: 11, paddingTop: 8 }}
-          />
-
-          {radarTeamStrs.map((t, i) => (
-            <Radar
-              key={t}
-              name={t}
-              dataKey={t}
-              stroke={clr(i)}
-              fill={clr(i)}
-              fillOpacity={0.15}
-              strokeWidth={2}
-              dot={(props: Record<string, unknown>) => {
-                const { cx, cy } = props as { cx: number; cy: number };
-                return (
-                  <circle
-                    key={`dot-${t}-${cx}-${cy}`}
-                    cx={cx}
-                    cy={cy}
-                    r={4}
-                    fill={clr(i)}
-                    stroke="rgba(0,0,0,0.4)"
-                    strokeWidth={1}
-                  />
-                );
-              }}
-            />
-          ))}
-        </RadarChart>
-      </ResponsiveContainer>
-    );
-
-  }
-
-  // ── Histogram ────────────────────────────────────────────────────────────────
-  if (cfg.type === "histogram") {
-    // Collect (rounded-integer-value, team) pairs
-    const pairs = filtered
-      .map((r) => ({ v: getNum(r, cfg.yAxis), team: r._teamStr as string }))
-      .filter((p): p is { v: number; team: string } => p.v !== null);
-    if (!pairs.length) return <Empty msg={`No numeric data for "${yLabel}"`} />;
-
-    const intVals = pairs.map((p) => Math.round(p.v));
-    const mn = Math.min(...intVals), mx = Math.max(...intVals);
-    const teamList = Array.from(new Set(pairs.map((p) => p.team))).sort();
-
-    // Yellow-forward palette so bars are yellow-dominant
-    const histClr = (i: number) =>
-      (["#f59e0b","#6366f1","#10b981","#ef4444","#8b5cf6","#3b82f6","#f97316","#14b8a6","#ec4899","#84cc16"] as string[])[i % 10];
-
-    // One data row per whole-number bucket
-    const data: Record<string, unknown>[] = [];
-    for (let bkt = mn; bkt <= mx; bkt++) {
-      const row: Record<string, unknown> = { bucket: String(bkt) };
-      for (const t of teamList) {
-        row[t] = pairs.filter((p) => Math.round(p.v) === bkt && p.team === t).length;
-      }
-      data.push(row);
-    }
-
-    return (
-      <ResponsiveContainer width="100%" height="100%">
-        <ReBarChart data={data} margin={{ top: 12, right: 16, left: 4, bottom: 56 }}>
-          <CartesianGrid {...GRID_PROPS} />
-          <XAxis dataKey="bucket" tick={<AxisTickX />} angle={-35} textAnchor="end" interval={0}
-            tickLine={AXIS_LINE} axisLine={AXIS_LINE}
-            label={{ value: yLabel, position: "insideBottom", offset: -44, fill: "currentColor", fontSize: 11 }} />
-          <YAxis tick={<AxisTickY />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
-            allowDecimals={false}
-            label={{ value: "Count", angle: -90, position: "insideLeft", fill: "currentColor", fontSize: 11 }} />
-          <Tooltip
-            content={({ active, payload, label: bktLabel }) => {
-              if (!active || !payload?.length) return null;
-              const entries = payload.filter((p) => (p.value as number) > 0);
-              const total = entries.reduce((s, p) => s + (p.value as number), 0);
-              return (
-                <div className="rounded-lg border border-border bg-popover px-3 py-2 shadow-xl text-xs space-y-1">
-                  <p className="font-bold">{yLabel} = {bktLabel} <span className="text-muted-foreground font-normal">(total: {total})</span></p>
-                  {entries.map((p, i) => (
-                    <div key={i} className="flex items-center gap-2">
-                      <span className="h-2 w-2 rounded-full shrink-0" style={{ background: p.color }} />
-                      <span className="text-muted-foreground">#{p.name}:</span>
-                      <span className="font-mono font-semibold">{p.value} match{Number(p.value) !== 1 ? "es" : ""}</span>
-                    </div>
-                  ))}
-                </div>
-              );
-            }}
-          />
-          <Legend wrapperStyle={{ color: "var(--foreground)", fontSize: 11, paddingTop: 8 }} formatter={(v) => `#${v}`} />
-          {teamList.map((t, i) => (
-            <Bar key={t} dataKey={t} name={t} stackId="hist" fill={histClr(i)} fillOpacity={0.9}
-              radius={i === teamList.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]} />
-          ))}
-        </ReBarChart>
-      </ResponsiveContainer>
-    );
-  }
-
-
 
 
   // ── Box Plot ──────────────────────────────────────────────────────────────────
@@ -1083,14 +890,14 @@ function Empty({ msg }: { msg: string }) {
 // ─────────────────────────────── Chart Card ───────────────────────────────────
 
 function ChartCard({
-  cfg, rows, teamRows, matchEpaRows, fields, axes,
+  cfg, rows, teamRows, matchEpaRows, axes,
   onRemove, onEdit,
   isDragOver, onDragStart, onDragEnter, onDragLeave, onDragOver: onDragOverProp, onDrop, onDragEnd,
   initialSize, onSizeChange, isMobile,
 }: {
   cfg: ChartCfg; rows: Record<string, unknown>[]; teamRows: Record<string, unknown>[];
   matchEpaRows: Record<string, unknown>[];
-  fields: FormField[]; axes: AxisOpt[];
+  axes: AxisOpt[];
   onRemove: () => void; onEdit: () => void;
   isDragOver: boolean;
   onDragStart: (e: React.DragEvent) => void;
@@ -1195,13 +1002,11 @@ function ChartCard({
 
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold truncate">{cfg.title}</p>
-          <p className="text-[10px] text-muted-foreground capitalize">
-            {cfg.type}
-            {cfg.type === "radar"
-              ? ` · teams: ${(cfg.teams?.length ?? 0) > 0 ? cfg.teams.map(t => `#${t}`).join(", ") : "none selected"}`
-              : ` · ${yLabel}`}
+          <p className="text-[10px] text-muted-foreground">
+            {CHART_DEFS.find((d) => d.type === cfg.type)?.label ?? cfg.type}
+            {` · ${yLabel}`}
             {needsX && ` vs ${xLabel}`}
-            {cfg.type !== "radar" && (cfg.teams?.length ?? 0) > 0 && ` · ${cfg.teams.length} teams`}
+            {(cfg.teams?.length ?? 0) > 0 && ` · ${cfg.teams.length} teams`}
           </p>
         </div>
 
@@ -1216,7 +1021,7 @@ function ChartCard({
           which is how axes and gridlines stay legible in both themes. */}
       <div className="flex-1 min-h-0 p-2 text-foreground" style={{ minHeight: 180 }}>
         <div style={{ width: "100%", height: "100%", minHeight: 180 }}>
-          <ChartInner cfg={cfg} rows={rows} teamRows={teamRows} matchEpaRows={matchEpaRows} fields={fields} axes={axes} />
+          <ChartInner cfg={cfg} rows={rows} teamRows={teamRows} matchEpaRows={matchEpaRows} axes={axes} />
         </div>
       </div>
 
@@ -1315,7 +1120,8 @@ function Builder({ axes, fields: _fields, allTeams, initial, onSave, onCancel }:
   const groupNames: Record<string, string> = { scouting: "Scouting Fields", epa: "Statbotics EPA", match: "Match Info" };
 
   function save() {
-    const autoTitle = `${type.charAt(0).toUpperCase() + type.slice(1)} — ${axes.find(a => a.id === yAxis)?.label ?? yAxis}`;
+    const typeLabel = CHART_DEFS.find((d) => d.type === type)?.label ?? type;
+    const autoTitle = `${typeLabel} — ${axes.find(a => a.id === yAxis)?.label ?? yAxis}`;
     onSave({
       id: initial?.id ?? crypto.randomUUID(),
       title: title.trim() || autoTitle,
@@ -1329,13 +1135,13 @@ function Builder({ axes, fields: _fields, allTeams, initial, onSave, onCancel }:
       {/* Chart type grid */}
       <div>
         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Chart Type</p>
-        <div className="grid grid-cols-3 gap-1.5">
+        <div className="grid grid-cols-2 gap-2">
           {CHART_DEFS.map(({ type: t, label, icon: Icon, desc }) => (
             <button key={t} onClick={() => setType(t)}
-              className={`flex flex-col items-center gap-1 p-2 rounded-lg border text-xs transition-all ${
+              className={`flex flex-col items-center gap-1 p-3 rounded-lg border text-xs transition-all ${
                 type === t ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:bg-muted/50"
               }`}>
-              <Icon className="h-4 w-4" />
+              <Icon className="h-5 w-5" />
               <span className="font-medium">{label}</span>
               <span className="text-[9px] text-center leading-tight opacity-70">{desc}</span>
             </button>
@@ -1352,64 +1158,43 @@ function Builder({ axes, fields: _fields, allTeams, initial, onSave, onCancel }:
       </div>
 
       {/* Axes */}
-      {type !== "radar" && (
-        <div className="flex flex-col gap-3">
-          {needsX && (
-            <div>
-              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5 block" htmlFor="cv-x">X Axis</label>
-              <AxisSelect id="cv-x" value={xAxis} onChange={setXAxis} grouped={grouped} groupNames={groupNames} />
-            </div>
-          )}
+      <div className="flex flex-col gap-3">
+        {needsX && (
           <div>
-            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5 block" htmlFor="cv-y">
-              {type === "histogram" ? "Field to Distribute" : needsX ? "Y Axis" : "Metric"}
-            </label>
-            <AxisSelect id="cv-y" value={yAxis} onChange={setYAxis} grouped={grouped} groupNames={groupNames} />
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5 block" htmlFor="cv-x">X Axis</label>
+            <AxisSelect id="cv-x" value={xAxis} onChange={setXAxis} grouped={grouped} groupNames={groupNames} />
           </div>
+        )}
+        <div>
+          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5 block" htmlFor="cv-y">
+            {needsX ? "Y Axis" : "Metric"}
+          </label>
+          <AxisSelect id="cv-y" value={yAxis} onChange={setYAxis} grouped={grouped} groupNames={groupNames} />
         </div>
-      )}
-      {type === "radar" && (
-        <div className="flex flex-col gap-2">
-          <p className="text-xs text-muted-foreground bg-muted/30 rounded-lg px-3 py-2">
-            Radar charts use all numeric fields from your scouting form, normalised to 0–100.
-            Select <strong>1–3 teams</strong> below to overlay and compare.
-          </p>
-        </div>
-      )}
+      </div>
 
-      {/* Teams selector — required for radar (1–3), optional filter for others */}
+      {/* Teams selector — optional filter */}
       <div>
         <button onClick={() => setTeamsOpen((o) => !o)}
           className="w-full flex items-center justify-between text-xs font-semibold text-muted-foreground uppercase tracking-wider py-1">
-          <span>
-            {type === "radar"
-              ? <>Select Teams <span className="text-primary">(1–3 required)</span> {selTeams.length > 0 && `· ${selTeams.length} chosen`}</>
-              : <>Filter Teams {selTeams.length > 0 && `(${selTeams.length})`}</>}
-          </span>
+          <span>Filter Teams {selTeams.length > 0 && `(${selTeams.length})`}</span>
           {teamsOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
         </button>
         {teamsOpen && (
           <div className="mt-2 rounded-lg border border-border bg-muted/20 p-2">
             <button onClick={() => setSelTeams([])} className="text-xs text-primary hover:underline mb-2 block">
-              Clear {type !== "radar" && "(all teams)"}
+              Clear (all teams)
             </button>
             <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
               {allTeams.map((t) => {
                 const selected = selTeams.includes(t);
-                const atLimit = type === "radar" && selTeams.length >= 3 && !selected;
                 return (
                   <button key={t}
-                    onClick={() => {
-                      if (atLimit) return;
-                      setSelTeams((p) => p.includes(t) ? p.filter((x) => x !== t) : [...p, t]);
-                    }}
-                    disabled={atLimit}
+                    onClick={() => setSelTeams((p) => p.includes(t) ? p.filter((x) => x !== t) : [...p, t])}
                     className={`text-xs px-2 py-0.5 rounded-md border transition-colors ${
                       selected
                         ? "bg-primary text-primary-foreground border-primary"
-                        : atLimit
-                          ? "border-border text-muted-foreground opacity-30 cursor-not-allowed"
-                          : "border-border text-muted-foreground hover:bg-muted"
+                        : "border-border text-muted-foreground hover:bg-muted"
                     }`}>
                     {t}
                   </button>
@@ -1741,7 +1526,7 @@ export default function DataViewerPage() {
               <div className="flex flex-wrap gap-3 sm:gap-4 pb-4 items-start">
                 {charts.map((c) => (
                   <ChartCard
-                    key={c.id} cfg={c} rows={rows} teamRows={teamRows} matchEpaRows={matchEpaRows} fields={fields} axes={axes}
+                    key={c.id} cfg={c} rows={rows} teamRows={teamRows} matchEpaRows={matchEpaRows} axes={axes}
                     onRemove={() => setCharts((p) => p.filter((x) => x.id !== c.id))}
                     onEdit={() => { setEditingId(c.id); setBuilding(false); }}
                     isDragOver={dropId === c.id}
