@@ -317,7 +317,10 @@ export const submitForm = mutation({
       const formType = template?.formType ?? "default";
       const reward = template?.coinReward ?? DEFAULT_SCOUT_REWARD;
       if (reward > 0 && (await isAssignedForReward(ctx, userId, formType, args))) {
-        await awardCoins(ctx, userId, args.eventKey, reward);
+        await awardCoins(
+          ctx, userId, args.eventKey, reward, "scouting_reward",
+          template?.name, submissionId,
+        );
       }
     }
 

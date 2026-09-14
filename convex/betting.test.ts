@@ -39,7 +39,14 @@ async function setup(t: ReturnType<typeof convexTest>, balance = 1000) {
         .withIndex("by_user_event", (q) => q.eq("userId", userId).eq("eventKey", EVENT))
         .first())?.balance,
     );
-  return { userId, as, marketId, bal };
+  const txns = async () =>
+    t.run(async (ctx) =>
+      ctx.db
+        .query("coinTransactions")
+        .withIndex("by_user_event", (q) => q.eq("userId", userId).eq("eventKey", EVENT))
+        .collect(),
+    );
+  return { userId, as, marketId, bal, txns };
 }
 
 describe("cancelMarket", () => {
@@ -153,5 +160,82 @@ describe("resolveMarket payouts", () => {
     // payout = floor(200/300 * 400) = 266
     expect(res.totalPool).toBe(400);
     expect(await bal()).toBe(800 + 266);
+  });
+});
+
+describe("createMarket new FRC-outcome types", () => {
+  test("accepts team_top_rank, alliance_selection, and elimination_advance", async () => {
+    const t = convexTest(schema, modules);
+    const { as } = await setup(t);
+
+    for (const type of ["team_top_rank", "alliance_selection", "elimination_advance"] as const) {
+      const marketId = await as.mutation(api.betting.createMarket, {
+        eventKey: EVENT,
+        title: `Test ${type}`,
+        type,
+        teamNumber: 4099,
+        ...(type === "team_top_rank" ? { threshold: 8 } : {}),
+        ...(type === "elimination_advance" ? { targetValue: "semifinals" } : {}),
+        options: [
+          { id: "yes", label: "Yes", seedPool: 50 },
+          { id: "no", label: "No", seedPool: 50 },
+        ],
+      });
+      const market = await t.run((ctx) => ctx.db.get(marketId));
+      expect(market?.type).toBe(type);
+    }
+  });
+});
+
+describe("coin transaction ledger", () => {
+  test("placeBet logs a bet_placed entry; resolveMarket logs bet_won only for the winner", async () => {
+    const t = convexTest(schema, modules);
+    const { as, marketId, txns } = await setup(t, 1000);
+
+    await as.mutation(api.betting.placeBet, { marketId, optionId: "red", amount: 200 });
+    let rows = await txns();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ type: "bet_placed", amount: -200 });
+
+    await as.mutation(api.betting.resolveMarket, { marketId, resolvedOptionId: "red" });
+    rows = await txns();
+    expect(rows).toHaveLength(2);
+    const won = rows.find((r) => r.type === "bet_won");
+    expect(won).toBeTruthy();
+    expect(won!.amount).toBeGreaterThan(0);
+  });
+
+  test("resolveMarket logs no entry for a losing bet beyond its bet_placed row", async () => {
+    const t = convexTest(schema, modules);
+    const { as, marketId, txns } = await setup(t, 1000);
+
+    await as.mutation(api.betting.placeBet, { marketId, optionId: "blue", amount: 100 });
+    await as.mutation(api.betting.resolveMarket, { marketId, resolvedOptionId: "red" });
+
+    const rows = await txns();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].type).toBe("bet_placed");
+  });
+
+  test("cancelMarket logs a bet_refunded entry", async () => {
+    const t = convexTest(schema, modules);
+    const { as, marketId, txns } = await setup(t, 1000);
+
+    await as.mutation(api.betting.placeBet, { marketId, optionId: "red", amount: 150 });
+    await as.mutation(api.betting.cancelMarket, { marketId });
+
+    const rows = await txns();
+    const refund = rows.find((r) => r.type === "bet_refunded");
+    expect(refund).toMatchObject({ amount: 150 });
+  });
+
+  test("beg logs a beg entry", async () => {
+    const t = convexTest(schema, modules);
+    const { as, txns } = await setup(t, 0);
+
+    await as.mutation(api.betting.beg, { eventKey: EVENT });
+    const rows = await txns();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ type: "beg", amount: 1 });
   });
 });

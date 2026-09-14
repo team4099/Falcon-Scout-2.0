@@ -217,6 +217,9 @@ export default defineSchema({
       v.literal("team_field_select"),  // select field → equals a specific value
       v.literal("multi_match_numeric"), // combined numeric stat O/U across N matches
       v.literal("multi_match_count"),   // count of boolean condition met across N matches (O/U)
+      v.literal("team_top_rank"),       // will team finish quals ranked in the top N?
+      v.literal("alliance_selection"),  // will team get picked for an alliance in eliminations?
+      v.literal("elimination_advance"), // will team's alliance reach a given playoff stage?
     ),
     // Match context
     matchNumber:  v.optional(v.number()),
@@ -293,46 +296,28 @@ export default defineSchema({
   })
     .index("by_user_event", ["userId", "eventKey"]),
 
-  // In-progress casino rounds.
-  //
-  // Crossy and Mines are multi-request games: the client steps through them one
-  // mutation at a time and then cashes out. Previously every part of that state
-  // — the row reached, the gems revealed, and the multiplier to pay — was held
-  // by the client and taken on trust at cash-out, so a hand-written mutation
-  // call could credit any amount it liked. The round now lives here: the server
-  // deals the board, tracks progress, and computes the multiplier, and cash-out
-  // reads this row rather than its arguments.
-  //
-  // At most one open round per (user, event, game); it is deleted when the
-  // round ends, whether by cash-out, a loss, or being abandoned.
-  casinoGames: defineTable({
-    userId:    v.id("users"),
-    eventKey:  v.string(),
-    game:      v.union(v.literal("crossy"), v.literal("mines")),
-    betAmount: v.number(),
-    /** Server-computed cash-out multiplier as of the last completed step. */
-    multiplier: v.number(),
-    // Mines state
-    mineCount:     v.optional(v.number()),
-    minePositions: v.optional(v.array(v.number())),
-    revealed:      v.optional(v.array(v.number())),
-    // Crossy state
-    difficulty: v.optional(v.string()),
-    /** Rows already cleared — the next step is row `rowsCleared`. */
-    rowsCleared: v.optional(v.number()),
-    startedAt: v.number(),
-  })
-    .index("by_user_event_game", ["userId", "eventKey", "game"]),
-
-  // ── Retention tracking (player abandon behavior) ─────────────────────────
-  retentionProfiles: defineTable({
-    userId:              v.id("users"),
-    eventKey:            v.string(),
-    abandonHistory:      v.array(v.number()),  // rolling net losses at time of page abandon
-    threshold:           v.number(),            // computed avg abandon loss (default: -500)
-    sessionStartBalance: v.number(),            // balance when current session began
-    sessionStartTime:    v.number(),            // timestamp of session start
-    updatedAt:           v.number(),
+  // Per-user, per-event money ledger. One row per balance-affecting event —
+  // scouting rewards, pit duty, begging, and every bet placed/won/refunded —
+  // so a scout can see exactly where every coin came from, not just lifetime
+  // totals on `userBalances`. Forward-only: added when this table was
+  // introduced, not backfilled from prior activity.
+  coinTransactions: defineTable({
+    userId:   v.id("users"),
+    eventKey: v.string(),
+    type: v.union(
+      v.literal("scouting_reward"),
+      v.literal("pit_duty_reward"),
+      v.literal("pit_duty_revoked"),
+      v.literal("beg"),
+      v.literal("bet_placed"),
+      v.literal("bet_won"),
+      v.literal("bet_refunded"),
+    ),
+    amount:       v.number(), // signed: positive = gained, negative = spent
+    balanceAfter: v.number(),
+    note:         v.optional(v.string()),   // e.g. market title, form template name
+    relatedId:    v.optional(v.string()),   // marketId / submissionId / rotationId
+    createdAt:    v.number(),
   })
     .index("by_user_event", ["userId", "eventKey"]),
 

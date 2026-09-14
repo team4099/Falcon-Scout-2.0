@@ -4,7 +4,6 @@ import type { MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { isSignedIn, requireAdmin } from "./adminAuth";
-import { getBoostForUser } from "./retention";
 
 const STARTING_BALANCE = 1000;
 
@@ -34,29 +33,53 @@ function assertBet(betAmount: number): void {
   if (betAmount > MAX_BET) throw new Error("Bet is too large");
 }
 
-/** The caller's balance row for an event, created with the starting stake if absent. */
-async function getOrCreateBalanceRow(
+// ── Transaction ledger ───────────────────────────────────────────────────────
+
+type TransactionType =
+  | "scouting_reward"
+  | "pit_duty_reward"
+  | "pit_duty_revoked"
+  | "beg"
+  | "bet_placed"
+  | "bet_won"
+  | "bet_refunded";
+
+/** Record one balance-affecting event. Called alongside the patch that causes it, never instead of it. */
+async function logTransaction(
   ctx: MutationCtx,
   userId: Id<"users">,
   eventKey: string,
-) {
-  const existing = await ctx.db
-    .query("userBalances")
-    .withIndex("by_user_event", (q) => q.eq("userId", userId).eq("eventKey", eventKey))
-    .first();
-  if (existing) return existing;
-
-  const id = await ctx.db.insert("userBalances", {
+  type: TransactionType,
+  amount: number,
+  balanceAfter: number,
+  note?: string,
+  relatedId?: string,
+): Promise<void> {
+  await ctx.db.insert("coinTransactions", {
     userId,
     eventKey,
-    balance:   STARTING_BALANCE,
-    totalWon:  0,
-    totalLost: 0,
-    totalBet:  0,
-    totalBegs: 0,
+    type,
+    amount,
+    balanceAfter,
+    note,
+    relatedId,
+    createdAt: Date.now(),
   });
-  return (await ctx.db.get(id))!;
 }
+
+/** All ledger entries for the current user at an event, newest first. */
+export const listMyTransactions = query({
+  args: { eventKey: v.string() },
+  handler: async (ctx, { eventKey }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    const rows = await ctx.db
+      .query("coinTransactions")
+      .withIndex("by_user_event", (q) => q.eq("userId", userId).eq("eventKey", eventKey))
+      .collect();
+    return rows.sort((a, b) => b.createdAt - a.createdAt);
+  },
+});
 
 /**
  * Credit a scout for work done, creating their balance row if this is their
@@ -68,6 +91,9 @@ export async function awardCoins(
   userId: Id<"users">,
   eventKey: string,
   amount: number,
+  reason: "scouting_reward" | "pit_duty_reward",
+  note?: string,
+  relatedId?: string,
 ): Promise<void> {
   if (amount <= 0) return;
   const bal = await ctx.db
@@ -75,23 +101,27 @@ export async function awardCoins(
     .withIndex("by_user_event", (q) => q.eq("userId", userId).eq("eventKey", eventKey))
     .first();
 
+  let balanceAfter: number;
   if (!bal) {
+    balanceAfter = STARTING_BALANCE + amount;
     await ctx.db.insert("userBalances", {
       userId,
       eventKey,
-      balance:   STARTING_BALANCE + amount,
+      balance:   balanceAfter,
       totalWon:  0,
       totalLost: 0,
       totalBet:  0,
       totalBegs: 0,
       totalEarned: amount,
     });
-    return;
+  } else {
+    balanceAfter = bal.balance + amount;
+    await ctx.db.patch(bal._id, {
+      balance:     balanceAfter,
+      totalEarned: (bal.totalEarned ?? 0) + amount,
+    });
   }
-  await ctx.db.patch(bal._id, {
-    balance:     bal.balance + amount,
-    totalEarned: (bal.totalEarned ?? 0) + amount,
-  });
+  await logTransaction(ctx, userId, eventKey, reason, amount, balanceAfter, note, relatedId);
 }
 
 /**
@@ -104,6 +134,9 @@ export async function revokeCoins(
   userId: Id<"users">,
   eventKey: string,
   amount: number,
+  reason: "pit_duty_revoked",
+  note?: string,
+  relatedId?: string,
 ): Promise<void> {
   if (amount <= 0) return;
   const bal = await ctx.db
@@ -111,10 +144,12 @@ export async function revokeCoins(
     .withIndex("by_user_event", (q) => q.eq("userId", userId).eq("eventKey", eventKey))
     .first();
   if (!bal) return;
+  const balanceAfter = bal.balance - amount;
   await ctx.db.patch(bal._id, {
-    balance:     bal.balance - amount,
+    balance:     balanceAfter,
     totalEarned: Math.max(0, (bal.totalEarned ?? 0) - amount),
   });
+  await logTransaction(ctx, userId, eventKey, reason, -amount, balanceAfter, note, relatedId);
 }
 
 // ── Balance ───────────────────────────────────────────────────────────────────
@@ -184,17 +219,19 @@ export const beg = mutation({
       .first();
 
     if (!bal) {
+      const balanceAfter = STARTING_BALANCE + BEG_AMOUNT;
       await ctx.db.insert("userBalances", {
         userId,
         eventKey,
-        balance:   STARTING_BALANCE + BEG_AMOUNT,
+        balance:   balanceAfter,
         totalWon:  0,
         totalLost: 0,
         totalBet:  0,
         totalBegs: 1,
         lastBegAt: now,
       });
-      return { newBalance: STARTING_BALANCE + BEG_AMOUNT, totalBegs: 1 };
+      await logTransaction(ctx, userId, eventKey, "beg", BEG_AMOUNT, balanceAfter);
+      return { newBalance: balanceAfter, totalBegs: 1 };
     }
 
     // The 3s cooldown used to live only in BettingPage, so it constrained the
@@ -205,12 +242,14 @@ export const beg = mutation({
       throw new Error(`Slow down — you can beg again in ${wait}s.`);
     }
 
+    const balanceAfter = bal.balance + BEG_AMOUNT;
     await ctx.db.patch(bal._id, {
-      balance:   bal.balance + BEG_AMOUNT,
+      balance:   balanceAfter,
       totalBegs: (bal.totalBegs ?? 0) + 1,
       lastBegAt: now,
     });
-    return { newBalance: bal.balance + BEG_AMOUNT, totalBegs: (bal.totalBegs ?? 0) + 1 };
+    await logTransaction(ctx, userId, eventKey, "beg", BEG_AMOUNT, balanceAfter);
+    return { newBalance: balanceAfter, totalBegs: (bal.totalBegs ?? 0) + 1 };
   },
 });
 
@@ -281,6 +320,9 @@ export const createMarket = mutation({
       v.literal("team_field_select"),
       v.literal("multi_match_numeric"),
       v.literal("multi_match_count"),
+      v.literal("team_top_rank"),
+      v.literal("alliance_selection"),
+      v.literal("elimination_advance"),
     ),
     matchNumber:  v.optional(v.number()),
     matchNumbers: v.optional(v.array(v.number())),
@@ -528,10 +570,17 @@ export const resolveMarket = mutation({
 
       if (bal) {
         if (won) {
+          const balanceAfter = bal.balance + payout;
           await ctx.db.patch(bal._id, {
-            balance:  bal.balance + payout,
+            balance:  balanceAfter,
             totalWon: bal.totalWon + payout,
           });
+          if (payout > 0) {
+            await logTransaction(
+              ctx, bet.userId, bet.eventKey, "bet_won", payout, balanceAfter,
+              market.title, marketId,
+            );
+          }
         } else {
           await ctx.db.patch(bal._id, {
             totalLost: bal.totalLost + bet.amount,
@@ -579,7 +628,12 @@ export const cancelMarket = mutation({
         )
         .first();
       if (bal) {
-        await ctx.db.patch(bal._id, { balance: bal.balance + bet.amount });
+        const balanceAfter = bal.balance + bet.amount;
+        await ctx.db.patch(bal._id, { balance: balanceAfter });
+        await logTransaction(
+          ctx, bet.userId, bet.eventKey, "bet_refunded", bet.amount, balanceAfter,
+          market.title, marketId,
+        );
       }
       await ctx.db.patch(bet._id, { payout: bet.amount, settled: true });
     }
@@ -637,10 +691,15 @@ export const placeBet = mutation({
 
     if (!bal || bal.balance < amount) throw new Error("Insufficient balance");
 
+    const balanceAfter = bal.balance - amount;
     await ctx.db.patch(bal._id, {
-      balance:  bal.balance - amount,
+      balance:  balanceAfter,
       totalBet: bal.totalBet + amount,
     });
+    await logTransaction(
+      ctx, userId, market.eventKey, "bet_placed", -amount, balanceAfter,
+      market.title, marketId,
+    );
 
     return await ctx.db.insert("bets", {
       marketId,
@@ -758,667 +817,5 @@ export const clearAllMarkets = mutation({
       betsDeleted:    eventBets.length,
       balancesReset:  eventBalances.length,
     };
-  },
-});
-
-// ── Slot Machine ──────────────────────────────────────────────────────────────
-
-const SLOT_SYMBOLS = ["lemon", "cherry", "bell", "star", "seven", "money"] as const;
-// Flatter distribution → more high-value symbols land, more matches overall
-const SLOT_WEIGHTS = [22, 22, 20, 16, 12, 8]; // total = 100
-const SLOT_PAYOUTS: Record<string, Record<number, number>> = {
-  //                5-kind  4-kind  3-kind  2-kind (tiny consolation)
-  money:  { 5: 500, 4: 75,  3: 15,  2: 0.5  },
-  seven:  { 5: 150, 4: 30,  3: 8,   2: 0.4  },
-  star:   { 5: 75,  4: 15,  3: 4,   2: 0.3  },
-  bell:   { 5: 30,  4: 8,   3: 2,   2: 0.2  },
-  cherry: { 5: 15,  4: 5,   3: 1.5, 2: 0.15 },
-  lemon:  { 5: 8,   4: 3,   3: 1,   2: 0.1  },
-};
-
-function weightedSlotSymbol(): string {
-  const r = Math.random() * 100;
-  let cum = 0;
-  for (let i = 0; i < SLOT_SYMBOLS.length; i++) {
-    cum += SLOT_WEIGHTS[i];
-    if (r < cum) return SLOT_SYMBOLS[i];
-  }
-  return SLOT_SYMBOLS[0];
-}
-
-/**
- * Spin the slot machine. Deducts betAmount, generates 5 weighted-random reels,
- * computes payout from the best N-of-a-kind, and credits winnings.
- * Returns the reel results, payout, and updated balance.
- */
-export const spinSlot = mutation({
-  args: {
-    eventKey:  v.string(),
-    betAmount: v.number(),
-  },
-  handler: async (ctx, { eventKey, betAmount }) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-    assertBet(betAmount);
-
-    // Get or create balance
-    let bal = await ctx.db
-      .query("userBalances")
-      .withIndex("by_user_event", (q) =>
-        q.eq("userId", userId).eq("eventKey", eventKey)
-      )
-      .first();
-
-    if (!bal) {
-      const id = await ctx.db.insert("userBalances", {
-        userId,
-        eventKey,
-        balance:   STARTING_BALANCE,
-        totalWon:  0,
-        totalLost: 0,
-        totalBet:  0,
-        totalBegs: 0,
-      });
-      bal = (await ctx.db.get(id))!;
-    }
-
-    if (bal.balance < betAmount) throw new Error("Insufficient balance");
-
-    // Deduct bet immediately
-    await ctx.db.patch(bal._id, {
-      balance:  bal.balance - betAmount,
-      totalBet: bal.totalBet + betAmount,
-    });
-
-    // Generate 5 reels
-    const reels: string[] = [];
-    for (let i = 0; i < 5; i++) reels.push(weightedSlotSymbol());
-
-    // ── Retention boost: increase matching probability ──────────────────────
-    const slotBoost = await getBoostForUser(ctx, userId, eventKey, bal.balance - betAmount);
-    if (slotBoost > 0) {
-      const forceTripleChance = [0, 0.08, 0.15, 0.25][slotBoost];
-      const forcePairChance = [0, 0.20, 0.30, 0.40][slotBoost];
-      const rand = Math.random();
-      if (rand < forceTripleChance) {
-        // Force 3-of-a-kind with a mid/high value symbol
-        const boostSymbols = ["cherry", "bell", "star", "seven"];
-        const sym = boostSymbols[Math.floor(Math.random() * boostSymbols.length)];
-        const positions = [0, 1, 2, 3, 4].sort(() => Math.random() - 0.5).slice(0, 3);
-        for (const p of positions) reels[p] = sym;
-      } else if (rand < forcePairChance) {
-        // Force at least one matching pair
-        const src = Math.floor(Math.random() * 5);
-        let dst = Math.floor(Math.random() * 5);
-        while (dst === src) dst = Math.floor(Math.random() * 5);
-        reels[dst] = reels[src];
-      }
-    }
-
-    // Count occurrences of each symbol
-    const counts: Record<string, number> = {};
-    for (const s of reels) counts[s] = (counts[s] ?? 0) + 1;
-
-    // Find best payout: check each symbol's count against the payout table
-    let payout = 0;
-    let winSymbol = "";
-    let winCount = 0;
-    for (const [sym, cnt] of Object.entries(counts)) {
-      const table = SLOT_PAYOUTS[sym];
-      if (!table) continue;
-      // Check 5, then 4, then 3, then 2
-      for (const n of [5, 4, 3, 2] as const) {
-        if (cnt >= n && table[n]) {
-          const p = Math.floor(betAmount * table[n]);
-          if (p > payout) {
-            payout = p;
-            winSymbol = sym;
-            winCount = n;
-          }
-          break; // take best match count for this symbol
-        }
-      }
-    }
-
-    // Credit winnings
-    const updated = (await ctx.db.get(bal._id))!;
-    if (payout > 0) {
-      await ctx.db.patch(bal._id, {
-        balance:  updated.balance + payout,
-        totalWon: updated.totalWon + payout,
-      });
-    } else {
-      await ctx.db.patch(bal._id, {
-        totalLost: updated.totalLost + betAmount,
-      });
-    }
-
-    const final = (await ctx.db.get(bal._id))!;
-    return {
-      reels,
-      payout,
-      winSymbol,
-      winCount,
-      newBalance: final.balance,
-    };
-  },
-});
-
-// ── Plinko ────────────────────────────────────────────────────────────────────
-
-/** Risk levels determine the multiplier distribution */
-const PLINKO_MULTIPLIERS: Record<string, number[]> = {
-  // Low risk: safer payouts, generous edges
-  low: [5.0, 2.0, 1.5, 1.2, 0.7, 0.4, 0.7, 1.2, 1.5, 2.0, 5.0],
-  // Medium risk: solid variance, juicy edges
-  medium: [12.0, 4.0, 2.0, 1.3, 0.8, 0.3, 0.8, 1.3, 2.0, 4.0, 12.0],
-  // High risk: extreme variance, massive edge payouts
-  high: [50.0, 10.0, 3.0, 0.8, 0.4, 0.2, 0.4, 0.8, 3.0, 10.0, 50.0],
-};
-
-/**
- * Simulate a Plinko ball drop. The ball starts at the center and bounces
- * left or right at each row of pegs. Each bounce has a slight center bias
- * to create a natural distribution. Returns the path and final multiplier.
- */
-export const dropPlinko = mutation({
-  args: {
-    eventKey:  v.string(),
-    betAmount: v.number(),
-    risk:      v.string(),  // "low" | "medium" | "high"
-  },
-  handler: async (ctx, { eventKey, betAmount, risk }) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-    assertBet(betAmount);
-    if (!PLINKO_MULTIPLIERS[risk]) throw new Error("Invalid risk level");
-
-    // Get or create balance
-    let bal = await ctx.db
-      .query("userBalances")
-      .withIndex("by_user_event", (q) =>
-        q.eq("userId", userId).eq("eventKey", eventKey)
-      )
-      .first();
-
-    if (!bal) {
-      const id = await ctx.db.insert("userBalances", {
-        userId,
-        eventKey,
-        balance:   STARTING_BALANCE,
-        totalWon:  0,
-        totalLost: 0,
-        totalBet:  0,
-        totalBegs: 0,
-      });
-      bal = (await ctx.db.get(id))!;
-    }
-
-    if (bal.balance < betAmount) throw new Error("Insufficient balance");
-
-    // Deduct bet
-    await ctx.db.patch(bal._id, {
-      balance:  bal.balance - betAmount,
-      totalBet: bal.totalBet + betAmount,
-    });
-
-    // Simulate ball path through 10 rows of pegs
-    // Ball starts at position 5 (center of 11 slots: 0-10)
-    // At each row, it goes left (-0.5) or right (+0.5)
-    const path: number[] = [5]; // starting position (center)
-    const multipliers = PLINKO_MULTIPLIERS[risk];
-    let position = 5;
-
-    // ── Retention boost: modify center bias to favor higher-multiplier zones ──
-    const plinkoBoost = await getBoostForUser(ctx, userId, eventKey, bal.balance - betAmount);
-    // Normal (1.0): slight center bias → low multipliers. Boosted: reduce/reverse → edge bias
-    const biasScale = [1.0, 0.0, -1.0, -2.0][plinkoBoost];
-
-    for (let row = 0; row < 10; row++) {
-      const centerBias = (position > 5 ? -0.02 : position < 5 ? 0.02 : 0) * biasScale;
-      const goRight = Math.random() < (0.5 + centerBias);
-      position = Math.max(0, Math.min(10, position + (goRight ? 0.5 : -0.5)));
-      path.push(position);
-    }
-
-    // Map final position to slot index (0-10)
-    const slotIndex = Math.round(position);
-    const multiplier = multipliers[Math.min(slotIndex, multipliers.length - 1)];
-    const payout = Math.floor(betAmount * multiplier);
-
-    // Credit winnings
-    const updated = (await ctx.db.get(bal._id))!;
-    if (payout > 0) {
-      await ctx.db.patch(bal._id, {
-        balance:  updated.balance + payout,
-        totalWon: payout > betAmount ? updated.totalWon + (payout - betAmount) : updated.totalWon,
-        totalLost: payout < betAmount ? updated.totalLost + (betAmount - payout) : updated.totalLost,
-      });
-    } else {
-      await ctx.db.patch(bal._id, {
-        totalLost: updated.totalLost + betAmount,
-      });
-    }
-
-    const final = (await ctx.db.get(bal._id))!;
-    return {
-      path,
-      slotIndex,
-      multiplier,
-      payout,
-      newBalance: final.balance,
-    };
-  },
-});
-
-// ── Multi-step casino games (Crossy Road, Mines) ──────────────────────────────
-//
-// Both games span several mutations: a start, one or more steps, then a
-// cash-out. Every piece of that state — the board, the progress, and the
-// multiplier to pay — is held in `casinoGames` and never accepted from the
-// caller. The client used to own all of it and hand the multiplier back at
-// cash-out, which meant `minesCashOut({betAmount, multiplier})` credited
-// whatever it was given: one console call could mint an unbounded balance.
-// The step and cash-out mutations below now take only the tile the player
-// touched and read everything else from the row.
-
-/** Find the caller's open round for a game, if any. */
-async function openGame(
-  ctx: MutationCtx,
-  userId: Id<"users">,
-  eventKey: string,
-  game: "crossy" | "mines",
-) {
-  return await ctx.db
-    .query("casinoGames")
-    .withIndex("by_user_event_game", (q) =>
-      q.eq("userId", userId).eq("eventKey", eventKey).eq("game", game)
-    )
-    .first();
-}
-
-/**
- * Open a round: validate the stake, deduct it, and clear any round the player
- * walked away from. An abandoned round's stake stays spent — that is what
- * abandoning means — so this never refunds.
- */
-async function startRound(
-  ctx: MutationCtx,
-  userId: Id<"users">,
-  eventKey: string,
-  game: "crossy" | "mines",
-  betAmount: number,
-  state: Record<string, unknown>,
-): Promise<number> {
-  assertBet(betAmount);
-
-  const stale = await openGame(ctx, userId, eventKey, game);
-  if (stale) await ctx.db.delete(stale._id);
-
-  const bal = await getOrCreateBalanceRow(ctx, userId, eventKey);
-  if (bal.balance < betAmount) throw new Error("Insufficient balance");
-
-  await ctx.db.patch(bal._id, {
-    balance:  bal.balance - betAmount,
-    totalBet: bal.totalBet + betAmount,
-  });
-
-  await ctx.db.insert("casinoGames", {
-    userId,
-    eventKey,
-    game,
-    betAmount,
-    multiplier: 1,
-    startedAt: Date.now(),
-    ...state,
-  });
-
-  return bal.balance - betAmount;
-}
-
-/** Pay out an open round at the multiplier the server computed, and close it. */
-async function settleRound(
-  ctx: MutationCtx,
-  userId: Id<"users">,
-  eventKey: string,
-  game: "crossy" | "mines",
-  minMultiplierSteps: number,
-): Promise<{ payout: number; newBalance: number; multiplier: number }> {
-  const round = await openGame(ctx, userId, eventKey, game);
-  if (!round) throw new Error("No game in progress");
-
-  const progress =
-    game === "mines" ? (round.revealed?.length ?? 0) : (round.rowsCleared ?? 0);
-  if (progress < minMultiplierSteps) {
-    throw new Error("Nothing to cash out yet");
-  }
-
-  const payout = Math.floor(round.betAmount * round.multiplier);
-  const bal = await getOrCreateBalanceRow(ctx, userId, eventKey);
-  await ctx.db.patch(bal._id, {
-    balance:  bal.balance + payout,
-    totalWon: bal.totalWon + Math.max(0, payout - round.betAmount),
-    ...(payout < round.betAmount
-      ? { totalLost: bal.totalLost + (round.betAmount - payout) }
-      : {}),
-  });
-  await ctx.db.delete(round._id);
-
-  return { payout, newBalance: bal.balance + payout, multiplier: round.multiplier };
-}
-
-/** Close a lost round and book the stake as a loss. */
-async function loseRound(
-  ctx: MutationCtx,
-  userId: Id<"users">,
-  eventKey: string,
-  roundId: Id<"casinoGames">,
-  betAmount: number,
-): Promise<number> {
-  const bal = await getOrCreateBalanceRow(ctx, userId, eventKey);
-  await ctx.db.patch(bal._id, { totalLost: bal.totalLost + betAmount });
-  await ctx.db.delete(roundId);
-  return bal.balance;
-}
-
-// ── Crossy Road (Chicken Cross) ───────────────────────────────────────────────
-
-/**
- * Difficulty configs for Chicken Cross.
- * tilesPerRow = total tiles shown, trapsPerRow = how many are deadly.
- * baseMultiplier = payout multiplier per safe step (compounds).
- */
-const CROSSY_DIFFICULTIES: Record<string, { tilesPerRow: number; trapsPerRow: number; baseMultiplier: number }> = {
-  easy:   { tilesPerRow: 4, trapsPerRow: 1, baseMultiplier: 1.31 },
-  medium: { tilesPerRow: 3, trapsPerRow: 1, baseMultiplier: 1.47 },
-  hard:   { tilesPerRow: 2, trapsPerRow: 1, baseMultiplier: 1.96 },
-  expert: { tilesPerRow: 3, trapsPerRow: 2, baseMultiplier: 2.94 },
-};
-
-const CROSSY_MAX_ROWS = 10;
-/** Row 0 pays under 1x — the hook that gets a player one row in. */
-const CROSSY_HOOK_MULTIPLIER = 0.9;
-
-/** Cash-out multiplier after `rowsCleared` safe rows. */
-function crossyMultiplier(rowsCleared: number, baseMultiplier: number): number {
-  if (rowsCleared <= 0) return 1;
-  if (rowsCleared === 1) return CROSSY_HOOK_MULTIPLIER;
-  return parseFloat(
-    (CROSSY_HOOK_MULTIPLIER * Math.pow(baseMultiplier, rowsCleared - 1)).toFixed(2)
-  );
-}
-
-/** Begin a Chicken Cross round. Deducts the stake and opens the server round. */
-export const crossyStart = mutation({
-  args: {
-    eventKey:   v.string(),
-    betAmount:  v.number(),
-    difficulty: v.string(),
-  },
-  handler: async (ctx, { eventKey, betAmount, difficulty }) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-    if (!CROSSY_DIFFICULTIES[difficulty]) throw new Error("Invalid difficulty");
-
-    const newBalance = await startRound(ctx, userId, eventKey, "crossy", betAmount, {
-      difficulty,
-      rowsCleared: 0,
-    });
-    return { newBalance };
-  },
-});
-
-/**
- * Step onto one tile of the current row. The row number, the stake and the
- * difficulty all come from the open round, so the only thing the caller
- * chooses is which tile to touch.
- */
-export const crossyStep = mutation({
-  args: {
-    eventKey:  v.string(),
-    tileIndex: v.number(),
-  },
-  handler: async (ctx, { eventKey, tileIndex }) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
-    const round = await openGame(ctx, userId, eventKey, "crossy");
-    if (!round) throw new Error("No game in progress");
-
-    const config = CROSSY_DIFFICULTIES[round.difficulty ?? ""];
-    if (!config) throw new Error("Invalid difficulty");
-
-    const currentRow = round.rowsCleared ?? 0;
-    if (currentRow >= CROSSY_MAX_ROWS) throw new Error("Round already complete — cash out");
-    if (!Number.isInteger(tileIndex) || tileIndex < 0 || tileIndex >= config.tilesPerRow) {
-      throw new Error("Invalid tile index");
-    }
-
-    // Row 0 is a "hook" row: no traps, 0.9x multiplier to lure the player in
-    const trapsThisRow = currentRow === 0 ? 0 : config.trapsPerRow;
-
-    // Generate trap positions for this row (random, determined server-side)
-    const trapIndices: number[] = [];
-    const allIndices = Array.from({ length: config.tilesPerRow }, (_, i) => i);
-    for (let t = 0; t < trapsThisRow; t++) {
-      const pick = Math.floor(Math.random() * allIndices.length);
-      trapIndices.push(allIndices[pick]);
-      allIndices.splice(pick, 1);
-    }
-
-    // ── Retention mercy: chance to save player from trap ────────────────────
-    const bal = await getOrCreateBalanceRow(ctx, userId, eventKey);
-    const crossyBoost = await getBoostForUser(ctx, userId, eventKey, bal.balance);
-    if (crossyBoost > 0 && trapIndices.includes(tileIndex) && currentRow > 0) {
-      const mercyChance = [0, 0.15, 0.25, 0.40][crossyBoost];
-      if (Math.random() < mercyChance) {
-        const safeTiles = Array.from({ length: config.tilesPerRow }, (_, i) => i)
-          .filter(i => i !== tileIndex && !trapIndices.includes(i));
-        if (safeTiles.length > 0) {
-          trapIndices[trapIndices.indexOf(tileIndex)] = safeTiles[Math.floor(Math.random() * safeTiles.length)];
-        }
-      }
-    }
-
-    const hitTrap = trapIndices.includes(tileIndex);
-
-    if (hitTrap) {
-      const newBalance = await loseRound(ctx, userId, eventKey, round._id, round.betAmount);
-      return {
-        safe: false,
-        trapIndices,
-        multiplier: crossyMultiplier(currentRow, config.baseMultiplier),
-        payout: 0,
-        newBalance,
-        gameOver: true,
-      };
-    }
-
-    const rowsCleared = currentRow + 1;
-    const multiplier = crossyMultiplier(rowsCleared, config.baseMultiplier);
-    await ctx.db.patch(round._id, { rowsCleared, multiplier });
-
-    return {
-      safe: true,
-      trapIndices,
-      multiplier,
-      payout: Math.floor(round.betAmount * multiplier),
-      newBalance: bal.balance,
-      // At max rows the round stops accepting steps; the client cashes out.
-      gameOver: rowsCleared >= CROSSY_MAX_ROWS,
-    };
-  },
-});
-
-/**
- * Cash out the open Chicken Cross round at the server-held multiplier.
- * Takes no stake or multiplier — both come from the round.
- */
-export const crossyCashOut = mutation({
-  args: { eventKey: v.string() },
-  handler: async (ctx, { eventKey }) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-    // Row 0 is the free hook row; cashing out there would pay 1x for nothing.
-    return await settleRound(ctx, userId, eventKey, "crossy", 1);
-  },
-});
-
-// ── Mines ─────────────────────────────────────────────────────────────────────
-
-const MINES_TILES = 25;
-/** House edge applied to the fair combinatorial multiplier. */
-const MINES_HOUSE_EDGE = 0.97;
-
-function combination(n: number, k: number): number {
-  if (k > n || k < 0) return 0;
-  if (k === 0 || k === n) return 1;
-  let result = 1;
-  for (let i = 0; i < k; i++) {
-    result = result * (n - i) / (i + 1);
-  }
-  return result;
-}
-
-/**
- * Cash-out multiplier after `gemsRevealed` safe tiles.
- *
- * Guarded against gemsRevealed exceeding the number of safe tiles: the
- * denominator is then 0 and the raw formula yields Infinity, which used to be
- * written straight into the balance row and left it permanently unusable.
- * The reveal path can no longer produce that state, but the guard keeps a bad
- * multiplier from ever reaching a balance again.
- */
-function minesMultiplier(mineCount: number, gemsRevealed: number): number {
-  const safeTotal = MINES_TILES - mineCount;
-  if (gemsRevealed <= 0) return 1;
-  if (gemsRevealed > safeTotal) return 1;
-  const raw =
-    MINES_HOUSE_EDGE * combination(MINES_TILES, gemsRevealed) / combination(safeTotal, gemsRevealed);
-  if (!Number.isFinite(raw) || raw <= 0) return 1;
-  return parseFloat(raw.toFixed(2));
-}
-
-/**
- * Begin a Mines round. The board is dealt here, with the server's own
- * randomness — mine positions used to be derived from a client-supplied
- * `gameSeed`, so losing a round revealed the layout and replaying the same
- * seed walked the safe path to the top multiplier.
- */
-export const minesStart = mutation({
-  args: {
-    eventKey:  v.string(),
-    betAmount: v.number(),
-    mineCount: v.number(),
-  },
-  handler: async (ctx, { eventKey, betAmount, mineCount }) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-    if (!Number.isInteger(mineCount) || mineCount < 1 || mineCount > 24) {
-      throw new Error("Mine count must be a whole number from 1 to 24");
-    }
-
-    // Fisher-Yates over the 25 tiles; take the first mineCount as mines.
-    const indices = Array.from({ length: MINES_TILES }, (_, i) => i);
-    for (let i = indices.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [indices[i], indices[j]] = [indices[j], indices[i]];
-    }
-
-    const newBalance = await startRound(ctx, userId, eventKey, "mines", betAmount, {
-      mineCount,
-      minePositions: indices.slice(0, mineCount),
-      revealed: [],
-    });
-    return { newBalance };
-  },
-});
-
-/** Reveal one tile of the open Mines round. */
-export const minesReveal = mutation({
-  args: {
-    eventKey:  v.string(),
-    tileIndex: v.number(),
-  },
-  handler: async (ctx, { eventKey, tileIndex }) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
-    const round = await openGame(ctx, userId, eventKey, "mines");
-    if (!round) throw new Error("No game in progress");
-
-    if (!Number.isInteger(tileIndex) || tileIndex < 0 || tileIndex >= MINES_TILES) {
-      throw new Error("Invalid tile index");
-    }
-
-    const minePositions = round.minePositions ?? [];
-    const revealed      = round.revealed ?? [];
-    const mineCount     = round.mineCount ?? minePositions.length;
-    if (revealed.includes(tileIndex)) throw new Error("Tile already revealed");
-
-    // ── Retention mercy: chance to save player from mine ────────────────────
-    const bal = await getOrCreateBalanceRow(ctx, userId, eventKey);
-    const minesBoost = await getBoostForUser(ctx, userId, eventKey, bal.balance);
-    let hitMine = minePositions.includes(tileIndex);
-    if (minesBoost > 0 && hitMine) {
-      const mercyChance = [0, 0.15, 0.25, 0.40][minesBoost];
-      // Move the mine to a tile the player has not touched, so the board stays
-      // consistent for the rest of the round.
-      if (Math.random() < mercyChance) {
-        const free = Array.from({ length: MINES_TILES }, (_, i) => i).filter(
-          (i) => i !== tileIndex && !revealed.includes(i) && !minePositions.includes(i)
-        );
-        if (free.length > 0) {
-          minePositions[minePositions.indexOf(tileIndex)] =
-            free[Math.floor(Math.random() * free.length)];
-          hitMine = false;
-        }
-      }
-    }
-
-    if (hitMine) {
-      const newBalance = await loseRound(ctx, userId, eventKey, round._id, round.betAmount);
-      return {
-        safe: false,
-        minePositions,
-        multiplier: minesMultiplier(mineCount, revealed.length),
-        payout: 0,
-        newBalance,
-        gameOver: true,
-      };
-    }
-
-    const nextRevealed = [...revealed, tileIndex];
-    const multiplier   = minesMultiplier(mineCount, nextRevealed.length);
-    const allGemsRevealed = nextRevealed.length >= MINES_TILES - mineCount;
-
-    await ctx.db.patch(round._id, {
-      revealed: nextRevealed,
-      minePositions,
-      multiplier,
-    });
-
-    return {
-      safe: true,
-      // Only give the layout away once the round is over.
-      minePositions: allGemsRevealed ? minePositions : [],
-      multiplier,
-      payout: Math.floor(round.betAmount * multiplier),
-      newBalance: bal.balance,
-      gameOver: allGemsRevealed,
-    };
-  },
-});
-
-/**
- * Cash out the open Mines round at the server-held multiplier.
- * Takes no stake or multiplier — both come from the round.
- */
-export const minesCashOut = mutation({
-  args: { eventKey: v.string() },
-  handler: async (ctx, { eventKey }) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-    return await settleRound(ctx, userId, eventKey, "mines", 1);
   },
 });

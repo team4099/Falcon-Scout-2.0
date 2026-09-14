@@ -313,7 +313,10 @@ export const reportPitDuty = mutation({
     });
     // Pit duty produces no form submission, so this is its own payout —
     // paid once per rotation since a repeat report short-circuits above.
-    await awardCoins(ctx, userId, eventKey, PIT_DUTY_REWARD);
+    await awardCoins(
+      ctx, userId, eventKey, PIT_DUTY_REWARD, "pit_duty_reward",
+      "Pit duty", rotationId,
+    );
     return id;
   },
 });
@@ -333,7 +336,10 @@ export const unreportPitDuty = mutation({
       await ctx.db.delete(existing._id);
       // Reverse the reportPitDuty payout — otherwise report→undo→report
       // repeated farms unlimited coins.
-      await revokeCoins(ctx, userId, existing.eventKey, PIT_DUTY_REWARD);
+      await revokeCoins(
+        ctx, userId, existing.eventKey, PIT_DUTY_REWARD, "pit_duty_revoked",
+        "Pit duty undone", rotationId,
+      );
     }
   },
 });

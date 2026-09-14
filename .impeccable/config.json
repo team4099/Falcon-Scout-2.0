@@ -11,6 +11,15 @@
         ],
         "createdAt": "2026-09-12T22:12:51.452Z",
         "reason": "corner brackets are a QR-viewfinder reticle overlay (two-sided border on a small square), not a card side-tab accent; pre-existing, unrelated to this change"
+      },
+      {
+        "rule": "bounce-easing",
+        "value": "animate-bounce",
+        "files": [
+          "src/pages/BettingPage.tsx"
+        ],
+        "createdAt": "2026-09-14T14:35:27.323Z",
+        "reason": "intentional joke micro-interaction on the self-deprecating 'pls beg' button's +1 popup, pre-existing and unrelated to this session's changes"
       }
     ]
   }
