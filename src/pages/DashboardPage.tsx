@@ -27,7 +27,7 @@ import {
 import type { TBAMatch } from "@/lib/api";
 import { EMPTY_TEAM_EPA, parseEpaComponents, totalEpa } from "@/lib/epa";
 import type { TeamEpa } from "@/lib/epa";
-import { ExternalLink, Search, FileText, TrendingUp, ClipboardList, Trash2, AlertTriangle, ChevronDown, ChevronUp, Clock, KeyRound, CalendarCheck, Trophy, CalendarDays } from "lucide-react";
+import { ExternalLink, Search, FileText, TrendingUp, ClipboardList, Trash2, AlertTriangle, ChevronDown, ChevronUp, Clock, KeyRound, CalendarCheck, Trophy, CalendarDays, Rows3, Table2 } from "lucide-react";
 import { getTBAKey } from "@/lib/api";
 import TeamDetailPanel from "@/pages/TeamDetailPanel";
 import { useMutation } from "convex/react";
@@ -456,6 +456,7 @@ function TeamRow({
   tbaRank,
   fields,
   onOpenDetail,
+  forceTable = false,
 }: {
   teamNumber: number;
   eventYear: number;
@@ -465,6 +466,9 @@ function TeamRow({
   tbaRank: Record<string, unknown> | null;
   fields: FormField[];
   onOpenDetail: () => void;
+  /** When true, always render the column-table row layout, even below the
+   *  sm breakpoint — used for the mobile "table view" toggle. */
+  forceTable?: boolean;
 }) {
   const [textOpen, setTextOpen] = useState(false);
   const [reportsOpen, setReportsOpen] = useState(false);
@@ -564,9 +568,9 @@ function TeamRow({
 
   return (
     <>
-      {/* ── Mobile card layout (hidden on sm+) ── */}
+      {/* ── Mobile card layout (hidden on sm+, and hidden below sm when forceTable is on) ── */}
       <div
-        className="sm:hidden border-b border-border px-3 py-3 hover:bg-muted/20 active:bg-muted/30 transition-colors cursor-pointer"
+        className={`${forceTable ? "hidden" : "block"} sm:hidden border-b border-border px-3 py-3 hover:bg-muted/20 active:bg-muted/30 transition-colors cursor-pointer`}
         onClick={onOpenDetail}
       >
         {/* Top row: avatar + team info + actions */}
@@ -599,9 +603,9 @@ function TeamRow({
         </div>
       </div>
 
-      {/* ── Desktop table row (hidden on mobile) ── */}
+      {/* ── Desktop table row (hidden on mobile, unless forceTable is on) ── */}
       <div
-        className="hidden sm:flex items-center gap-3 px-4 py-3 border-b border-border hover:bg-muted/30 transition-colors cursor-pointer"
+        className={`${forceTable ? "flex" : "hidden"} sm:flex items-center gap-3 px-4 py-3 border-b border-border hover:bg-muted/30 transition-colors cursor-pointer`}
         onClick={onOpenDetail}
       >
         {/* Avatar + team # */}
@@ -1310,6 +1314,9 @@ export default function DashboardPage() {
   // Active sort column, or null for the natural (team-number) order.
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  // Mobile only: lets scouts flip from the stacked card list to the same
+  // scrollable column table desktop sees, so they can sort by rank/EPA/etc.
+  const [mobileTableView, setMobileTableView] = useState(false);
 
   // First click on a column sorts it descending (highest EPA, best rank first,
   // which is what you almost always want); clicking the active column flips it;
@@ -1652,15 +1659,28 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Search */}
-          <div className="relative shrink-0">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              className="pl-9"
-              placeholder="Search by team number…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+          {/* Search + mobile view toggle */}
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                placeholder="Search by team number…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            {/* Mobile-only: flip between stacked cards and the full column
+                table (horizontally scrollable) so rank/EPA sorting works on phone. */}
+            <Button
+              variant="outline"
+              size="icon"
+              className="sm:hidden shrink-0"
+              onClick={() => setMobileTableView((v) => !v)}
+              title={mobileTableView ? "Switch to card view" : "Switch to table view"}
+            >
+              {mobileTableView ? <Rows3 className="h-4 w-4" /> : <Table2 className="h-4 w-4" />}
+            </Button>
           </div>
 
           {fields.length === 0 && (
@@ -1678,16 +1698,16 @@ export default function DashboardPage() {
           )}
 
           <div className="flex-1 bg-card border border-border rounded-xl overflow-hidden flex flex-col min-h-0">
-            {/* Column header — desktop only (mobile uses card layout) */}
-            <div className="hidden sm:block overflow-x-auto shrink-0">
+            {/* Column header — desktop always, mobile only when table view is on */}
+            <div className={`${mobileTableView ? "block" : "hidden"} sm:block overflow-x-auto shrink-0`}>
               <div className="min-w-[540px]">
                 <ColumnHeader sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               </div>
             </div>
 
             <ScrollArea className="flex-1">
-              {/* Desktop table rows */}
-              <div className="hidden sm:block min-w-[540px]">
+              {/* Column table rows — desktop always, mobile only in table view */}
+              <div className={`${mobileTableView ? "block overflow-x-auto" : "hidden"} sm:block min-w-[540px]`}>
                 {loadingExternal && tbaTeams.length === 0 ? (
                   <div className="divide-y divide-border">
                     {Array.from({ length: 8 }).map((_, i) => (
@@ -1726,14 +1746,15 @@ export default function DashboardPage() {
                         tbaRank={tbaRankings[teamNumber as number] ?? null}
                         fields={fields}
                         onOpenDetail={() => setSelectedTeam(teamNumber as number)}
+                        forceTable={mobileTableView}
                       />
                     );
                   })
                 )}
               </div>
 
-              {/* Mobile card list */}
-              <div className="sm:hidden">
+              {/* Mobile card list — hidden when the mobile table view toggle is on */}
+              <div className={`${mobileTableView ? "hidden" : "block"} sm:hidden`}>
                 {loadingExternal && tbaTeams.length === 0 ? (
                   <div className="divide-y divide-border">
                     {Array.from({ length: 6 }).map((_, i) => (
