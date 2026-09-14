@@ -17,8 +17,10 @@ import {
 } from "lucide-react";
 import {
   generateSchedule,
+  generatePitScoutingTeams,
   type SchedulerOutput,
   type Position as GenPosition,
+  type ScoutPref as GenScoutPref,
 } from "@/lib/scheduleGenerator";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -479,11 +481,14 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, onCycleClick, sa
 
   // Column widths — label + 3 red + divider + 3 blue
   // landscape phone gets a slightly wider label so match numbers don't wrap
+  // Label column must fit the widest range label a cycle row can show
+  // ("Q76–Q80", 8 chars) at this font size — 36/44px was too narrow and let
+  // the label spill into the first scout-name cell instead of wrapping.
   const COL = isLandscapePhone
-    ? "44px 1fr 1fr 1fr 2px 1fr 1fr 1fr"
+    ? "54px 1fr 1fr 1fr 2px 1fr 1fr 1fr"
     : isMobile
-    ? "36px 1fr 1fr 1fr 2px 1fr 1fr 1fr"
-    : "50px 1fr 1fr 1fr 3px 1fr 1fr 1fr";
+    ? "50px 1fr 1fr 1fr 2px 1fr 1fr 1fr"
+    : "58px 1fr 1fr 1fr 3px 1fr 1fr 1fr";
 
   const cellPad = isLandscapePhone ? "3px 2px" : "4px 3px";
   const cellMinH = isLandscapePhone ? 24 : 28;
@@ -635,6 +640,7 @@ function SingleMatchRow({
                         background: isExpanded ? G_MED : "transparent",
                         border: "none", borderRadius: 5, cursor: "pointer",
                         textAlign: "left", transition: "background 0.1s",
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0,
                       }}
                     >
                       {lbl}
@@ -645,6 +651,7 @@ function SingleMatchRow({
                       fontSize: isLandscapePhone ? 10 : 12, fontWeight: 700,
                       fontFamily: "monospace", letterSpacing: "-0.01em",
                       color: isQual ? FG : G,
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0,
                     }}>
                       {lbl}
                     </div>
@@ -847,6 +854,7 @@ function CycleRow({
           padding: isLandscapePhone ? "2px 3px" : "3px 4px",
           fontSize: isLandscapePhone ? 9 : 11, fontWeight: 700,
           fontFamily: "monospace", letterSpacing: "-0.02em", color: FG, whiteSpace: "nowrap",
+          overflow: "hidden", textOverflow: "ellipsis", minWidth: 0,
         }}>
           {rangeLbl}
         </div>
@@ -1710,8 +1718,10 @@ function PitScoutingTab({
             <button
               onClick={async () => {
                 const msg = optedInCount > 0
-                  ? `Auto-assign ${optedInCount} opted-in scouts into pairs of 2, covering ~5 teams each?`
-                  : `No scouts have opted in yet — assign all ${allUsers.length} scouts into pairs of 2 anyway?`;
+                  ? `Auto-assign ${optedInCount} opted-in scouts into pairs of 2, covering 6-8 teams each? ` +
+                    `Extra pairs will be recruited from scouts with no preferences if needed.`
+                  : `No scouts have opted in yet — recruit scouts with no preferences into pairs of 2, ` +
+                    `covering 6-8 teams each?`;
                 if (!window.confirm(msg)) return;
                 setAutoAssigning(true);
                 try { await onAutoAssign(tbaTeams); } finally { setAutoAssigning(false); }
@@ -2019,45 +2029,30 @@ export default function SchedulingPage() {
   }
 
   /**
-   * Auto-assign pit scouting:
-   * 1. Take scouts who opted in (wantsPitScouting=true). Fall back to all users if none opted in.
-   * 2. Group into pairs of 2 (last group may be 2 or 3 depending on count).
-   * 3. Distribute TBA teams sequentially across pairs, ~5 teams each.
-   *    (actual count = ceil(totalTeams / numPairs))
-   * 4. Batch-save to Convex.
+   * Auto-assign pit scouting via generatePitScoutingTeams (src/lib/scheduleGenerator.ts):
+   * wantsPitScouting opt-ins are paired first (preference-aware), each pair
+   * covers 6-8 TBA teams, extra pairs are recruited from zero-preference
+   * scouts first (then fewest-preferences) if needed to stay under 8/pair,
+   * and teams that already have a manual assignment are left untouched.
    */
   async function handleAutoAssignPitScouting(teams: TBATeamSimple[]) {
-    if (!currentEvent || teams.length === 0) return;
-    const prefs = (allPreferences ?? []) as Array<{ scoutId: string; wantsPitScouting?: boolean }>;
-    const optedIn = prefs.filter(p => p.wantsPitScouting === true).map(p => p.scoutId);
-    // Fall back to all users if nobody has opted in yet
-    const pool = optedIn.length > 0
-      ? (allUsers ?? []).filter(u => optedIn.includes(u._id))
-      : (allUsers ?? []);
-    if (pool.length === 0) return;
+    if (!currentEvent || teams.length === 0 || !allUsers) return;
+    const prefs = (allPreferences ?? []) as GenScoutPref[];
+    const existingAssignments = [...pitAssignmentsMap.entries()].map(([teamNumber, scoutIds]) => ({ teamNumber, scoutIds }));
 
-    // Build pairs (groups of 2, last group may be 3 if odd)
-    const pairs: string[][] = [];
-    for (let i = 0; i < pool.length; i += 2) {
-      if (i + 1 < pool.length) {
-        pairs.push([pool[i]._id, pool[i + 1]._id]);
-      } else {
-        // Odd scout: add to last pair to make a trio
-        if (pairs.length > 0) pairs[pairs.length - 1].push(pool[i]._id);
-        else pairs.push([pool[i]._id]);
-      }
-    }
+    const result = generatePitScoutingTeams({
+      teamNumbers: teams.map(t => t.team_number),
+      scouts: allUsers,
+      preferences: prefs,
+      existingAssignments,
+      excludedScoutIds: [...new Set([...excludedScoutIds, ...dbExcludedSet])],
+    });
 
-    // Distribute teams: ~5 per pair
-    const teamsPerPair = Math.ceil(teams.length / pairs.length);
-    const assignments: { teamNumber: number; scoutIds: Id<"users">[] }[] = [];
-    for (let i = 0; i < pairs.length; i++) {
-      const slice = teams.slice(i * teamsPerPair, (i + 1) * teamsPerPair);
-      for (const t of slice) {
-        assignments.push({ teamNumber: t.team_number, scoutIds: pairs[i] as Id<"users">[] });
-      }
-    }
-
+    if (result.teamAssignments.length === 0) return;
+    const assignments = result.teamAssignments.map(a => ({
+      teamNumber: a.teamNumber,
+      scoutIds: a.scoutIds as Id<"users">[],
+    }));
     await batchUpsertPitScouting({ eventKey: currentEvent.eventKey, assignments });
   }
 

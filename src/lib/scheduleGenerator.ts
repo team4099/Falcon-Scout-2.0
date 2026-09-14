@@ -1,7 +1,8 @@
 /**
  * scheduleGenerator.ts
  * ─────────────────────────────────────────────────────────────────────────────
- * Auto-generate match assignments + pit rotations for a FRC scouting event.
+ * Auto-generate match assignments, pit rotations, and pre-competition pit
+ * scouting pairs for a FRC scouting event.
  *
  * Rules enforced:
  *  - Qual matches only (no elims) — elims pit rotation is always manual
@@ -10,7 +11,10 @@
  *  - Each scout scouts at least 2 blocks (10 matches) minimum, except drive
  *    team scouts, who never scout matches at all (see below)
  *  - Scouts who opt into pit duty get one block of 10 consecutive qual matches
- *    on pit duty (2 consecutive 5-match blocks); max 6 scouts on pit at once
+ *    on pit duty (2 consecutive 5-match blocks); aside from drive team (who
+ *    ride every window), each window has at most PIT_ROTATION_OTHERS_PER_WINDOW
+ *    (5) other scouts, and no non-drive-team scout rides more than ~70% of
+ *    the event's pit rotation windows
  *  - Drive team scouts are excluded from match scouting entirely and are
  *    placed on every qual pit-rotation window for the whole event (a window
  *    every 10 matches, covering the full schedule) — they have nowhere else
@@ -20,11 +24,23 @@
  *    few scouts to fill a block, the leftover positions are reported as
  *    blank spaces rather than silently double-booking someone
  *  - wantsMoreMatches scouts are targeted for ~50% more blocks than everyone
- *    else (proportional target, not a flat bonus)
+ *    else (proportional target, not a flat bonus); scouts with zero
+ *    preferences selected at all get a small tie-break nudge toward filling
+ *    slack match blocks (ahead of scouts already committed to pit rotation),
+ *    without getting the 1.5x wantsMoreMatches weight themselves
  *  - Preferred partner pairs/triplets are placed on the same alliance side
- *    within a scouting block (bitmask-optimised alliance splitting)
+ *    within a scouting block (bitmask-optimised alliance splitting); a scout
+ *    who lists 2-3 preferred partners is scored for co-placement with as many
+ *    of them as possible, not just the first one satisfied
  *  - Existing pit rotations are honoured as-is
  *  - Existing match assignments are preserved; only empty slots are filled
+ *  - generatePitScoutingTeams() (separate entry point) pairs up scouts for
+ *    pre-competition pit scouting: wantsPitScouting opt-ins are paired first
+ *    (preference-aware), each pair covers 6-8 TBA teams, and if more pairs
+ *    are needed to keep every pair at <=8 teams, they're recruited from
+ *    scouts with zero preferences selected first, then scouts with the
+ *    fewest preferences selected — never from scouts who opted into pit
+ *    rotation specifically, and existing manual team assignments are kept
  */
 
 export type Position = "red1" | "red2" | "red3" | "blue1" | "blue2" | "blue3";
@@ -48,6 +64,23 @@ export interface ScoutPref {
   preferredPartners: string[];
   wantsMoreMatches: boolean;
   wantsPitRotation: boolean;
+  /** Pre-competition pit scouting (distinct from wantsPitRotation, which is
+   *  in-event pit duty during quals). Optional to match the schema field. */
+  wantsPitScouting?: boolean;
+}
+
+/** True if a scout selected none of the four scheduling preferences at all. */
+function hasNoPreferences(p: ScoutPref | undefined): boolean {
+  if (!p) return true;
+  return p.preferredPartners.length === 0 && !p.wantsMoreMatches && !p.wantsPitRotation && !p.wantsPitScouting;
+}
+
+/** How many distinct preferences a scout selected (0-4), for "fewest first"
+ *  recruiting order when extra pit scouting pairs are needed. */
+function preferenceCount(p: ScoutPref | undefined): number {
+  if (!p) return 0;
+  return (p.preferredPartners.length > 0 ? 1 : 0) + (p.wantsMoreMatches ? 1 : 0) +
+    (p.wantsPitRotation ? 1 : 0) + (p.wantsPitScouting ? 1 : 0);
 }
 
 export interface QualMatch {
@@ -254,17 +287,21 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
   }
 
   // 4. Plan new pit rotations.
-  //  - No drive team: original behaviour — one window per up-to-6 opted-in
-  //    wanters, spaced across the event, each wanter serves exactly one shift.
+  //  - No drive team: one window per up-to-PIT_ROTATION_OTHERS_PER_WINDOW
+  //    opted-in wanters, spaced across the event, each wanter serves exactly
+  //    one shift (so no scout ever nears the 60-70% cap under this branch).
   //  - With a drive team: pit must be staffed for the entire event (drive
   //    team scouts have nowhere else to go), so a window is generated for
   //    every consecutive 10-match chunk from the first to the last qual
-  //    match. Drive team scouts go in every window; wantsPitRotation scouts
-  //    are folded in (one shift each, same as before) to help staff them.
+  //    match. Drive team scouts go in every window (the one documented
+  //    exception to the 60-70% cap, since they have nowhere else to be);
+  //    wantsPitRotation scouts are folded in (one shift each) alongside them,
+  //    up to PIT_ROTATION_OTHERS_PER_WINDOW others per window.
+  const PIT_ROTATION_OTHERS_PER_WINDOW = 5;
   const driveTeamCapped = scouts.filter(s => driveTeamIds.has(s._id)).map(s => s._id).slice(0, 6);
   if (driveTeamIds.size > 6) {
     warnings.push(
-      `${driveTeamIds.size} drive team scouts but pit rotations cap at 6 — ` +
+      `${driveTeamIds.size} drive team scouts but a pit window can only seat 6 of them — ` +
       `only the first 6 will be placed in each auto-generated pit window.`
     );
   }
@@ -275,7 +312,7 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
   const newPitRotations: GeneratedPitRotation[] = [];
 
   if (driveTeamCapped.length > 0 && B >= 1) {
-    const remainingCap = Math.max(0, 6 - driveTeamCapped.length);
+    const remainingCap = PIT_ROTATION_OTHERS_PER_WINDOW;
     let wIdx = 0;
     for (let bi = 0; bi < B; bi += 2) {
       const endBi = Math.min(bi + 1, B - 1);
@@ -295,8 +332,18 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
         `alongside the drive team's full-event pit schedule to give them a shift.`
       );
     }
+    // Each wanter above gets exactly one shift (wIdx never repeats a scout),
+    // so no non-drive-team scout ever exceeds the 60-70% cap here — except
+    // the degenerate single-window case, where one shift is unavoidably 100%.
+    const totalWindows = Math.ceil(B / 2);
+    if (totalWindows === 1 && wIdx > 0) {
+      warnings.push(
+        `Only one pit rotation window exists for this schedule — any scout given a shift is on ` +
+        `pit duty 100% of the event, above the usual 60-70% cap. Unavoidable with a single window.`
+      );
+    }
   } else if (pitWanters.length > 0 && B >= 2) {
-    const numWindows = Math.ceil(pitWanters.length / 6);
+    const numWindows = Math.ceil(pitWanters.length / PIT_ROTATION_OTHERS_PER_WINDOW);
 
     // Space windows evenly, each window = 2 consecutive blocks (10 matches)
     const windowStarts: number[] = [];
@@ -308,8 +355,8 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
     // The clamp to B-2 means that when there are more windows than the schedule
     // can hold, several collapse onto the same start — stacking "Auto Pit"
     // rotations on the same blocks and putting more than the documented maximum
-    // of 6 scouts on pit at once. Detect that and warn rather than emitting a
-    // schedule that quietly breaks its own rules.
+    // of PIT_ROTATION_OTHERS_PER_WINDOW scouts on pit at once. Detect that and
+    // warn rather than emitting a schedule that quietly breaks its own rules.
     for (let i = 1; i < windowStarts.length; i++) {
       if (windowStarts[i] <= windowStarts[i - 1])
         windowStarts[i] = Math.min(windowStarts[i - 1] + 2, B - 2);
@@ -317,12 +364,12 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
 
     const distinctStarts = new Set(windowStarts).size;
     if (distinctStarts < numWindows) {
-      const capacity = distinctStarts * 6;
+      const capacity = distinctStarts * PIT_ROTATION_OTHERS_PER_WINDOW;
       warnings.push(
         `${pitWanters.length} scouts asked for pit duty but this schedule only has room for ` +
         `about ${capacity} (${distinctStarts} non-overlapping window${distinctStarts === 1 ? "" : "s"} ` +
-        `across ${B} blocks). Some pit rotations overlap, so more than 6 scouts may be on pit ` +
-        `at the same time — review the pit rotations before publishing.`
+        `across ${B} blocks). Some pit rotations overlap, so more than ${PIT_ROTATION_OTHERS_PER_WINDOW} ` +
+        `scouts may be on pit at the same time — review the pit rotations before publishing.`
       );
     }
 
@@ -332,7 +379,7 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
       const start = blockStart(bi);
       const end   = blockEnd(Math.min(bi + 1, B - 1));
       const grp: string[] = [];
-      while (grp.length < 6 && pitIdx < pitWanters.length) {
+      while (grp.length < PIT_ROTATION_OTHERS_PER_WINDOW && pitIdx < pitWanters.length) {
         const s = pitWanters[pitIdx++];
         grp.push(s._id);
         markPitBusy(s._id, start, end);
@@ -417,7 +464,13 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
       const deficit = target - count;
       let affinity = 0;
       for (const id of alreadyInBlock) affinity += prefScore(s._id, id);
-      return underMinimum + deficit * 100 + affinity * 200;
+      // Small tie-break, well below the deficit/affinity weights above: when
+      // slack blocks need filling, lean on scouts with zero preferences
+      // selected before scouts who already committed to pit rotation
+      // elsewhere — a zero-preference scout has nothing else claiming them.
+      const pref = prefMap.get(s._id);
+      const slackNudge = (hasNoPreferences(pref) ? 3 : 0) - (pref?.wantsPitRotation ? 2 : 0);
+      return underMinimum + deficit * 100 + affinity * 200 + slackNudge;
     }
 
     const scored = [...candidatePool].sort((a, b) => candidateScore(b) - candidateScore(a));
@@ -478,6 +531,162 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
       scoutBlockCounts: Object.fromEntries(scoutBlockCounts),
     },
   };
+}
+
+// ── Pre-competition pit scouting pairs ──────────────────────────────────────
+// Separate from pit ROTATION (in-event pit duty during quals, above). This
+// assigns pairs of scouts to pit-scout specific TBA teams before quals start.
+
+export interface PitScoutingExistingAssignment {
+  teamNumber: number;
+  scoutIds: string[];
+}
+
+export interface PitScoutingInput {
+  teamNumbers: number[];
+  scouts: ScoutInfo[];
+  preferences: ScoutPref[];
+  /** Teams that already have a non-empty scout list are left untouched. */
+  existingAssignments?: PitScoutingExistingAssignment[];
+  excludedScoutIds?: string[];
+}
+
+export interface PitScoutingOutput {
+  teamAssignments: { teamNumber: number; scoutIds: string[] }[];
+  groups: string[][];
+  warnings: string[];
+}
+
+const PIT_SCOUTING_MIN_TEAMS_PER_PAIR = 6;
+const PIT_SCOUTING_MAX_TEAMS_PER_PAIR = 8;
+
+/** Greedily pair scout IDs, preferring a listed (or reciprocal) preferred
+ *  partner over an arbitrary pairing. Returns complete pairs plus at most
+ *  one leftover solo ID (when the input list has odd length). */
+function pairByPreference(
+  ids: string[],
+  prefMap: Map<string, ScoutPref>,
+): { pairs: string[][]; solo?: string } {
+  const remaining = new Set(ids);
+  const pairs: string[][] = [];
+  let solo: string | undefined;
+  for (const id of ids) {
+    if (!remaining.has(id)) continue;
+    remaining.delete(id);
+    const partners = prefMap.get(id)?.preferredPartners ?? [];
+    let partnerId: string | undefined;
+    for (const p of partners) {
+      if (remaining.has(p)) { partnerId = p; break; }
+    }
+    if (!partnerId) {
+      for (const other of remaining) {
+        if (prefMap.get(other)?.preferredPartners.includes(id)) { partnerId = other; break; }
+      }
+    }
+    if (!partnerId) {
+      const next = remaining.values().next();
+      if (!next.done) partnerId = next.value;
+    }
+    if (partnerId) { remaining.delete(partnerId); pairs.push([id, partnerId]); }
+    else solo = id;
+  }
+  return { pairs, solo };
+}
+
+export function generatePitScoutingTeams(input: PitScoutingInput): PitScoutingOutput {
+  const warnings: string[] = [];
+  const excludedSet = new Set(input.excludedScoutIds ?? []);
+  const scouts = input.scouts.filter(s => !excludedSet.has(s._id));
+  const prefMap = new Map<string, ScoutPref>();
+  for (const p of input.preferences) prefMap.set(p.scoutId, p);
+
+  const teamNumbers = [...new Set(input.teamNumbers)].sort((a, b) => a - b);
+  const existingByTeam = new Map<number, string[]>();
+  for (const e of input.existingAssignments ?? []) {
+    if (e.scoutIds.length > 0) existingByTeam.set(e.teamNumber, e.scoutIds);
+  }
+  const unassignedTeams = teamNumbers.filter(t => !existingByTeam.has(t));
+  const preserved = [...existingByTeam.entries()].map(([teamNumber, scoutIds]) => ({ teamNumber, scoutIds }));
+
+  if (teamNumbers.length === 0) {
+    return { teamAssignments: [], groups: [], warnings: ["No TBA teams loaded for this event."] };
+  }
+  if (unassignedTeams.length === 0) {
+    return { teamAssignments: preserved, groups: [], warnings: [] };
+  }
+  if (scouts.length === 0) {
+    return { teamAssignments: preserved, groups: [], warnings: ["No scouts available for pit scouting."] };
+  }
+
+  // 1. Pair up wantsPitScouting opt-ins first, preference-aware.
+  const optedIn = scouts.filter(s => prefMap.get(s._id)?.wantsPitScouting === true);
+  const { pairs: optedPairs, solo } = pairByPreference(optedIn.map(s => s._id), prefMap);
+  const pairs: string[][] = optedPairs.map(p => [...p]);
+
+  // 2. How many pairs do we need to keep every pair within 6-8 teams?
+  const minPairsForCap = Math.max(1, Math.ceil(unassignedTeams.length / PIT_SCOUTING_MAX_TEAMS_PER_PAIR));
+  const idealPairsForTarget = Math.max(1, Math.ceil(unassignedTeams.length / PIT_SCOUTING_MIN_TEAMS_PER_PAIR));
+  const baseCount = pairs.length + (solo ? 1 : 0);
+
+  // 3. Fallback recruits: never from scouts who opted into pit rotation
+  // specifically (they've already committed elsewhere) — zero-preference
+  // scouts first, then scouts with the fewest preferences selected.
+  const usedIds = new Set(optedIn.map(s => s._id));
+  const recruitCandidates = scouts.filter(s => !usedIds.has(s._id) && !prefMap.get(s._id)?.wantsPitRotation);
+  const zeroPrefPool = recruitCandidates.filter(s => hasNoPreferences(prefMap.get(s._id)));
+  const otherPool = recruitCandidates
+    .filter(s => !zeroPrefPool.includes(s))
+    .sort((a, b) => preferenceCount(prefMap.get(a._id)) - preferenceCount(prefMap.get(b._id)));
+  const recruitPool = [...zeroPrefPool, ...otherPool];
+
+  const extraPairsAchievableWithZero = Math.floor(zeroPrefPool.length / 2);
+  const targetPairs = Math.max(minPairsForCap, Math.min(idealPairsForTarget, baseCount + extraPairsAchievableWithZero));
+
+  let ri = 0;
+  // Resolve a pending solo (odd opt-in) by pairing them with the first recruit.
+  let pendingSolo = solo;
+  if (pendingSolo && ri < recruitPool.length) {
+    pairs.push([pendingSolo, recruitPool[ri]._id]);
+    ri++;
+    pendingSolo = undefined;
+  }
+  while (pairs.length < targetPairs && ri + 1 < recruitPool.length) {
+    pairs.push([recruitPool[ri]._id, recruitPool[ri + 1]._id]);
+    ri += 2;
+  }
+  // One leftover recruit (odd pool) — a lone scout can't form a valid 2-person
+  // pair, so fold them into the smallest existing pair as a trio instead.
+  if (ri < recruitPool.length && pairs.length > 0) {
+    pairs.sort((a, b) => a.length - b.length);
+    pairs[0].push(recruitPool[ri]._id);
+    ri++;
+  }
+  if (pendingSolo) {
+    // No recruits were available at all — better a trio (or solo) than losing
+    // an opted-in scout's pit scouting assignment entirely.
+    if (pairs.length > 0) { pairs.sort((a, b) => a.length - b.length); pairs[0].push(pendingSolo); }
+    else pairs.push([pendingSolo]);
+  }
+
+  if (pairs.length === 0) {
+    return { teamAssignments: preserved, groups: [], warnings: ["No scouts available to form pit scouting pairs."] };
+  }
+  if (pairs.length < minPairsForCap) {
+    warnings.push(
+      `Only ${pairs.length} pit scouting pair(s) available for ${unassignedTeams.length} unassigned teams — ` +
+      `some pairs will need to scout more than ${PIT_SCOUTING_MAX_TEAMS_PER_PAIR} teams.`
+    );
+  }
+
+  // 4. Distribute unassigned teams evenly across the final pairs.
+  const teamsPerPair = Math.ceil(unassignedTeams.length / pairs.length);
+  const teamAssignments = [...preserved];
+  for (let i = 0; i < pairs.length; i++) {
+    const slice = unassignedTeams.slice(i * teamsPerPair, (i + 1) * teamsPerPair);
+    for (const t of slice) teamAssignments.push({ teamNumber: t, scoutIds: pairs[i] });
+  }
+
+  return { teamAssignments, groups: pairs, warnings };
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -543,13 +752,13 @@ export function runTests(): TestResult[] {
     }
   });
 
-  // T4 ── Pit rotation ≤6 scouts
-  test("T4 No pit rotation has >6 scouts", () => {
+  // T4 ── Pit rotation ≤5 scouts (no drive team)
+  test("T4 No pit rotation has >5 scouts", () => {
     const scouts = makeScouts(18); const matches = makeMatches(60);
     const prefs = makePrefs(scouts, scouts.map(() => ({ wantsPitRotation: true })));
     const out = generateSchedule({ qualMatches: matches, scouts, preferences: prefs, existingPitRotations: [], existingMatchAssignments: [] });
     for (const rot of out.newPitRotations)
-      assert(rot.scoutIds.length <= 6, `Pit rotation has ${rot.scoutIds.length} scouts`);
+      assert(rot.scoutIds.length <= 5, `Pit rotation has ${rot.scoutIds.length} scouts`);
   });
 
   // T5 ── Mutual preferred partners share an alliance
@@ -692,6 +901,89 @@ export function runTests(): TestResult[] {
     });
     assert(!out.warnings.some(w => w.includes("Scout 1") && w.includes("2-block minimum")),
       "Drive team scout incorrectly warned for missing the 2-block match minimum");
+  });
+
+  // T16 ── With a drive team, no window seats more than driveTeam + 5 others
+  test("T16 Drive-team windows cap non-drive-team scouts at 5 per window", () => {
+    const scouts = makeScouts(20); const matches = makeMatches(60);
+    const prefs = makePrefs(scouts, [
+      { wantsPitRotation: true }, ...Array.from({ length: 18 }, () => ({ wantsPitRotation: true })),
+    ]);
+    const out = generateSchedule({
+      qualMatches: matches, scouts, preferences: prefs,
+      existingPitRotations: [], existingMatchAssignments: [],
+      driveTeamScoutIds: ["s1"],
+    });
+    for (const rot of out.newPitRotations) {
+      const others = rot.scoutIds.filter(id => id !== "s1");
+      assert(others.length <= 5, `Window Q${rot.startMatch}-Q${rot.endMatch} has ${others.length} non-drive-team scouts`);
+    }
+  });
+
+  // T17 ── A scout with 3 preferred partners shares a block with >=2 of them
+  test("T17 Scout with 3 preferred partners co-scouts with >=2 of them", () => {
+    const scouts = makeScouts(14); const matches = makeMatches(50);
+    const prefs = makePrefs(scouts, [{ preferredPartners: ["s2", "s3", "s4"] }]);
+    const out = generateSchedule({ qualMatches: matches, scouts, preferences: prefs, existingPitRotations: [], existingMatchAssignments: [] });
+    const blockGroups = chunk([...matches].sort((a, b) => a.matchNumber - b.matchNumber), 5);
+    const coScoutedWith = new Set<string>();
+    for (const block of blockGroups) {
+      const mn = block[0].matchNumber;
+      const allInBlock = new Set(POSITIONS.map(p => out.matchAssignments.find(a => a.matchNumber === mn && a.position === p)?.scoutId).filter(Boolean));
+      if (!allInBlock.has("s1")) continue;
+      for (const partner of ["s2", "s3", "s4"]) if (allInBlock.has(partner)) coScoutedWith.add(partner);
+    }
+    assert(coScoutedWith.size >= 2, `s1 only ever shared a block with ${coScoutedWith.size}/3 listed partners`);
+  });
+
+  // T18 ── generatePitScoutingTeams: opted-in scouts paired by preference, 6-8 teams/pair
+  test("T18 Pit scouting pairs opted-in scouts by preference, 6-8 teams each", () => {
+    const scouts = makeScouts(4);
+    const prefs = makePrefs(scouts, [
+      { wantsPitScouting: true, preferredPartners: ["s2"] },
+      { wantsPitScouting: true, preferredPartners: ["s1"] },
+      { wantsPitScouting: true, preferredPartners: ["s4"] },
+      { wantsPitScouting: true, preferredPartners: ["s3"] },
+    ]);
+    const teamNumbers = Array.from({ length: 12 }, (_, i) => 100 + i);
+    const out = generatePitScoutingTeams({ teamNumbers, scouts, preferences: prefs });
+    assert(out.groups.length === 2, `Expected 2 pairs, got ${out.groups.length}`);
+    assert(out.groups.some(g => g.includes("s1") && g.includes("s2")), "s1/s2 not paired despite mutual preference");
+    assert(out.groups.some(g => g.includes("s3") && g.includes("s4")), "s3/s4 not paired despite mutual preference");
+    const perPair = new Map<string, number>();
+    for (const a of out.teamAssignments) for (const id of a.scoutIds) perPair.set(id, (perPair.get(id) ?? 0) + 1);
+    for (const [id, count] of perPair) assert(count >= 6 && count <= 8, `${id} assigned ${count} teams (want 6-8)`);
+  });
+
+  // T19 ── generatePitScoutingTeams: recruits zero-preference scouts before
+  // scouts with some preferences, and never recruits wantsPitRotation scouts
+  test("T19 Pit scouting recruits zero-preference scouts first, never pit-rotation scouts", () => {
+    const scouts = makeScouts(8);
+    const prefs = makePrefs(scouts, [
+      { wantsPitScouting: true }, { wantsPitScouting: true }, // s1, s2: 1 pair, not enough for 24 teams
+      {}, {}, // s3, s4: zero preferences
+      { wantsMoreMatches: true }, // s5: 1 preference
+      { wantsPitRotation: true }, { wantsPitRotation: true }, { wantsPitRotation: true }, // s6-s8: must never be recruited
+    ]);
+    const teamNumbers = Array.from({ length: 24 }, (_, i) => 200 + i);
+    const out = generatePitScoutingTeams({ teamNumbers, scouts, preferences: prefs });
+    const allRecruited = new Set(out.groups.flat());
+    assert(allRecruited.has("s3") && allRecruited.has("s4"), "Zero-preference scouts s3/s4 not recruited before others");
+    assert(!allRecruited.has("s6") && !allRecruited.has("s7") && !allRecruited.has("s8"),
+      "wantsPitRotation scout was recruited for pit scouting — should never happen");
+    for (const a of out.teamAssignments) assert(a.scoutIds.length >= 2, `Team ${a.teamNumber} has fewer than 2 scouts`);
+  });
+
+  // T20 ── generatePitScoutingTeams: existing non-empty assignments preserved
+  test("T20 Pit scouting preserves existing team assignments", () => {
+    const scouts = makeScouts(6);
+    const prefs = makePrefs(scouts, [{ wantsPitScouting: true }, { wantsPitScouting: true }]);
+    const teamNumbers = [300, 301, 302, 303, 304, 305, 306, 307];
+    const existing: PitScoutingExistingAssignment[] = [{ teamNumber: 300, scoutIds: ["s5", "s6"] }];
+    const out = generatePitScoutingTeams({ teamNumbers, scouts, preferences: prefs, existingAssignments: existing });
+    const row = out.teamAssignments.find(a => a.teamNumber === 300);
+    assert(!!row && row.scoutIds.length === 2 && row.scoutIds.includes("s5") && row.scoutIds.includes("s6"),
+      "Existing team 300 assignment was not preserved");
   });
 
   return results;
