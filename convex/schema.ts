@@ -296,6 +296,40 @@ export default defineSchema({
   })
     .index("by_user_event", ["userId", "eventKey"]),
 
+  // DEPRECATED — the casino minigames (Slot, Plinko, Chicken Cross, Mines)
+  // and the odds-manipulation "retention" system built on top of them were
+  // removed (2026-09-14): nothing writes to either table any more. Kept, not
+  // dropped, because rows written before removal still exist and `convex
+  // deploy` rejects a schema that omits a populated table (see the same note
+  // on `checklistSubmissions` above). Safe to delete once the historical
+  // rows are no longer wanted — clear them via the Convex dashboard first,
+  // then remove these two table definitions.
+  casinoGames: defineTable({
+    userId:    v.id("users"),
+    eventKey:  v.string(),
+    game:      v.union(v.literal("crossy"), v.literal("mines")),
+    betAmount: v.number(),
+    multiplier: v.number(),
+    mineCount:     v.optional(v.number()),
+    minePositions: v.optional(v.array(v.number())),
+    revealed:      v.optional(v.array(v.number())),
+    difficulty: v.optional(v.string()),
+    rowsCleared: v.optional(v.number()),
+    startedAt: v.number(),
+  })
+    .index("by_user_event_game", ["userId", "eventKey", "game"]),
+
+  retentionProfiles: defineTable({
+    userId:              v.id("users"),
+    eventKey:            v.string(),
+    abandonHistory:      v.array(v.number()),
+    threshold:           v.number(),
+    sessionStartBalance: v.number(),
+    sessionStartTime:    v.number(),
+    updatedAt:           v.number(),
+  })
+    .index("by_user_event", ["userId", "eventKey"]),
+
   // Per-user, per-event money ledger. One row per balance-affecting event —
   // scouting rewards, pit duty, begging, and every bet placed/won/refunded —
   // so a scout can see exactly where every coin came from, not just lifetime
