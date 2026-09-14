@@ -167,7 +167,14 @@ function QRViewer({
                   <span className="text-muted-foreground truncate max-w-[140px]">
                     {sub.fieldLabels?.[k] ?? k}
                   </span>
-                  <span className="font-medium text-right break-all">{String(v ?? "—")}</span>
+                  {typeof v === "string" && v.startsWith("data:image/") ? (
+                    <span className="flex flex-col items-end gap-1">
+                      <img src={v} alt="" className="h-12 w-auto rounded border border-border" />
+                      <span className="text-muted-foreground italic text-[10px]">not in QR</span>
+                    </span>
+                  ) : (
+                    <span className="font-medium text-right break-all">{String(v ?? "—")}</span>
+                  )}
                 </div>
               ))}
             {Object.keys(sub.data).filter(k => k !== "_matchPrefix" && k !== "_matchNumber").length > 12 && (

@@ -111,7 +111,8 @@ const fieldTypeValidator = v.union(
   v.literal("counter"),
   v.literal("textarea"),
   v.literal("teamNumber"),
-  v.literal("rating")
+  v.literal("rating"),
+  v.literal("photo")
 );
 
 const formTypeValidator = v.optional(

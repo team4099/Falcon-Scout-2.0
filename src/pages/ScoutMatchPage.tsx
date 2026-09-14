@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router";
 import { useQuery, useMutation } from "convex/react";
 import { useCached } from "@/hooks/useCached";
@@ -20,13 +20,14 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
-import { Minus, Plus, Send, WifiOff, Wifi, ClipboardList, ChevronRight, Star } from "lucide-react";
+import { Minus, Plus, Send, WifiOff, Wifi, ClipboardList, ChevronRight, Star, Camera, ImageUp, X } from "lucide-react";
 import {
   enqueueOfflineSubmission,
 } from "@/lib/offlineQueue";
 import { saveMySubmission } from "@/lib/submissionStore";
 import { useOfflineSync } from "@/hooks/useOfflineSync";
 import { fetchTBAEventTeams, type TBATeam } from "@/lib/api";
+import { compressImageFile } from "@/lib/imageCompress";
 
 // ──────────────────────────────────────────────
 // Counter widget
@@ -106,6 +107,86 @@ function StarRating({
       })}
       {value > 0 && (
         <span className="ml-2 text-sm text-muted-foreground font-mono">{value}/{max}</span>
+      )}
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────
+// Photo field — take a new photo or pick one from the library
+// ──────────────────────────────────────────────
+function PhotoField({
+  value,
+  onChange,
+}: {
+  value: string | undefined;
+  onChange: (v: string | undefined) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const libraryInputRef = useRef<HTMLInputElement>(null);
+
+  async function handleFile(file: File | undefined) {
+    if (!file) return;
+    setBusy(true);
+    try {
+      const dataUrl = await compressImageFile(file);
+      onChange(dataUrl);
+    } catch {
+      toast.error("Couldn't process that photo — try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div>
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={(e) => { void handleFile(e.target.files?.[0]); e.target.value = ""; }}
+      />
+      <input
+        ref={libraryInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => { void handleFile(e.target.files?.[0]); e.target.value = ""; }}
+      />
+      {value ? (
+        <div className="relative inline-block">
+          <img
+            src={value}
+            alt="Attached"
+            className="h-32 w-auto rounded-md border border-border object-cover"
+          />
+          <button
+            type="button"
+            onClick={() => onChange(undefined)}
+            className="absolute -top-2 -right-2 h-6 w-6 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center shadow"
+            aria-label="Remove photo"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ) : (
+        <div className="flex gap-2">
+          <Button
+            variant="outline" size="sm" type="button" disabled={busy}
+            onClick={() => cameraInputRef.current?.click()}
+          >
+            <Camera className="h-4 w-4 mr-1" /> Take Photo
+          </Button>
+          <Button
+            variant="outline" size="sm" type="button" disabled={busy}
+            onClick={() => libraryInputRef.current?.click()}
+          >
+            <ImageUp className="h-4 w-4 mr-1" /> Choose Photo
+          </Button>
+        </div>
       )}
     </div>
   );
@@ -207,6 +288,13 @@ function FieldRenderer({
             ))}
           </SelectContent>
         </Select>
+      );
+    case "photo":
+      return (
+        <PhotoField
+          value={value as string | undefined}
+          onChange={(v) => onChange(v ?? "")}
+        />
       );
   }
 }

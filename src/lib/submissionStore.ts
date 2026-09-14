@@ -97,8 +97,25 @@ export function shortId(id: string): string {
  * The data payload is split so that each *encoded* payload fits within
  * MAX_CHUNK_CHARS.
  */
+/**
+ * Photo fields store a base64 data URI — often tens of KB, which would blow
+ * a submission out to hundreds of QR frames. QR handoff is a last-resort,
+ * no-uplink-at-all fallback; photos just don't travel through it. Swapped
+ * for a placeholder so the scanning side still sees the field existed
+ * instead of it silently vanishing.
+ */
+export function stripPhotosForQR(data: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(data)) {
+    out[k] = typeof v === "string" && v.startsWith("data:image/")
+      ? "[photo — not included in QR handoff]"
+      : v;
+  }
+  return out;
+}
+
 export function toQRChunks(sub: LocalSubmission): QRChunk[] {
-  const dataStr = JSON.stringify(sub.data);
+  const dataStr = JSON.stringify(stripPhotosForQR(sub.data));
   const id = shortId(sub.id);
 
   const envelope = (i: number, n: number, d: string) =>

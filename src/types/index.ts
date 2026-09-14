@@ -1,6 +1,6 @@
 // Shared TypeScript types across the app
 
-export type FieldType = "text" | "number" | "checkbox" | "select" | "counter" | "textarea" | "teamNumber" | "rating";
+export type FieldType = "text" | "number" | "checkbox" | "select" | "counter" | "textarea" | "teamNumber" | "rating" | "photo";
 
 export type FormType = "default" | "super" | "pit" | "checklist";
 

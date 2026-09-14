@@ -68,6 +68,7 @@ import {
   Menu,
   X as XIcon,
   ClipboardCheck,
+  Camera,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -100,6 +101,7 @@ const DEFAULT_FIELD_TYPES: Partial<Record<FieldType, { label: string; icon: Reac
   select:     { label: "Dropdown",    icon: <List className="h-4 w-4" /> },
   teamNumber: { label: "Team Number", icon: <Users className="h-4 w-4" /> },
   rating:     { label: "Rating",      icon: <Star className="h-4 w-4" /> },
+  photo:      { label: "Photo",       icon: <Camera className="h-4 w-4" /> },
 };
 
 // Super scout forms: text + rating + team number
@@ -123,6 +125,7 @@ const CHECKLIST_FIELD_TYPES: Partial<Record<FieldType, { label: string; icon: Re
   checkbox: { label: "Checkbox",   icon: <CheckSquare className="h-4 w-4" /> },
   select:   { label: "Dropdown",   icon: <List className="h-4 w-4" /> },
   rating:   { label: "Rating",     icon: <Star className="h-4 w-4" /> },
+  photo:    { label: "Photo",      icon: <Camera className="h-4 w-4" /> },
 };
 
 // The pinned auto team-number field for Default forms
@@ -1223,6 +1226,12 @@ function FormBuilderContent() {
                           </div>
                         )}
                         {f.type === "rating" && <StarPreview max={Number(f.options?.[0] ?? "5")} />}
+                        {f.type === "photo" && (
+                          <div className="flex gap-2">
+                            <Button variant="outline" size="sm" disabled><Camera className="h-4 w-4 mr-1" /> Take Photo</Button>
+                            <Button variant="outline" size="sm" disabled>Choose Photo</Button>
+                          </div>
+                        )}
                         {f.type === "select" && (
                           <Select disabled>
                             <SelectTrigger><SelectValue placeholder="Select…" /></SelectTrigger>

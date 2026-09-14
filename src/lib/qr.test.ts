@@ -6,7 +6,7 @@
  * payloads overrunning their own size budget once JSON-escaped (FS-07).
  */
 import { beforeEach, describe, expect, test } from "vitest";
-import { MAX_CHUNK_CHARS, toQRChunks, type LocalSubmission } from "./submissionStore";
+import { MAX_CHUNK_CHARS, toQRChunks, stripPhotosForQR, type LocalSubmission } from "./submissionStore";
 import { ingestQRPayload } from "./scannedDataStore";
 
 // jsdom supplies localStorage; both modules persist through it.
@@ -89,6 +89,29 @@ describe("round trip", () => {
     expect(first.status).toBe("buffering");
     if (first.status !== "buffering") return;
     expect(first.chunksNeeded).toBe(chunks.length);
+  });
+});
+
+describe("photo fields", () => {
+  // A compressed photo is still tens of KB of base64 — far too large to
+  // reasonably chunk through QR. It must never reach the encoded payload.
+  const fakePhoto = `data:image/jpeg;base64,${"A".repeat(50_000)}`;
+
+  test("stripPhotosForQR replaces data URIs with a placeholder", () => {
+    const stripped = stripPhotosForQR({ note: "hello", robotPhoto: fakePhoto, score: 12 });
+    expect(stripped.note).toBe("hello");
+    expect(stripped.score).toBe(12);
+    expect(stripped.robotPhoto).toBe("[photo — not included in QR handoff]");
+  });
+
+  test("toQRChunks never embeds a photo's base64 data", () => {
+    const sub = submission(3);
+    sub.data.robotPhoto = fakePhoto;
+    const chunks = toQRChunks(sub);
+    for (const c of chunks) {
+      expect(c.payload).not.toContain("base64");
+      expect(c.payload.length).toBeLessThanOrEqual(MAX_CHUNK_CHARS);
+    }
   });
 });
 
