@@ -646,8 +646,10 @@ function TeamRow({
           ))}
         </div>
 
-        {/* Actions */}
-        <div className="shrink-0">
+        {/* Actions — fixed width matching the header's Links column so every
+            row occupies the same total width, regardless of how many action
+            icons it has, keeping columns aligned across all rows. */}
+        <div className="w-24 shrink-0 flex items-center justify-end">
           {actionButtons}
         </div>
       </div>
@@ -761,7 +763,7 @@ function ColumnHeader({
         <Th id="epaTeleop"  label="Teleop" />
         <Th id="epaEndgame" label="Endgame" />
       </div>
-      <div className="w-14 text-right">Links</div>
+      <div className="w-24 text-right">Links</div>
     </div>
   );
 }
@@ -1698,16 +1700,15 @@ export default function DashboardPage() {
           )}
 
           <div className="flex-1 bg-card border border-border rounded-xl overflow-hidden flex flex-col min-h-0">
-            {/* Column header — desktop always, mobile only when table view is on */}
-            <div className={`${mobileTableView ? "block" : "hidden"} sm:block overflow-x-auto shrink-0`}>
-              <div className="min-w-[540px]">
-                <ColumnHeader sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-              </div>
-            </div>
-
             <ScrollArea className="flex-1">
-              {/* Column table rows — desktop always, mobile only in table view */}
-              <div className={`${mobileTableView ? "block overflow-x-auto" : "hidden"} sm:block min-w-[540px]`}>
+              {/* Column table (header + rows) — desktop always, mobile only in table view.
+                  Header and rows share ONE overflow-x-auto container so they always
+                  pan horizontally together instead of scrolling independently. This
+                  page's vertical scrolling happens on the outer <main>, not a bounded
+                  inner region, so the header isn't pinned in place — it scrolls up
+                  with the rows like the rest of the page. */}
+              <div className={`${mobileTableView ? "block overflow-x-auto overflow-y-visible" : "hidden"} sm:block sm:overflow-x-auto sm:overflow-y-visible`}>
+                <ColumnHeader sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                 {loadingExternal && tbaTeams.length === 0 ? (
                   <div className="divide-y divide-border">
                     {Array.from({ length: 8 }).map((_, i) => (
