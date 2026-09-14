@@ -24,10 +24,13 @@
  *    few scouts to fill a block, the leftover positions are reported as
  *    blank spaces rather than silently double-booking someone
  *  - wantsMoreMatches scouts are targeted for ~50% more blocks than everyone
- *    else (proportional target, not a flat bonus); scouts with zero
- *    preferences selected at all get a small tie-break nudge toward filling
- *    slack match blocks (ahead of scouts already committed to pit rotation),
- *    without getting the 1.5x wantsMoreMatches weight themselves
+ *    else (proportional target, not a flat bonus). Scouts with zero
+ *    preferences selected at all get the same 1.5x target weight — with no
+ *    preference expressed, they default to acting like they opted into more
+ *    matches, unless generatePitScoutingTeams recruits them as fallback
+ *    pit-scouting pairs first (that recruiting order is unaffected and still
+ *    prefers zero-preference scouts; being recruited there doesn't reduce
+ *    their match-block weight, since pit scouting happens pre-quals)
  *  - Preferred partner pairs/triplets are placed on the same alliance side
  *    within a scouting block (bitmask-optimised alliance splitting); a scout
  *    who lists 2-3 preferred partners is scored for co-placement with as many
@@ -419,9 +422,14 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
   // should end up with ~50% more blocks than everyone else. Every block has
   // exactly 6 slots, so total block-assignments across all match-eligible
   // scouts always equals B * 6; targets are each scout's weighted share.
+  // Scouts who selected zero preferences default to this same 1.5x weight —
+  // with nothing else claimed, they act as if they opted into more matches.
   const MORE_MATCHES_WEIGHT = 1.5;
   const totalBlockSlots = B * 6;
-  const weightOf = (id: string) => (prefMap.get(id)?.wantsMoreMatches ? MORE_MATCHES_WEIGHT : 1);
+  const weightOf = (id: string) => {
+    const pref = prefMap.get(id);
+    return (pref?.wantsMoreMatches || hasNoPreferences(pref)) ? MORE_MATCHES_WEIGHT : 1;
+  };
   const sumWeights = matchPool.reduce((acc, s) => acc + weightOf(s._id), 0) || 1;
   const targetBlocks = new Map<string, number>();
   for (const s of matchPool)
@@ -465,11 +473,12 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
       let affinity = 0;
       for (const id of alreadyInBlock) affinity += prefScore(s._id, id);
       // Small tie-break, well below the deficit/affinity weights above: when
-      // slack blocks need filling, lean on scouts with zero preferences
-      // selected before scouts who already committed to pit rotation
-      // elsewhere — a zero-preference scout has nothing else claiming them.
+      // slack blocks need filling, deprioritise scouts already committed to
+      // pit rotation elsewhere (zero-preference scouts no longer need a
+      // boost here — their higher 1.5x target already drives the deficit
+      // term above).
       const pref = prefMap.get(s._id);
-      const slackNudge = (hasNoPreferences(pref) ? 3 : 0) - (pref?.wantsPitRotation ? 2 : 0);
+      const slackNudge = pref?.wantsPitRotation ? -2 : 0;
       return underMinimum + deficit * 100 + affinity * 200 + slackNudge;
     }
 
@@ -835,12 +844,16 @@ export function runTests(): TestResult[] {
         assert(out.matchAssignments.some(a => a.matchNumber === mn && a.position === p), `Q${mn} ${p} not filled`);
   });
 
-  // T11 ── wantsMoreMatches scouts land ~50% above everyone else
-  test("T11 wantsMoreMatches scouts average ~1.5x the block count of everyone else", () => {
+  // T11 ── wantsMoreMatches scouts land ~50% above scouts with an expressed,
+  // non-boosting preference (zero-preference scouts get boosted too now —
+  // see T11b — so "rest" here must have a real preference to isolate this).
+  test("T11 wantsMoreMatches scouts average ~1.5x the block count of scouts with other preferences", () => {
     const scouts = makeScouts(16); const matches = makeMatches(80);
-    // s1-s4 opt into more matches; s5-s16 do not.
+    // s1-s4 opt into more matches; s5-s16 list a (mutual, non-blocking) preferred
+    // partner instead, so they're not zero-preference but aren't kept off any blocks.
     const prefs = makePrefs(scouts, [
       { wantsMoreMatches: true }, { wantsMoreMatches: true }, { wantsMoreMatches: true }, { wantsMoreMatches: true },
+      ...Array.from({ length: 12 }, (_, i) => ({ preferredPartners: [`s${5 + ((i + 1) % 12)}`] })),
     ]);
     const out = generateSchedule({ qualMatches: matches, scouts, preferences: prefs, existingPitRotations: [], existingMatchAssignments: [] });
     const moreIds = ["s1", "s2", "s3", "s4"];
@@ -849,6 +862,25 @@ export function runTests(): TestResult[] {
     const restAvg = avg(scouts.map(s => s._id).filter(id => !moreIds.includes(id)));
     const ratio = moreAvg / restAvg;
     assert(ratio > 1.25 && ratio < 1.75, `Expected ~1.5x ratio, got ${ratio.toFixed(2)} (more=${moreAvg}, rest=${restAvg})`);
+  });
+
+  // T11b ── Zero-preference scouts default to the same 1.5x weight as
+  // explicit wantsMoreMatches scouts (this conversation's change).
+  test("T11b Zero-preference scouts average ~1.5x the block count of scouts with other preferences", () => {
+    const scouts = makeScouts(16); const matches = makeMatches(80);
+    // s1-s4 select zero preferences; s5-s16 list a (mutual, non-blocking) preferred
+    // partner instead, so they're not zero-preference but aren't kept off any blocks.
+    const prefs = makePrefs(scouts, [
+      {}, {}, {}, {},
+      ...Array.from({ length: 12 }, (_, i) => ({ preferredPartners: [`s${5 + ((i + 1) % 12)}`] })),
+    ]);
+    const out = generateSchedule({ qualMatches: matches, scouts, preferences: prefs, existingPitRotations: [], existingMatchAssignments: [] });
+    const zeroIds = ["s1", "s2", "s3", "s4"];
+    const avg = (ids: string[]) => ids.reduce((sum, id) => sum + (out.stats.scoutBlockCounts[id] ?? 0), 0) / ids.length;
+    const zeroAvg = avg(zeroIds);
+    const restAvg = avg(scouts.map(s => s._id).filter(id => !zeroIds.includes(id)));
+    const ratio = zeroAvg / restAvg;
+    assert(ratio > 1.25 && ratio < 1.75, `Expected ~1.5x ratio, got ${ratio.toFixed(2)} (zero=${zeroAvg}, rest=${restAvg})`);
   });
 
   // T12 ── Scouts who don't opt into pit rotation are never auto-assigned pit duty
