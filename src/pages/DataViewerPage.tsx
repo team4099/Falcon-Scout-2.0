@@ -1082,10 +1082,16 @@ function AxisSelect({
   grouped: Record<string, AxisOpt[]>;
   groupNames: Record<string, string>;
 }) {
+  const labelById = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const opts of Object.values(grouped)) for (const o of opts) m[o.id] = o.label;
+    return m;
+  }, [grouped]);
+
   return (
     <Select value={value} onValueChange={(v) => { if (v !== null) onChange(v); }}>
       <SelectTrigger id={id} className="w-full">
-        <SelectValue />
+        <SelectValue>{(v: string | null) => (v ? labelById[v] ?? v : "")}</SelectValue>
       </SelectTrigger>
       <SelectContent>
         {Object.entries(grouped).map(([g, opts]) => (
