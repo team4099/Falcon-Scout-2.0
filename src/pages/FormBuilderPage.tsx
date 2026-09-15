@@ -644,11 +644,6 @@ function FormBuilderContent() {
     ? [...templates].sort((a, b) => formTypeRank(a.formType) - formTypeRank(b.formType))
     : templates;
 
-  // Identify currently active forms by type
-  const activeDefault   = templates?.find((t) => t.isActive && (t.formType ?? "default") === "default");
-  const activeSuper     = templates?.find((t) => t.isActive && (t.formType ?? "default") === "super");
-  const activePit       = templates?.find((t) => t.isActive && (t.formType ?? "default") === "pit");
-  const activeChecklists = templates?.filter((t) => t.isActive && t.formType === "checklist") ?? [];
 
   function loadTemplate(t: NonNullable<typeof templates>[number]) {
     setSelectedId(t._id);
@@ -858,35 +853,6 @@ function FormBuilderContent() {
               </Button>
             </div>
             <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
-              {/* Active form indicators */}
-              {(activeDefault || activeSuper || activePit) && (
-                <div className="mb-2 space-y-1">
-                  {activeDefault && (
-                    <div className="flex items-center gap-1.5 text-xs text-primary px-2 py-1 rounded-md bg-primary/10">
-                      <ClipboardList className="h-3 w-3" />
-                      <span className="truncate font-medium">{activeDefault.name}</span>
-                    </div>
-                  )}
-                  {activePit && (
-                    <div className="flex items-center gap-1.5 text-xs text-cyan-400 px-2 py-1 rounded-md bg-cyan-500/10">
-                      <Search className="h-3 w-3" />
-                      <span className="truncate font-medium">{activePit.name}</span>
-                    </div>
-                  )}
-                  {activeSuper && (
-                    <div className="flex items-center gap-1.5 text-xs text-amber-400 px-2 py-1 rounded-md bg-amber-500/10">
-                      <Binoculars className="h-3 w-3" />
-                      <span className="truncate font-medium">{activeSuper.name}</span>
-                    </div>
-                  )}
-                  {activeChecklists.map((cl) => (
-                    <div key={cl._id} className="flex items-center gap-1.5 text-xs text-violet-400 px-2 py-1 rounded-md bg-violet-500/10">
-                      <ClipboardCheck className="h-3 w-3" />
-                      <span className="truncate font-medium">{cl.name}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
               {templates === undefined && <p className="text-sm text-muted-foreground">Loading…</p>}
               {orderedTemplates?.map((t) => {
                 const tType: FormType = (t.formType as FormType) ?? "default";
@@ -918,36 +884,6 @@ function FormBuilderContent() {
         {/* Sidebar: form list — hidden on mobile (use menu button instead) */}
         <div className="hidden sm:flex w-56 shrink-0 flex-col gap-2 overflow-y-auto sticky top-0 max-h-[calc(100vh-10rem)]">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Forms</p>
-
-          {/* Active form indicators */}
-          {(activeDefault || activeSuper || activePit || activeChecklists.length > 0) && (
-            <div className="mb-2 space-y-1">
-              {activeDefault && (
-                <div className="flex items-center gap-1.5 text-xs text-primary px-2 py-1 rounded-md bg-primary/10">
-                  <ClipboardList className="h-3 w-3" />
-                  <span className="truncate font-medium">{activeDefault.name}</span>
-                </div>
-              )}
-              {activePit && (
-                <div className="flex items-center gap-1.5 text-xs text-cyan-400 px-2 py-1 rounded-md bg-cyan-500/10">
-                  <Search className="h-3 w-3" />
-                  <span className="truncate font-medium">{activePit.name}</span>
-                </div>
-              )}
-              {activeSuper && (
-                <div className="flex items-center gap-1.5 text-xs text-amber-400 px-2 py-1 rounded-md bg-amber-500/10">
-                  <Binoculars className="h-3 w-3" />
-                  <span className="truncate font-medium">{activeSuper.name}</span>
-                </div>
-              )}
-              {activeChecklists.map((cl) => (
-                <div key={cl._id} className="flex items-center gap-1.5 text-xs text-violet-400 px-2 py-1 rounded-md bg-violet-500/10">
-                  <ClipboardCheck className="h-3 w-3" />
-                  <span className="truncate font-medium">{cl.name}</span>
-                </div>
-              ))}
-            </div>
-          )}
 
           {templates === undefined && <p className="text-sm text-muted-foreground">Loading…</p>}
           {orderedTemplates?.map((t) => {
