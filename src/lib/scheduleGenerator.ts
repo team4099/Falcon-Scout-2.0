@@ -279,6 +279,7 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
   }
 
   const scoutsAlreadyInPit = new Set<string>();
+  const existingQualPitRanges: { start: number; end: number }[] = [];
   for (const rot of existingPitRotations) {
     if (rot.isElims) continue;
     if (rot.startMatch != null && rot.endMatch != null) {
@@ -286,7 +287,18 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
         markPitBusy(id, rot.startMatch, rot.endMatch);
         scoutsAlreadyInPit.add(id);
       }
+      existingQualPitRanges.push({ start: rot.startMatch, end: rot.endMatch });
     }
+  }
+
+  // A window that already overlaps an existing (saved) pit rotation must not
+  // get a brand-new "Auto Pit" rotation generated on top of it — otherwise
+  // every press of Auto-Generate piles another duplicate rotation onto the
+  // same match range (this was silently happening: the drive-team branch
+  // below regenerated a rotation for every window on every run, with no
+  // memory of what had already been applied).
+  function windowCovered(start: number, end: number): boolean {
+    return existingQualPitRanges.some(r => start <= r.end && r.start <= end);
   }
 
   // 4. Plan new pit rotations.
@@ -317,17 +329,22 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
   if (driveTeamCapped.length > 0 && B >= 1) {
     const remainingCap = PIT_ROTATION_OTHERS_PER_WINDOW;
     let wIdx = 0;
+    let labelIdx = 0;
     for (let bi = 0; bi < B; bi += 2) {
       const endBi = Math.min(bi + 1, B - 1);
       const start = blockStart(bi);
       const end = blockEnd(endBi);
+      // Already covered by a saved pit rotation from a prior run — skip
+      // rather than generating a duplicate on top of it.
+      if (windowCovered(start, end)) continue;
+      labelIdx++;
       const grp = [...driveTeamCapped];
       for (let k = 0; k < remainingCap && wIdx < pitWanters.length; k++) {
         grp.push(pitWanters[wIdx]._id);
         wIdx++;
       }
       for (const id of grp) markPitBusy(id, start, end);
-      newPitRotations.push({ label: `Auto Pit ${Math.floor(bi / 2) + 1}`, startMatch: start, endMatch: end, scoutIds: grp });
+      newPitRotations.push({ label: `Auto Pit ${labelIdx}`, startMatch: start, endMatch: end, scoutIds: grp });
     }
     if (wIdx < pitWanters.length) {
       warnings.push(
@@ -377,17 +394,23 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
     }
 
     let pitIdx = 0;
+    let labelIdx = 0;
     for (let w = 0; w < numWindows && pitIdx < pitWanters.length; w++) {
       const bi = windowStarts[w];
       const start = blockStart(bi);
       const end   = blockEnd(Math.min(bi + 1, B - 1));
+      // Already covered by a saved pit rotation from a prior run — skip
+      // rather than generating a duplicate on top of it; those wanters are
+      // tried again against the next window instead of being dropped.
+      if (windowCovered(start, end)) continue;
+      labelIdx++;
       const grp: string[] = [];
       while (grp.length < PIT_ROTATION_OTHERS_PER_WINDOW && pitIdx < pitWanters.length) {
         const s = pitWanters[pitIdx++];
         grp.push(s._id);
         markPitBusy(s._id, start, end);
       }
-      newPitRotations.push({ label: `Auto Pit ${w + 1}`, startMatch: start, endMatch: end, scoutIds: grp });
+      newPitRotations.push({ label: `Auto Pit ${labelIdx}`, startMatch: start, endMatch: end, scoutIds: grp });
     }
   }
 
@@ -1016,6 +1039,51 @@ export function runTests(): TestResult[] {
     const row = out.teamAssignments.find(a => a.teamNumber === 300);
     assert(!!row && row.scoutIds.length === 2 && row.scoutIds.includes("s5") && row.scoutIds.includes("s6"),
       "Existing team 300 assignment was not preserved");
+  });
+
+  // T21 ── Re-running Auto-Generate against its own previously-applied output
+  // must not create duplicate/overlapping pit rotations (this conversation's
+  // fix — the drive-team branch used to regenerate every window on every
+  // run with no memory of what had already been saved).
+  test("T21 Re-running against already-applied pit rotations creates no duplicates", () => {
+    const scouts = makeScouts(10); const matches = makeMatches(40); // B = 8 blocks -> 4 windows
+    const prefs = makePrefs(scouts, [{}, { wantsPitRotation: true }, { wantsPitRotation: true }]);
+    const run1 = generateSchedule({
+      qualMatches: matches, scouts, preferences: prefs,
+      existingPitRotations: [], existingMatchAssignments: [],
+      driveTeamScoutIds: ["s1"],
+    });
+    assert(run1.newPitRotations.length === 4, `First run: expected 4 windows, got ${run1.newPitRotations.length}`);
+
+    // Simulate "Apply": what run1 generated is now saved as existingPitRotations.
+    const appliedPit: ExistingPitRotation[] = run1.newPitRotations.map(r => ({
+      startMatch: r.startMatch, endMatch: r.endMatch, isElims: false, scoutIds: r.scoutIds,
+    }));
+    const run2 = generateSchedule({
+      qualMatches: matches, scouts, preferences: prefs,
+      existingPitRotations: appliedPit, existingMatchAssignments: [],
+      driveTeamScoutIds: ["s1"],
+    });
+    assert(run2.newPitRotations.length === 0,
+      `Second run against already-applied rotations should generate 0 new ones, got ${run2.newPitRotations.length}`);
+  });
+
+  // T22 ── Cycles land exactly on 1-10, 11-20, ... (no off-by-one like "10-20")
+  test("T22 Pit rotation windows are exact 10-match cycles (1-10, 11-20, ...)", () => {
+    const scouts = makeScouts(10); const matches = makeMatches(40);
+    const prefs = makePrefs(scouts, [{}, { wantsPitRotation: true }]);
+    const out = generateSchedule({
+      qualMatches: matches, scouts, preferences: prefs,
+      existingPitRotations: [], existingMatchAssignments: [],
+      driveTeamScoutIds: ["s1"],
+    });
+    const expected = [[1, 10], [11, 20], [21, 30], [31, 40]];
+    assert(out.newPitRotations.length === expected.length,
+      `Expected ${expected.length} windows, got ${out.newPitRotations.length}`);
+    out.newPitRotations.forEach((r, i) => {
+      assert(r.startMatch === expected[i][0] && r.endMatch === expected[i][1],
+        `Window ${i}: expected Q${expected[i][0]}-Q${expected[i][1]}, got Q${r.startMatch}-Q${r.endMatch}`);
+    });
   });
 
   return results;

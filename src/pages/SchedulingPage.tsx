@@ -2317,7 +2317,12 @@ export default function SchedulingPage() {
 
   const readOnly = !isAdminMode;
 
-  const totalSlots  = matches.length * 6;
+  // Match scouting only ever covers qual matches — elims are always manual
+  // (ElimsRotationPanel), so they're excluded from the grid, the scout
+  // selector's per-scout counts, and the "N/M slots filled" progress stat.
+  const qualMatches = useMemo(() => matches.filter(m => m.comp_level === "qm"), [matches]);
+
+  const totalSlots  = qualMatches.length * 6;
   const filledSlots = (allAssignments ?? []).length;
   const pct = totalSlots > 0 ? Math.min(100, Math.round((filledSlots / totalSlots) * 100)) : 0;
 
@@ -2643,14 +2648,14 @@ export default function SchedulingPage() {
                     pinnedId={pinnedScoutId}
                     onPin={setPinnedScoutId}
                     matchCounts={matchCounts}
-                    matches={matches}
+                    matches={qualMatches}
                     onBatchAssign={handleBatchAssign}
                     isMobile={isMobile}
                     isLandscapePhone={isLandscapePhone}
                     readOnly={readOnly}
                   />
                   <MatchGrid
-                    matches={matches}
+                    matches={qualMatches}
                     assignMap={assignMap}
                     pinnedId={pinnedScoutId}
                     onCellClick={handleCellClick}
