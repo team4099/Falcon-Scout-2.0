@@ -104,11 +104,9 @@ const DEFAULT_FIELD_TYPES: Partial<Record<FieldType, { label: string; icon: Reac
   photo:      { label: "Photo",       icon: <Camera className="h-4 w-4" /> },
 };
 
-// Super scout forms: text + rating + team number
+// Super scout forms: all field types (same as default)
 const SUPER_FIELD_TYPES: Partial<Record<FieldType, { label: string; icon: React.ReactNode }>> = {
-  text:       { label: "Short Text",  icon: <Type className="h-4 w-4" /> },
-  rating:     { label: "Rating",      icon: <Star className="h-4 w-4" /> },
-  teamNumber: { label: "Team Number", icon: <Users className="h-4 w-4" /> },
+  ...DEFAULT_FIELD_TYPES,
 };
 
 // Pit scouting forms: all field types (same as default)
@@ -1010,11 +1008,7 @@ function FormBuilderContent() {
                       </div>
                     </button>
                     <button
-                      onClick={() => {
-                        setFormType("super");
-                        // Remove incompatible fields when switching to super
-                        setFields((prev) => prev.filter((f) => f.type === "text" || f.type === "rating"));
-                      }}
+                      onClick={() => setFormType("super")}
                       className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm transition-all ${
                         formType === "super"
                           ? "border-amber-500 bg-amber-500/10 text-amber-400 font-semibold"
@@ -1024,7 +1018,7 @@ function FormBuilderContent() {
                       <Binoculars className="h-4 w-4 shrink-0" />
                       <div className="text-left">
                         <p className="font-medium leading-none">Super Scout</p>
-                        <p className="text-[10px] opacity-70 mt-0.5">Text + ratings</p>
+                        <p className="text-[10px] opacity-70 mt-0.5">Qualitative observations</p>
                       </div>
                     </button>
                     <button
