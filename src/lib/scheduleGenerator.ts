@@ -119,6 +119,19 @@ export interface SchedulerInput {
    * 10 matches, covering the whole event), since they have no other duty.
    */
   driveTeamScoutIds?: string[];
+  /**
+   * Scout IDs who already have at least one pre-competition pit scouting
+   * team assignment (from generatePitScoutingTeams, applied separately).
+   * Combined with actual pit-rotation placement (existingPitRotations) to
+   * decide the wantsMoreMatches-style block-count bonus below: a scout who
+   * ended up idle — not actually used by pit rotation or pit scouting,
+   * regardless of what they checked — gets the same 1.5x bonus as an
+   * explicit wantsMoreMatches opt-in, since pit duty is what "more/fewer
+   * matches" is being balanced against. Intended to be populated from the
+   * event's real, already-applied pit scouting assignments (i.e. run this
+   * step last, after pit scouting and pit rotations are generated+applied).
+   */
+  pitScoutingAssignedScoutIds?: string[];
 }
 
 export interface GeneratedPitRotation {
@@ -260,6 +273,7 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
   // 2. Preference helpers
   const prefMap = new Map<string, ScoutPref>();
   for (const p of preferences) prefMap.set(p.scoutId, p);
+  const pitScoutingAssignedSet = new Set(input.pitScoutingAssignedScoutIds ?? []);
 
   function prefScore(a: string, b: string): number {
     let s = 0;
@@ -441,32 +455,60 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
     return pitBusyBlocks.get(scoutId)?.has(bi) ?? false;
   }
 
-  // 6b. Proportional block targets — scouts who opted into wantsMoreMatches
-  // should end up with ~50% more blocks than everyone else. Every block has
-  // exactly 6 slots, so total block-assignments across all match-eligible
-  // scouts always equals B * 6; targets are each scout's weighted share.
-  // Scouts who selected zero preferences default to this same 1.5x weight —
-  // with nothing else claimed, they act as if they opted into more matches.
+  // 6b. Proportional block targets — scouts who opted into wantsMoreMatches,
+  // OR who simply aren't doing anything else this event (no pit rotation
+  // shift, no pit scouting pair — checked against what actually got
+  // assigned/applied, not just preference checkboxes), should end up with
+  // ~50% more blocks than everyone else. Every block has exactly 6 slots,
+  // so total block-assignments across all match-eligible scouts always
+  // equals B * 6; targets are each scout's weighted share. Note this makes
+  // "boosted" the common case — a scout tied up elsewhere (drive team, an
+  // actual pit rotation shift, an actual pit scouting pair) is the one who
+  // gets fewer new match blocks, freeing more of the fixed slot budget for
+  // everyone else.
   const MORE_MATCHES_WEIGHT = 1.5;
   const totalBlockSlots = B * 6;
+  const usedElsewhere = (id: string) => scoutsAlreadyInPit.has(id) || pitScoutingAssignedSet.has(id);
   const weightOf = (id: string) => {
     const pref = prefMap.get(id);
-    return (pref?.wantsMoreMatches || hasNoPreferences(pref)) ? MORE_MATCHES_WEIGHT : 1;
+    return (pref?.wantsMoreMatches || !usedElsewhere(id)) ? MORE_MATCHES_WEIGHT : 1;
   };
   const sumWeights = matchPool.reduce((acc, s) => acc + weightOf(s._id), 0) || 1;
   const targetBlocks = new Map<string, number>();
   for (const s of matchPool)
     targetBlocks.set(s._id, (totalBlockSlots * weightOf(s._id)) / sumWeights);
 
+  // 6c. Consecutive-cycle cooldown — a scout shouldn't be stacked into more
+  // than 2 blocks (10 matches) in a row. streak[id] tracks how many blocks
+  // in a row (ending at the most recently processed block) that scout has
+  // appeared in; it's updated after every block — including ones skipped
+  // because they're already fully assigned — so it stays correct across a
+  // schedule that mixes pre-existing and newly-generated blocks.
+  function existingBlockScoutIds(bi: number): Set<string> {
+    const s = new Set<string>();
+    for (const m of blocks[bi])
+      for (const p of POSITIONS) {
+        const id = existingSlots.get(`${m.matchNumber}-${p}`);
+        if (id) s.add(id);
+      }
+    return s;
+  }
+  const streak = new Map<string, number>();
+  function updateStreak(occupants: Set<string>) {
+    for (const s of matchPool)
+      streak.set(s._id, occupants.has(s._id) ? (streak.get(s._id) ?? 0) + 1 : 0);
+  }
+
   // 7. Assign scouts to blocks
   const newAssignments: GeneratedMatchAssignment[] = [];
 
   for (let bi = 0; bi < B; bi++) {
-    if (blockFullyAssigned(bi)) continue;
+    if (blockFullyAssigned(bi)) { updateStreak(existingBlockScoutIds(bi)); continue; }
 
     const avail = matchPool.filter(s => !isPitBusy(s._id, bi));
     if (avail.length === 0) {
       warnings.push(`Block ${bi + 1} (Q${blockStart(bi)}–Q${blockEnd(bi)}): no scouts available, skipping.`);
+      updateStreak(existingBlockScoutIds(bi));
       continue;
     }
 
@@ -502,7 +544,12 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
       // term above).
       const pref = prefMap.get(s._id);
       const slackNudge = pref?.wantsPitRotation ? -2 : 0;
-      return underMinimum + deficit * 100 + affinity * 200 + slackNudge;
+      // Cooldown: a scout already in the last 2 consecutive blocks is
+      // heavily deprioritized for a 3rd in a row, but not banned outright —
+      // if they're truly the only option left, they can still be picked
+      // (this sits below the underMinimum floor, which can't be starved).
+      const streakPenalty = (streak.get(s._id) ?? 0) >= 2 ? -5000 : 0;
+      return underMinimum + deficit * 100 + affinity * 200 + slackNudge + streakPenalty;
     }
 
     const scored = [...candidatePool].sort((a, b) => candidateScore(b) - candidateScore(a));
@@ -538,9 +585,11 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
       }
     }
 
-    // Update counts
-    for (const id of [...alreadyInBlock, ...chosen.map(s => s._id)])
+    // Update counts + cooldown streak
+    const occupants = new Set([...alreadyInBlock, ...chosen.map(s => s._id)]);
+    for (const id of occupants)
       scoutBlockCounts.set(id, (scoutBlockCounts.get(id) ?? 0) + 1);
+    updateStreak(occupants);
   }
 
   // 8. Warn about scouts below 2-block minimum (match-eligible scouts only —
@@ -587,9 +636,16 @@ export interface PitScoutingOutput {
   teamAssignments: { teamNumber: number; scoutIds: string[] }[];
   groups: string[][];
   warnings: string[];
+  /** Scouts whose wantsPitScouting preference should change as a result of
+   *  this run — a pair cut for having too few teams to cover turns its
+   *  members' flag off; a scout recruited to form a new pair turns it on.
+   *  Caller decides whether/how to apply this (e.g. a confirm step before
+   *  writing it back), generatePitScoutingTeams itself never mutates
+   *  preferences. */
+  preferenceChanges: { scoutId: string; wantsPitScouting: boolean }[];
 }
 
-const PIT_SCOUTING_MIN_TEAMS_PER_PAIR = 6;
+const PIT_SCOUTING_MIN_TEAMS_PER_PAIR = 4;
 const PIT_SCOUTING_MAX_TEAMS_PER_PAIR = 8;
 
 /** Greedily pair scout IDs, preferring a listed (or reciprocal) preferred
@@ -641,13 +697,13 @@ export function generatePitScoutingTeams(input: PitScoutingInput): PitScoutingOu
   const preserved = [...existingByTeam.entries()].map(([teamNumber, scoutIds]) => ({ teamNumber, scoutIds }));
 
   if (teamNumbers.length === 0) {
-    return { teamAssignments: [], groups: [], warnings: ["No TBA teams loaded for this event."] };
+    return { teamAssignments: [], groups: [], warnings: ["No TBA teams loaded for this event."], preferenceChanges: [] };
   }
   if (unassignedTeams.length === 0) {
-    return { teamAssignments: preserved, groups: [], warnings: [] };
+    return { teamAssignments: preserved, groups: [], warnings: [], preferenceChanges: [] };
   }
   if (scouts.length === 0) {
-    return { teamAssignments: preserved, groups: [], warnings: ["No scouts available for pit scouting."] };
+    return { teamAssignments: preserved, groups: [], warnings: ["No scouts available for pit scouting."], preferenceChanges: [] };
   }
 
   // 1. Pair up wantsPitScouting opt-ins first, preference-aware.
@@ -655,7 +711,7 @@ export function generatePitScoutingTeams(input: PitScoutingInput): PitScoutingOu
   const { pairs: optedPairs, solo } = pairByPreference(optedIn.map(s => s._id), prefMap);
   const pairs: string[][] = optedPairs.map(p => [...p]);
 
-  // 2. How many pairs do we need to keep every pair within 6-8 teams?
+  // 2. How many pairs do we need to keep every pair within 4-8 teams?
   const minPairsForCap = Math.max(1, Math.ceil(unassignedTeams.length / PIT_SCOUTING_MAX_TEAMS_PER_PAIR));
   const idealPairsForTarget = Math.max(1, Math.ceil(unassignedTeams.length / PIT_SCOUTING_MIN_TEAMS_PER_PAIR));
   const baseCount = pairs.length + (solo ? 1 : 0);
@@ -674,16 +730,32 @@ export function generatePitScoutingTeams(input: PitScoutingInput): PitScoutingOu
   const extraPairsAchievableWithZero = Math.floor(zeroPrefPool.length / 2);
   const targetPairs = Math.max(minPairsForCap, Math.min(idealPairsForTarget, baseCount + extraPairsAchievableWithZero));
 
+  // 3b. Too many opted-in pairs already (each would fall below the 4-team
+  // floor) — cut the excess. Cut whole pairs (last-formed first) rather than
+  // splitting them, and flag their members' wantsPitScouting preference to
+  // be turned off so a later run/step knows they're free for pit rotation
+  // or match scouting instead. generatePitScoutingTeams never writes this
+  // itself — the caller applies preferenceChanges (typically after a
+  // confirm step, since it's editing a scout's own stated preference).
+  const cutScoutIds: string[] = [];
+  while (pairs.length > targetPairs) {
+    const removed = pairs.pop();
+    if (removed) cutScoutIds.push(...removed);
+  }
+
+  const addedScoutIds: string[] = [];
   let ri = 0;
   // Resolve a pending solo (odd opt-in) by pairing them with the first recruit.
   let pendingSolo = solo;
   if (pendingSolo && ri < recruitPool.length) {
     pairs.push([pendingSolo, recruitPool[ri]._id]);
+    addedScoutIds.push(recruitPool[ri]._id);
     ri++;
     pendingSolo = undefined;
   }
   while (pairs.length < targetPairs && ri + 1 < recruitPool.length) {
     pairs.push([recruitPool[ri]._id, recruitPool[ri + 1]._id]);
+    addedScoutIds.push(recruitPool[ri]._id, recruitPool[ri + 1]._id);
     ri += 2;
   }
   // One leftover recruit (odd pool) — a lone scout can't form a valid 2-person
@@ -691,6 +763,7 @@ export function generatePitScoutingTeams(input: PitScoutingInput): PitScoutingOu
   if (ri < recruitPool.length && pairs.length > 0) {
     pairs.sort((a, b) => a.length - b.length);
     pairs[0].push(recruitPool[ri]._id);
+    addedScoutIds.push(recruitPool[ri]._id);
     ri++;
   }
   if (pendingSolo) {
@@ -700,8 +773,13 @@ export function generatePitScoutingTeams(input: PitScoutingInput): PitScoutingOu
     else pairs.push([pendingSolo]);
   }
 
+  const preferenceChanges: PitScoutingOutput["preferenceChanges"] = [
+    ...cutScoutIds.map(scoutId => ({ scoutId, wantsPitScouting: false })),
+    ...addedScoutIds.map(scoutId => ({ scoutId, wantsPitScouting: true })),
+  ];
+
   if (pairs.length === 0) {
-    return { teamAssignments: preserved, groups: [], warnings: ["No scouts available to form pit scouting pairs."] };
+    return { teamAssignments: preserved, groups: [], warnings: ["No scouts available to form pit scouting pairs."], preferenceChanges };
   }
   if (pairs.length < minPairsForCap) {
     warnings.push(
@@ -718,7 +796,7 @@ export function generatePitScoutingTeams(input: PitScoutingInput): PitScoutingOu
     for (const t of slice) teamAssignments.push({ teamNumber: t, scoutIds: pairs[i] });
   }
 
-  return { teamAssignments, groups: pairs, warnings };
+  return { teamAssignments, groups: pairs, warnings, preferenceChanges };
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -867,43 +945,81 @@ export function runTests(): TestResult[] {
         assert(out.matchAssignments.some(a => a.matchNumber === mn && a.position === p), `Q${mn} ${p} not filled`);
   });
 
-  // T11 ── wantsMoreMatches scouts land ~50% above scouts with an expressed,
-  // non-boosting preference (zero-preference scouts get boosted too now —
-  // see T11b — so "rest" here must have a real preference to isolate this).
-  test("T11 wantsMoreMatches scouts average ~1.5x the block count of scouts with other preferences", () => {
+  // T11 ── wantsMoreMatches scouts land ~50% above scouts actually tied up
+  // elsewhere this event (an applied pit rotation shift) — eligibility for
+  // the bonus is now about real idleness, not just the wantsMoreMatches
+  // checkbox (this conversation's change), so "rest" here must actually be
+  // on pit duty to isolate the comparison.
+  test("T11 wantsMoreMatches scouts average ~1.5x the block count of scouts on pit duty", () => {
     const scouts = makeScouts(16); const matches = makeMatches(80);
-    // s1-s4 opt into more matches; s5-s16 list a (mutual, non-blocking) preferred
-    // partner instead, so they're not zero-preference but aren't kept off any blocks.
     const prefs = makePrefs(scouts, [
       { wantsMoreMatches: true }, { wantsMoreMatches: true }, { wantsMoreMatches: true }, { wantsMoreMatches: true },
-      ...Array.from({ length: 12 }, (_, i) => ({ preferredPartners: [`s${5 + ((i + 1) % 12)}`] })),
     ]);
-    const out = generateSchedule({ qualMatches: matches, scouts, preferences: prefs, existingPitRotations: [], existingMatchAssignments: [] });
+    const restIds = scouts.map(s => s._id).filter(id => id !== "s1" && id !== "s2" && id !== "s3" && id !== "s4");
+    const existingPit: ExistingPitRotation[] = [{ scoutIds: restIds, startMatch: 1, endMatch: 10 }];
+    const out = generateSchedule({ qualMatches: matches, scouts, preferences: prefs, existingPitRotations: existingPit, existingMatchAssignments: [] });
     const moreIds = ["s1", "s2", "s3", "s4"];
     const avg = (ids: string[]) => ids.reduce((sum, id) => sum + (out.stats.scoutBlockCounts[id] ?? 0), 0) / ids.length;
     const moreAvg = avg(moreIds);
-    const restAvg = avg(scouts.map(s => s._id).filter(id => !moreIds.includes(id)));
+    const restAvg = avg(restIds);
     const ratio = moreAvg / restAvg;
     assert(ratio > 1.25 && ratio < 1.75, `Expected ~1.5x ratio, got ${ratio.toFixed(2)} (more=${moreAvg}, rest=${restAvg})`);
   });
 
-  // T11b ── Zero-preference scouts default to the same 1.5x weight as
-  // explicit wantsMoreMatches scouts (this conversation's change).
-  test("T11b Zero-preference scouts average ~1.5x the block count of scouts with other preferences", () => {
+  // T11b ── A scout who is simply idle this event (no pit rotation shift, no
+  // pit scouting pair, whatever they checked) defaults to the same 1.5x
+  // weight as an explicit wantsMoreMatches opt-in — "more matches" is about
+  // actual availability, not the checkbox (this conversation's change).
+  test("T11b Idle scouts (no pit duty, no pit scouting) average ~1.5x the block count of scouts on pit duty", () => {
     const scouts = makeScouts(16); const matches = makeMatches(80);
-    // s1-s4 select zero preferences; s5-s16 list a (mutual, non-blocking) preferred
-    // partner instead, so they're not zero-preference but aren't kept off any blocks.
-    const prefs = makePrefs(scouts, [
-      {}, {}, {}, {},
-      ...Array.from({ length: 12 }, (_, i) => ({ preferredPartners: [`s${5 + ((i + 1) % 12)}`] })),
-    ]);
-    const out = generateSchedule({ qualMatches: matches, scouts, preferences: prefs, existingPitRotations: [], existingMatchAssignments: [] });
-    const zeroIds = ["s1", "s2", "s3", "s4"];
+    const prefs = makePrefs(scouts);
+    const restIds = scouts.map(s => s._id).filter(id => id !== "s1" && id !== "s2" && id !== "s3" && id !== "s4");
+    const existingPit: ExistingPitRotation[] = [{ scoutIds: restIds, startMatch: 1, endMatch: 10 }];
+    const out = generateSchedule({ qualMatches: matches, scouts, preferences: prefs, existingPitRotations: existingPit, existingMatchAssignments: [] });
+    const idleIds = ["s1", "s2", "s3", "s4"];
     const avg = (ids: string[]) => ids.reduce((sum, id) => sum + (out.stats.scoutBlockCounts[id] ?? 0), 0) / ids.length;
-    const zeroAvg = avg(zeroIds);
-    const restAvg = avg(scouts.map(s => s._id).filter(id => !zeroIds.includes(id)));
-    const ratio = zeroAvg / restAvg;
-    assert(ratio > 1.25 && ratio < 1.75, `Expected ~1.5x ratio, got ${ratio.toFixed(2)} (zero=${zeroAvg}, rest=${restAvg})`);
+    const idleAvg = avg(idleIds);
+    const restAvg = avg(restIds);
+    const ratio = idleAvg / restAvg;
+    assert(ratio > 1.25 && ratio < 1.75, `Expected ~1.5x ratio, got ${ratio.toFixed(2)} (idle=${idleAvg}, rest=${restAvg})`);
+  });
+
+  // T11c ── A scout with an actual pit scouting assignment (not just a
+  // preference flag) is also excluded from the idle bonus.
+  test("T11c Scouts with an applied pit scouting pair are excluded from the idle bonus", () => {
+    const scouts = makeScouts(16); const matches = makeMatches(80);
+    const prefs = makePrefs(scouts);
+    const pitScoutingIds = scouts.map(s => s._id).filter(id => id !== "s1" && id !== "s2" && id !== "s3" && id !== "s4");
+    const out = generateSchedule({
+      qualMatches: matches, scouts, preferences: prefs,
+      existingPitRotations: [], existingMatchAssignments: [],
+      pitScoutingAssignedScoutIds: pitScoutingIds,
+    });
+    const idleIds = ["s1", "s2", "s3", "s4"];
+    const avg = (ids: string[]) => ids.reduce((sum, id) => sum + (out.stats.scoutBlockCounts[id] ?? 0), 0) / ids.length;
+    const idleAvg = avg(idleIds);
+    const restAvg = avg(pitScoutingIds);
+    const ratio = idleAvg / restAvg;
+    assert(ratio > 1.25 && ratio < 1.75, `Expected ~1.5x ratio, got ${ratio.toFixed(2)} (idle=${idleAvg}, pitScouting=${restAvg})`);
+  });
+
+  // T11d ── No scout is stacked into more than 2 consecutive blocks (10
+  // matches) when there's enough of a roster to avoid it.
+  test("T11d No scout appears in 3+ consecutive blocks when other scouts are available", () => {
+    const scouts = makeScouts(12); const matches = makeMatches(100); // 20 blocks
+    const out = generateSchedule({ qualMatches: matches, scouts, preferences: makePrefs(scouts), existingPitRotations: [], existingMatchAssignments: [] });
+    const blockGroups = chunk([...matches].sort((a, b) => a.matchNumber - b.matchNumber), 5);
+    const blockOccupants = blockGroups.map(block => {
+      const mn = block[0].matchNumber;
+      return new Set(POSITIONS.map(p => out.matchAssignments.find(a => a.matchNumber === mn && a.position === p)?.scoutId).filter(Boolean));
+    });
+    for (const s of scouts) {
+      let streak = 0;
+      for (const occ of blockOccupants) {
+        streak = occ.has(s._id) ? streak + 1 : 0;
+        assert(streak <= 2, `${s.name} appeared in 3+ consecutive blocks`);
+      }
+    }
   });
 
   // T12 ── Scouts who don't opt into pit rotation are never auto-assigned pit duty
@@ -1039,6 +1155,51 @@ export function runTests(): TestResult[] {
     const row = out.teamAssignments.find(a => a.teamNumber === 300);
     assert(!!row && row.scoutIds.length === 2 && row.scoutIds.includes("s5") && row.scoutIds.includes("s6"),
       "Existing team 300 assignment was not preserved");
+  });
+
+  // T20b ── generatePitScoutingTeams: too many opted-in pairs for the team
+  // count (each would fall below the new 4-team floor) get cut, and the cut
+  // members are flagged to have wantsPitScouting turned off.
+  test("T20b Pit scouting cuts excess pairs and flags their members' preference off", () => {
+    const scouts = makeScouts(6);
+    // 3 opted-in pairs, but only 8 teams — floor of 4/pair means only 2
+    // pairs are needed (ideal = ceil(8/4) = 2), so one pair must be cut.
+    const prefs = makePrefs(scouts, [
+      { wantsPitScouting: true, preferredPartners: ["s2"] }, { wantsPitScouting: true, preferredPartners: ["s1"] },
+      { wantsPitScouting: true, preferredPartners: ["s4"] }, { wantsPitScouting: true, preferredPartners: ["s3"] },
+      { wantsPitScouting: true, preferredPartners: ["s6"] }, { wantsPitScouting: true, preferredPartners: ["s5"] },
+    ]);
+    const teamNumbers = Array.from({ length: 8 }, (_, i) => 400 + i);
+    const out = generatePitScoutingTeams({ teamNumbers, scouts, preferences: prefs });
+    assert(out.groups.length === 2, `Expected 2 pairs after cutting excess, got ${out.groups.length}`);
+    const cut = out.preferenceChanges.filter(c => c.wantsPitScouting === false);
+    assert(cut.length === 2, `Expected 2 scouts cut, got ${cut.length}`);
+    const cutIds = new Set(cut.map(c => c.scoutId));
+    for (const g of out.groups) for (const id of g) assert(!cutIds.has(id), `Cut scout ${id} still appears in an active pair`);
+    const teamsPerPair = new Map<string, number>();
+    for (const a of out.teamAssignments) {
+      const key = a.scoutIds.join(",");
+      teamsPerPair.set(key, (teamsPerPair.get(key) ?? 0) + 1);
+    }
+    for (const [pair, count] of teamsPerPair) assert(count >= 4, `Pair ${pair} covers only ${count} teams (want >=4)`);
+  });
+
+  // T20c ── generatePitScoutingTeams: recruited scouts (added to cover more
+  // teams than the opted-in pairs can handle) are flagged to have
+  // wantsPitScouting turned on.
+  test("T20c Pit scouting flags recruited scouts' preference on", () => {
+    const scouts = makeScouts(10);
+    const prefs = makePrefs(scouts, [
+      { wantsPitScouting: true, preferredPartners: ["s2"] }, { wantsPitScouting: true, preferredPartners: ["s1"] },
+      // s3-s10: zero preferences, available as recruits
+    ]);
+    const teamNumbers = Array.from({ length: 32 }, (_, i) => 500 + i); // needs up to 8 pairs at the 4-team floor
+    const out = generatePitScoutingTeams({ teamNumbers, scouts, preferences: prefs });
+    const added = out.preferenceChanges.filter(c => c.wantsPitScouting === true);
+    assert(added.length > 0, "Expected at least one recruited scout to be flagged wantsPitScouting: true");
+    for (const { scoutId } of added) {
+      assert(out.groups.some(g => g.includes(scoutId)), `Recruited scout ${scoutId} not actually placed in a pair`);
+    }
   });
 
   // T21 ── Re-running Auto-Generate against its own previously-applied output

@@ -1592,6 +1592,161 @@ function AutoGenerateModal({
   );
 }
 
+// ── Shared "exclude from auto-schedule" controls ────────────────────────────
+// One shared exclusion list (localStorage-backed, plus a permanent
+// event-wide list from the DB) feeds all three generators — match
+// assignments, pit rotations, and pit scouting all check it. Each tab gets
+// its own toggle button + panel so an admin doesn't have to switch to the
+// Match Assignments tab to adjust who's excluded while working on pit setup.
+
+function ExcludeToggleButton({ count, onClick }: { count: number; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      title="Select scouts to exclude from auto-schedule generation"
+      style={{
+        display: "flex", alignItems: "center", gap: 6,
+        padding: "7px 12px", borderRadius: 9, fontSize: 12, fontWeight: 700,
+        background: count > 0 ? "oklch(0.55 0.18 30 / 15%)" : SURF_HVR,
+        color: count > 0 ? "oklch(0.75 0.18 30)" : MUTED,
+        border: count > 0 ? "1.5px solid oklch(0.55 0.18 30 / 40%)" : `1.5px solid ${SURF_BORD}`,
+        cursor: "pointer", flexShrink: 0, transition: "all 0.15s",
+      }}
+    >
+      <Users size={13} />
+      Exclude
+      {count > 0 && (
+        <span style={{
+          background: "oklch(0.55 0.18 30 / 25%)",
+          borderRadius: 20, padding: "0 6px", fontSize: 11, fontWeight: 800,
+          color: "oklch(0.75 0.18 30)",
+        }}>
+          {count}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function ExcludePanel({
+  allUsers, excludedScoutIds, dbExcludedSet, toggleExcluded, onClearLocal, onClose,
+}: {
+  allUsers: User[];
+  excludedScoutIds: Set<string>;
+  dbExcludedSet: Set<string>;
+  toggleExcluded: (id: string) => void;
+  onClearLocal: () => void;
+  onClose: () => void;
+}) {
+  if (allUsers.length === 0) return null;
+  return (
+    <div style={{
+      padding: "12px 14px",
+      borderRadius: 12,
+      border: `1.5px solid oklch(0.55 0.18 30 / 35%)`,
+      background: "oklch(0.55 0.18 30 / 6%)",
+      display: "flex", flexDirection: "column", gap: 10,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+          <Users size={13} style={{ color: "oklch(0.72 0.18 30)" }} />
+          <span style={{
+            fontSize: 11, fontWeight: 700, textTransform: "uppercase",
+            letterSpacing: "0.08em", color: "oklch(0.72 0.18 30)",
+          }}>
+            Exclude from Auto-Schedule
+          </span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {excludedScoutIds.size > 0 && (
+            <button
+              onClick={onClearLocal}
+              style={{
+                fontSize: 11, fontWeight: 700, color: "oklch(0.72 0.18 30)",
+                background: "transparent", border: "none", cursor: "pointer",
+                textDecoration: "underline", textUnderlineOffset: 2,
+              }}
+            >
+              Clear all
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            style={{
+              fontSize: 16, lineHeight: 1, background: SURF_HVR,
+              border: `1px solid ${SURF_BORD}`, borderRadius: 6,
+              padding: "1px 7px", color: MUTED, cursor: "pointer",
+            }}
+          >×</button>
+        </div>
+      </div>
+      <p style={{ fontSize: 11, color: MUTED, margin: 0, lineHeight: 1.4 }}>
+        Scouts toggled below will be skipped when auto-generating — they won't receive any new match assignments, pit rotations, or pit scouting pairs.
+      </p>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {allUsers.map(u => {
+          const excluded = excludedScoutIds.has(u._id);
+          const dbExcluded = dbExcludedSet.has(u._id);
+          return (
+            <button
+              key={u._id}
+              onClick={() => !dbExcluded && toggleExcluded(u._id)}
+              disabled={dbExcluded}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 6,
+                padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600,
+                cursor: dbExcluded ? "not-allowed" : "pointer", transition: "all 0.12s",
+                background: dbExcluded
+                  ? "oklch(0.55 0.18 30 / 12%)"
+                  : excluded ? "oklch(0.55 0.18 30 / 18%)" : SURF_HVR,
+                color: (dbExcluded || excluded)
+                  ? "oklch(0.75 0.18 30)" : MUTED,
+                border: (dbExcluded || excluded)
+                  ? "1.5px solid oklch(0.55 0.18 30 / 50%)"
+                  : `1.5px solid ${SURF_BORD}`,
+                opacity: dbExcluded ? 0.7 : 1,
+              }}
+            >
+              {u.image
+                ? <img src={u.image} alt="" referrerPolicy="no-referrer" style={{ width: 16, height: 16, borderRadius: "50%", objectFit: "cover" }} />
+                : <span style={{
+                    width: 16, height: 16, borderRadius: "50%", flexShrink: 0,
+                    background: (dbExcluded || excluded) ? "oklch(0.55 0.18 30 / 40%)" : G_MED,
+                    color: (dbExcluded || excluded) ? "oklch(0.75 0.18 30)" : G,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 9, fontWeight: 800,
+                  }}>
+                    {avatarLetter(u)}
+                  </span>
+              }
+              <span style={{
+                textDecoration: (dbExcluded || excluded) ? "line-through" : "none",
+                opacity: (dbExcluded || excluded) ? 0.75 : 1,
+              }}>
+                {firstName(u)}
+              </span>
+              {dbExcluded && (
+                <span style={{
+                  fontSize: 9, fontWeight: 800, textTransform: "uppercase",
+                  letterSpacing: "0.05em", color: "oklch(0.6 0.18 30)",
+                  background: "oklch(0.55 0.18 30 / 15%)",
+                  padding: "1px 5px", borderRadius: 8,
+                }}>Permanent</span>
+              )}
+              {!dbExcluded && excluded && (
+                <span style={{
+                  fontSize: 9, fontWeight: 800, textTransform: "uppercase",
+                  letterSpacing: "0.05em", color: "oklch(0.72 0.18 30)",
+                }}>✕</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Pit scouting tab (TBA-driven per-team assignments) ────────────────────────
 
 interface TBATeamSimple {
@@ -1905,6 +2060,7 @@ export default function SchedulingPage() {
   const [autoGenRunning, setAutoGenRunning] = useState(false);
   const [autoGenError, setAutoGenError] = useState<string | null>(null);
   const [clearingAll, setClearingAll] = useState(false);
+  const [clearingAllPit, setClearingAllPit] = useState(false);
   const [excludedScoutIds, setExcludedScoutIds] = useState<Set<string>>(new Set());
   const [showExcludePanel, setShowExcludePanel] = useState(false);
 
@@ -1977,6 +2133,7 @@ export default function SchedulingPage() {
   const togglePitScout           = useAdminMutation(api.pitScouting.upsertPitScoutingAssignment);
   const clearAllPitScouting      = useAdminMutation(api.pitScouting.clearAllPitScoutingAssignments);
   const batchUpsertPitScouting   = useAdminMutation(api.pitScouting.batchUpsertPitScoutingAssignments);
+  const bulkSetPitScoutingPref   = useAdminMutation(api.schedules.adminBulkSetPitScoutingPreference);
 
   const pitScoutingTeams = useCached(
     useQuery(
@@ -2054,6 +2211,33 @@ export default function SchedulingPage() {
       scoutIds: a.scoutIds as Id<"users">[],
     }));
     await batchUpsertPitScouting({ eventKey: currentEvent.eventKey, assignments });
+
+    // Cutting/adding pairs to keep every pair within 4-8 teams means some
+    // scouts' own wantsPitScouting preference should change to match — but
+    // that's editing what a scout said about themselves, not just building
+    // a schedule, so it gets its own explicit confirm rather than applying
+    // silently alongside the team assignments above.
+    if (result.preferenceChanges.length > 0) {
+      const nameOf = (id: string) => {
+        const u = allUsers.find(u => u._id === id);
+        return u?.name ?? u?.email ?? id.slice(0, 6);
+      };
+      const turnedOff = result.preferenceChanges.filter(c => !c.wantsPitScouting).map(c => nameOf(c.scoutId));
+      const turnedOn = result.preferenceChanges.filter(c => c.wantsPitScouting).map(c => nameOf(c.scoutId));
+      const lines = [
+        turnedOff.length > 0 ? `Turn OFF pit scouting preference for: ${turnedOff.join(", ")} (their pair was cut — too many pairs for the team count)` : null,
+        turnedOn.length > 0 ? `Turn ON pit scouting preference for: ${turnedOn.join(", ")} (recruited to help cover more teams)` : null,
+      ].filter((l): l is string => l !== null).join("\n");
+      const confirmed = window.confirm(
+        `Also update ${result.preferenceChanges.length} scout${result.preferenceChanges.length !== 1 ? "s" : ""}' pit scouting preference to match this assignment?\n\n${lines}`
+      );
+      if (confirmed) {
+        await bulkSetPitScoutingPref({
+          eventKey: currentEvent.eventKey,
+          changes: result.preferenceChanges.map(c => ({ scoutId: c.scoutId as Id<"users">, wantsPitScouting: c.wantsPitScouting })),
+        });
+      }
+    }
   }
 
   // Load / persist excluded scout IDs per event
@@ -2221,13 +2405,36 @@ export default function SchedulingPage() {
     }
   }
 
+  /** Clear All for the Pit Rotations tab — qual rotations only; the elims
+   *  rotation is a separate, always-manual single block and isn't touched. */
+  async function handleClearAllQualPit() {
+    if (!currentEvent) return;
+    const qualRots = (pitRotations ?? []).filter(r => !r.isElims);
+    if (qualRots.length === 0) return;
+    const confirmed = window.confirm(
+      `Clear all ${qualRots.length} qual pit rotation${qualRots.length !== 1 ? "s" : ""} for this event? ` +
+      `This cannot be undone. (The elims rotation is not affected.)`
+    );
+    if (!confirmed) return;
+    setClearingAllPit(true);
+    try {
+      await Promise.all(qualRots.map(r => deleteRotation({ id: r._id as Id<"pitRotations"> })));
+    } finally {
+      setClearingAllPit(false);
+    }
+  }
+
   // ── Auto-generate handler ─────────────────────────────────────────────────
-  // mode "full": combined match + pit rotation generation (top-level button).
-  // mode "pitOnly": pit rotations tab's own Auto-Assign — computed the same
-  // way (pit rotation planning always runs first, unaffected by this flag)
-  // but match assignments are stripped from the result before it's shown, so
-  // Apply only touches pit rotations.
-  const handleAutoGenerate = useCallback(async (mode: "full" | "pitOnly" = "full") => {
+  // The underlying generateSchedule() call always plans pit rotations first
+  // (pit always wins over match scouting), but each tab only ever applies
+  // its own half of the result — they're independent actions from the
+  // admin's point of view, matching the separate Auto-Generate/Clear All
+  // controls per tab:
+  //  - "matchOnly": Match Assignments tab's Auto-Generate. Strips
+  //    newPitRotations from the result so Apply only touches match slots.
+  //  - "pitOnly": Pit Rotations tab's Auto-Assign. Strips matchAssignments
+  //    so Apply only touches pit rotations.
+  const handleAutoGenerate = useCallback(async (mode: "matchOnly" | "pitOnly") => {
     if (!currentEvent || !allUsers || !matches.length) return;
     setAutoGenRunning(true);
     try {
@@ -2256,6 +2463,13 @@ export default function SchedulingPage() {
         scoutIds: r.scoutIds,
       }));
 
+      // Who's actually got a real pit scouting assignment already (not just
+      // the preference checkbox) — feeds the match step's "idle scouts get
+      // ~1.5x more blocks" rule. Meant to be run last, after pit scouting
+      // and pit rotations are generated and applied, so this reflects the
+      // real, already-saved state of the event.
+      const pitScoutingAssignedScoutIds = [...new Set([...pitAssignmentsMap.values()].flat())];
+
       const result = generateSchedule({
         qualMatches,
         scouts: allUsers,
@@ -2264,15 +2478,24 @@ export default function SchedulingPage() {
         existingMatchAssignments: existingAssigns,
         excludedScoutIds: [...new Set([...excludedScoutIds, ...dbExcludedSet])],
         driveTeamScoutIds: driveTeamIds ?? [],
+        pitScoutingAssignedScoutIds,
       });
 
       setAutoGenResult(mode === "pitOnly"
-        ? { ...result, matchAssignments: [], warnings: result.warnings.filter(w => /pit|drive team/i.test(w)) }
-        : result);
+        ? {
+            ...result, matchAssignments: [],
+            warnings: result.warnings.filter(w => /pit|drive team/i.test(w)),
+            stats: { ...result.stats, assignedSlots: 0 },
+          }
+        : {
+            ...result, newPitRotations: [],
+            warnings: result.warnings.filter(w => !/pit|drive team/i.test(w)),
+            stats: { ...result.stats, newPitRotationCount: 0 },
+          });
     } finally {
       setAutoGenRunning(false);
     }
-  }, [currentEvent, allUsers, matches, allPreferences, allAssignments, pitRotations, excludedScoutIds, dbExcludedSet, driveTeamIds]);
+  }, [currentEvent, allUsers, matches, allPreferences, allAssignments, pitRotations, excludedScoutIds, dbExcludedSet, driveTeamIds, pitAssignmentsMap]);
 
   const handleAutoApply = useCallback(async () => {
     if (!autoGenResult || !currentEvent) return;
@@ -2375,13 +2598,16 @@ export default function SchedulingPage() {
             </div>
           )}
         </div>
-        {/* Action buttons row — hidden in landscape phone to save space (use auto-gen sparingly); admin editing only */}
-        {!readOnly && !isLandscapePhone && currentEvent && (allUsers && matches.length > 0 || filledSlots > 0) && (
+        {/* Action buttons row — Match Assignments tab only (each tab owns its
+            own Auto-Generate/Exclude/Clear All; Pit Rotations and Pit
+            Scouting render their own below). Hidden in landscape phone to
+            save space (use auto-gen sparingly); admin editing only. */}
+        {!readOnly && !isLandscapePhone && currentEvent && activeTab === "matches" && (allUsers && matches.length > 0 || filledSlots > 0) && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {allUsers && matches.length > 0 && (
                 <button
-                  onClick={() => handleAutoGenerate("full")}
+                  onClick={() => handleAutoGenerate("matchOnly")}
                   disabled={autoGenRunning}
                   style={{
                     display: "flex", alignItems: "center", gap: 7,
@@ -2398,46 +2624,16 @@ export default function SchedulingPage() {
                 >
                   {autoGenRunning
                     ? <><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />Generating…</>
-                    : <><Sparkles size={14} />Auto-Generate</>}
+                    : <><Sparkles size={14} />Auto-Generate Matches</>}
                 </button>
               )}
               {/* Exclude scouts toggle button */}
-              {allUsers && allUsers.length > 0 && matches.length > 0 && (() => {
-                const totalExcluded = new Set([...excludedScoutIds, ...dbExcludedSet]).size;
-                return (
-                <button
+              {allUsers && allUsers.length > 0 && matches.length > 0 && (
+                <ExcludeToggleButton
+                  count={new Set([...excludedScoutIds, ...dbExcludedSet]).size}
                   onClick={() => setShowExcludePanel(v => !v)}
-                  title="Select scouts to exclude from auto-schedule generation"
-                  style={{
-                    display: "flex", alignItems: "center", gap: 6,
-                    padding: "8px 14px", borderRadius: 10, fontSize: 13, fontWeight: 700,
-                    background: totalExcluded > 0
-                      ? "oklch(0.55 0.18 30 / 15%)"
-                      : SURF_HVR,
-                    color: totalExcluded > 0
-                      ? "oklch(0.75 0.18 30)"
-                      : MUTED,
-                    border: totalExcluded > 0
-                      ? "1.5px solid oklch(0.55 0.18 30 / 40%)"
-                      : `1.5px solid ${SURF_BORD}`,
-                    cursor: "pointer", flexShrink: 0,
-                    transition: "all 0.15s",
-                  }}
-                >
-                  <Users size={13} />
-                  Exclude
-                  {totalExcluded > 0 && (
-                    <span style={{
-                      background: "oklch(0.55 0.18 30 / 25%)",
-                      borderRadius: 20, padding: "0 6px", fontSize: 11, fontWeight: 800,
-                      color: "oklch(0.75 0.18 30)",
-                    }}>
-                      {totalExcluded}
-                    </span>
-                  )}
-                </button>
-                );
-              })()}
+                />
+              )}
               {filledSlots > 0 && (
                 <button
                   onClick={handleClearAll}
@@ -2466,115 +2662,19 @@ export default function SchedulingPage() {
 
             {/* ── Exclude from auto-schedule panel ── */}
             {showExcludePanel && allUsers && allUsers.length > 0 && (
-              <div style={{
-                padding: "12px 14px",
-                borderRadius: 12,
-                border: `1.5px solid oklch(0.55 0.18 30 / 35%)`,
-                background: "oklch(0.55 0.18 30 / 6%)",
-                display: "flex", flexDirection: "column", gap: 10,
-              }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                    <Users size={13} style={{ color: "oklch(0.72 0.18 30)" }} />
-                    <span style={{
-                      fontSize: 11, fontWeight: 700, textTransform: "uppercase",
-                      letterSpacing: "0.08em", color: "oklch(0.72 0.18 30)",
-                    }}>
-                      Exclude from Auto-Schedule
-                    </span>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    {excludedScoutIds.size > 0 && (
-                      <button
-                        onClick={() => {
-                          setExcludedScoutIds(new Set());
-                          if (currentEvent?.eventKey) {
-                            try { localStorage.removeItem(`falconscout_excluded_scouts_${currentEvent.eventKey}`); } catch { /* ignore */ }
-                          }
-                        }}
-                        style={{
-                          fontSize: 11, fontWeight: 700, color: "oklch(0.72 0.18 30)",
-                          background: "transparent", border: "none", cursor: "pointer",
-                          textDecoration: "underline", textUnderlineOffset: 2,
-                        }}
-                      >
-                        Clear all
-                      </button>
-                    )}
-                    <button
-                      onClick={() => setShowExcludePanel(false)}
-                      style={{
-                        fontSize: 16, lineHeight: 1, background: SURF_HVR,
-                        border: `1px solid ${SURF_BORD}`, borderRadius: 6,
-                        padding: "1px 7px", color: MUTED, cursor: "pointer",
-                      }}
-                    >×</button>
-                  </div>
-                </div>
-                <p style={{ fontSize: 11, color: MUTED, margin: 0, lineHeight: 1.4 }}>
-                  Scouts toggled below will be skipped when auto-generating — they won't receive any new match assignments or pit rotations.
-                </p>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {(allUsers ?? []).map(u => {
-                    const excluded = excludedScoutIds.has(u._id);
-                    const dbExcluded = dbExcludedSet.has(u._id);
-                    return (
-                      <button
-                        key={u._id}
-                        onClick={() => !dbExcluded && toggleExcluded(u._id)}
-                        disabled={dbExcluded}
-                        style={{
-                          display: "inline-flex", alignItems: "center", gap: 6,
-                          padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600,
-                          cursor: dbExcluded ? "not-allowed" : "pointer", transition: "all 0.12s",
-                          background: dbExcluded
-                            ? "oklch(0.55 0.18 30 / 12%)"
-                            : excluded ? "oklch(0.55 0.18 30 / 18%)" : SURF_HVR,
-                          color: (dbExcluded || excluded)
-                            ? "oklch(0.75 0.18 30)" : MUTED,
-                          border: (dbExcluded || excluded)
-                            ? "1.5px solid oklch(0.55 0.18 30 / 50%)"
-                            : `1.5px solid ${SURF_BORD}`,
-                          opacity: dbExcluded ? 0.7 : 1,
-                        }}
-                      >
-                        {u.image
-                          ? <img src={u.image} alt="" referrerPolicy="no-referrer" style={{ width: 16, height: 16, borderRadius: "50%", objectFit: "cover" }} />
-                          : <span style={{
-                              width: 16, height: 16, borderRadius: "50%", flexShrink: 0,
-                              background: (dbExcluded || excluded) ? "oklch(0.55 0.18 30 / 40%)" : G_MED,
-                              color: (dbExcluded || excluded) ? "oklch(0.75 0.18 30)" : G,
-                              display: "flex", alignItems: "center", justifyContent: "center",
-                              fontSize: 9, fontWeight: 800,
-                            }}>
-                              {avatarLetter(u)}
-                            </span>
-                        }
-                        <span style={{
-                          textDecoration: (dbExcluded || excluded) ? "line-through" : "none",
-                          opacity: (dbExcluded || excluded) ? 0.75 : 1,
-                        }}>
-                          {firstName(u)}
-                        </span>
-                        {dbExcluded && (
-                          <span style={{
-                            fontSize: 9, fontWeight: 800, textTransform: "uppercase",
-                            letterSpacing: "0.05em", color: "oklch(0.6 0.18 30)",
-                            background: "oklch(0.55 0.18 30 / 15%)",
-                            padding: "1px 5px", borderRadius: 8,
-                          }}>Permanent</span>
-                        )}
-                        {!dbExcluded && excluded && (
-                          <span style={{
-                            fontSize: 9, fontWeight: 800, textTransform: "uppercase",
-                            letterSpacing: "0.05em", color: "oklch(0.72 0.18 30)",
-                          }}>✕</span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+              <ExcludePanel
+                allUsers={allUsers}
+                excludedScoutIds={excludedScoutIds}
+                dbExcludedSet={dbExcludedSet}
+                toggleExcluded={toggleExcluded}
+                onClearLocal={() => {
+                  setExcludedScoutIds(new Set());
+                  if (currentEvent?.eventKey) {
+                    try { localStorage.removeItem(`falconscout_excluded_scouts_${currentEvent.eventKey}`); } catch { /* ignore */ }
+                  }
+                }}
+                onClose={() => setShowExcludePanel(false)}
+              />
             )}
           </div>
         )}
@@ -2709,23 +2809,73 @@ export default function SchedulingPage() {
                   <div style={{ flex: 1, height: 1, background: SURF_BORD }} />
                 </div>
 
-                {/* Auto-Assign — qual only, one window every 10 matches; elims stays manual */}
-                {!readOnly && allUsers && matches.length > 0 && (
-                  <button
-                    onClick={() => handleAutoGenerate("pitOnly")}
-                    disabled={autoGenRunning}
-                    style={{
-                      display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                      padding: "7px 12px", borderRadius: 9, fontSize: 12, fontWeight: 700,
-                      background: G_DIM, color: G, border: `1.5px solid ${G_STR}`,
-                      cursor: autoGenRunning ? "wait" : "pointer", flexShrink: 0,
-                      opacity: autoGenRunning ? 0.7 : 1, alignSelf: "flex-start",
-                    }}
-                  >
-                    {autoGenRunning
-                      ? <><Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />Generating…</>
-                      : <><Zap size={12} />Auto-Assign Pit Rotations{driveTeamIds && driveTeamIds.length > 0 ? ` (${driveTeamIds.length} drive team)` : ""}</>}
-                  </button>
+                {/* Pit Rotations tab's own Auto-Generate/Exclude/Clear All —
+                    qual only, one window every 10 matches; elims stays
+                    manual (handled by ElimsRotationPanel above, untouched
+                    by Clear All here). */}
+                {!readOnly && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {allUsers && matches.length > 0 && (
+                        <button
+                          onClick={() => handleAutoGenerate("pitOnly")}
+                          disabled={autoGenRunning}
+                          style={{
+                            display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                            padding: "7px 12px", borderRadius: 9, fontSize: 12, fontWeight: 700,
+                            background: G_DIM, color: G, border: `1.5px solid ${G_STR}`,
+                            cursor: autoGenRunning ? "wait" : "pointer", flexShrink: 0,
+                            opacity: autoGenRunning ? 0.7 : 1,
+                          }}
+                        >
+                          {autoGenRunning
+                            ? <><Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />Generating…</>
+                            : <><Zap size={12} />Auto-Assign Pit Rotations{driveTeamIds && driveTeamIds.length > 0 ? ` (${driveTeamIds.length} drive team)` : ""}</>}
+                        </button>
+                      )}
+                      {allUsers && allUsers.length > 0 && (
+                        <ExcludeToggleButton
+                          count={new Set([...excludedScoutIds, ...dbExcludedSet]).size}
+                          onClick={() => setShowExcludePanel(v => !v)}
+                        />
+                      )}
+                      {qualRots.length > 0 && (
+                        <button
+                          onClick={handleClearAllQualPit}
+                          disabled={clearingAllPit}
+                          title="Remove all qual pit rotations for this event (elims rotation is not affected)"
+                          style={{
+                            display: "flex", alignItems: "center", gap: 6,
+                            padding: "7px 12px", borderRadius: 9, fontSize: 12, fontWeight: 700,
+                            background: "oklch(0.577 0.245 27 / 12%)",
+                            color: "var(--destructive)",
+                            border: "1.5px solid oklch(0.577 0.245 27 / 35%)",
+                            cursor: clearingAllPit ? "wait" : "pointer",
+                            flexShrink: 0, opacity: clearingAllPit ? 0.6 : 1,
+                          }}
+                        >
+                          {clearingAllPit
+                            ? <><Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />Clearing…</>
+                            : <><Trash2 size={12} />Clear All</>}
+                        </button>
+                      )}
+                    </div>
+                    {showExcludePanel && allUsers && allUsers.length > 0 && (
+                      <ExcludePanel
+                        allUsers={allUsers}
+                        excludedScoutIds={excludedScoutIds}
+                        dbExcludedSet={dbExcludedSet}
+                        toggleExcluded={toggleExcluded}
+                        onClearLocal={() => {
+                          setExcludedScoutIds(new Set());
+                          if (currentEvent?.eventKey) {
+                            try { localStorage.removeItem(`falconscout_excluded_scouts_${currentEvent.eventKey}`); } catch { /* ignore */ }
+                          }
+                        }}
+                        onClose={() => setShowExcludePanel(false)}
+                      />
+                    )}
+                  </div>
                 )}
 
                 {/* Opt-in note */}
@@ -2790,22 +2940,49 @@ export default function SchedulingPage() {
           })()}
           {/* ── Pit scouting teams tab ──────────────────────────────────── */}
           {activeTab === "pitScouting" && (
-            <PitScoutingTab
-              tbaTeams={tbaTeams}
-              tbaLoading={tbaTeamsLoading}
-              tbaError={tbaTeamsError}
-              assignments={pitAssignmentsMap}
-              allUsers={allUsers ?? []}
-              onToggleScout={handleTogglePitScout}
-              onClearAll={async () => {
-                if (!currentEvent) return;
-                await clearAllPitScouting({ eventKey: currentEvent.eventKey });
-              }}
-              onAutoAssign={handleAutoAssignPitScouting}
-              optedInCount={(allPreferences ?? []).filter((p: any) => p.wantsPitScouting === true).length}
-              isMobile={isMobile}
-              readOnly={readOnly}
-            />
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 10, minHeight: 0 }}>
+              {/* Pit Scouting tab's own Exclude toggle — Auto Assign/Clear
+                  All already live inside PitScoutingTab itself. */}
+              {!readOnly && allUsers && allUsers.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
+                  <ExcludeToggleButton
+                    count={new Set([...excludedScoutIds, ...dbExcludedSet]).size}
+                    onClick={() => setShowExcludePanel(v => !v)}
+                  />
+                  {showExcludePanel && (
+                    <ExcludePanel
+                      allUsers={allUsers}
+                      excludedScoutIds={excludedScoutIds}
+                      dbExcludedSet={dbExcludedSet}
+                      toggleExcluded={toggleExcluded}
+                      onClearLocal={() => {
+                        setExcludedScoutIds(new Set());
+                        if (currentEvent?.eventKey) {
+                          try { localStorage.removeItem(`falconscout_excluded_scouts_${currentEvent.eventKey}`); } catch { /* ignore */ }
+                        }
+                      }}
+                      onClose={() => setShowExcludePanel(false)}
+                    />
+                  )}
+                </div>
+              )}
+              <PitScoutingTab
+                tbaTeams={tbaTeams}
+                tbaLoading={tbaTeamsLoading}
+                tbaError={tbaTeamsError}
+                assignments={pitAssignmentsMap}
+                allUsers={allUsers ?? []}
+                onToggleScout={handleTogglePitScout}
+                onClearAll={async () => {
+                  if (!currentEvent) return;
+                  await clearAllPitScouting({ eventKey: currentEvent.eventKey });
+                }}
+                onAutoAssign={handleAutoAssignPitScouting}
+                optedInCount={(allPreferences ?? []).filter((p: any) => p.wantsPitScouting === true).length}
+                isMobile={isMobile}
+                readOnly={readOnly}
+              />
+            </div>
           )}
         </>
       )}

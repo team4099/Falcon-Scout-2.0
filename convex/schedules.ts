@@ -422,6 +422,42 @@ export const adminSetPreferences = mutation({
   },
 });
 
+/**
+ * Bulk-patch just the wantsPitScouting flag for a list of scouts — used by
+ * the Pit Scouting tab's Auto-Assign confirm step when generatePitScoutingTeams
+ * decides a pair should be cut (flag turned off, freeing the scout for pit
+ * rotation/match scouting) or a scout should be recruited into a new pair
+ * (flag turned on). Every other preference field on an existing row is left
+ * untouched; a scout with no row yet gets one created with defaults.
+ */
+export const adminBulkSetPitScoutingPreference = mutation({
+  args: {
+    eventKey: v.string(),
+    changes: v.array(v.object({
+      scoutId: v.id("users"),
+      wantsPitScouting: v.boolean(),
+    })),
+    adminKey: v.optional(v.string()),
+  },
+  handler: async (ctx, { eventKey, changes, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
+    for (const { scoutId, wantsPitScouting } of changes) {
+      const existing = await ctx.db
+        .query("scoutPreferences")
+        .withIndex("by_scout_event", (q) => q.eq("scoutId", scoutId).eq("eventKey", eventKey))
+        .first();
+      if (existing) {
+        await ctx.db.patch(existing._id, { wantsPitScouting, updatedAt: Date.now() });
+      } else {
+        await ctx.db.insert("scoutPreferences", {
+          scoutId, eventKey, preferredPartners: [], wantsMoreMatches: false,
+          wantsPitRotation: false, wantsPitScouting, updatedAt: Date.now(),
+        });
+      }
+    }
+  },
+});
+
 // ── Schedule Exclusions ───────────────────────────────────────────────────────
 
 /** Get the permanently excluded scout IDs for an event */
