@@ -1083,7 +1083,7 @@ function AxisSelect({
   groupNames: Record<string, string>;
 }) {
   return (
-    <Select value={value} onValueChange={onChange}>
+    <Select value={value} onValueChange={(v) => { if (v !== null) onChange(v); }}>
       <SelectTrigger id={id} className="w-full">
         <SelectValue />
       </SelectTrigger>

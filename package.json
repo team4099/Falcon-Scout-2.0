@@ -40,7 +40,6 @@
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",
     "@eslint/js": "^10.0.1",
-    "@react-router/dev": "^7.17.0",
     "@tailwindcss/vite": "^4.3.1",
     "@types/jsdom": "^30.0.0",
     "@types/node": "^24.13.2",
