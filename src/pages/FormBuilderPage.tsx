@@ -689,8 +689,8 @@ function FormBuilderContent() {
   async function saveTemplate() {
     setSaving(true);
     try {
-      // Default and pit forms both get the pinned team# field prepended
-      const savedFields = (formType === "default" || formType === "pit")
+      // Default, pit, and super scout forms all get the pinned team# field prepended
+      const savedFields = (formType === "default" || formType === "pit" || formType === "super")
         ? [AUTO_TEAM_FIELD, ...fields]
         : fields;
 
@@ -802,7 +802,7 @@ function FormBuilderContent() {
   const fieldTypeMeta = formType === "super" ? SUPER_FIELD_TYPES : formType === "pit" ? PIT_FIELD_TYPES : formType === "checklist" ? CHECKLIST_FIELD_TYPES : DEFAULT_FIELD_TYPES;
 
   // Group fields by section for preview
-  const previewFields = (formType === "default" || formType === "pit") ? [AUTO_TEAM_FIELD, ...fields] : fields;
+  const previewFields = (formType === "default" || formType === "pit" || formType === "super") ? [AUTO_TEAM_FIELD, ...fields] : fields;
   const previewSections = previewFields.reduce<Record<string, FormField[]>>((acc, f) => {
     const key = f.section ?? "General";
     acc[key] = [...(acc[key] ?? []), f];
@@ -1065,8 +1065,8 @@ function FormBuilderContent() {
                 </div>
               </div>
 
-              {/* Pinned auto team# field for default and pit forms */}
-              {(formType === "default" || formType === "pit") && (
+              {/* Pinned auto team# field for default, pit, and super scout forms */}
+              {(formType === "default" || formType === "pit" || formType === "super") && (
                 <div className="flex items-center gap-1.5">
                   <div className="p-1 text-muted-foreground/40">
                     <Lock className="h-4 w-4" />
