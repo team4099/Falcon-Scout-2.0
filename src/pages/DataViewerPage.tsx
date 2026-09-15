@@ -6,6 +6,10 @@ import { api } from "../../convex/_generated/api";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import {
+  Select, SelectContent, SelectGroup, SelectItem, SelectLabel,
+  SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
   BarChart2, ScatterChart as ScatterIcon, TrendingUp,
   Plus, X, Activity, ChevronDown, ChevronUp,
 } from "lucide-react";
@@ -1079,14 +1083,19 @@ function AxisSelect({
   groupNames: Record<string, string>;
 }) {
   return (
-    <select id={id} value={value} onChange={(e) => onChange(e.target.value)}
-      className="w-full rounded-lg border border-border bg-muted/30 px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary">
-      {Object.entries(grouped).map(([g, opts]) => (
-        <optgroup key={g} label={groupNames[g] ?? g}>
-          {opts.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-        </optgroup>
-      ))}
-    </select>
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger id={id} className="w-full">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {Object.entries(grouped).map(([g, opts]) => (
+          <SelectGroup key={g}>
+            <SelectLabel>{groupNames[g] ?? g}</SelectLabel>
+            {opts.map((o) => <SelectItem key={o.id} value={o.id}>{o.label}</SelectItem>)}
+          </SelectGroup>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 
