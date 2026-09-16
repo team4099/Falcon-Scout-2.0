@@ -12,7 +12,7 @@
 import { idbGetEntry, idbSet, lsGet, lsGetStale, lsSet, TTL } from "./persistentCache";
 
 const TBA_BASE        = "https://www.thebluealliance.com/api/v3";
-const STATBOTICS_BASE = "https://api.statbotics.io/v3";
+const STATBOTICS_BASE = "https://statbotics-production.up.railway.app/v3";
 
 // ── Key storage ───────────────────────────────────────────────────────────────
 
