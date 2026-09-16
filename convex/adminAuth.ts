@@ -41,8 +41,12 @@ const ADMIN_EMAILS = new Set(["czhao@team4099.com", "yabdulkadir@team4099.com"])
  */
 const DEV_ADMIN_EMAIL = "devadmin@team4099.com";
 
-/** How long a temporary admin grant lasts before it must be renewed. */
+/** Default/fallback duration for a temporary admin grant, in ms. */
 export const TEMP_ADMIN_DURATION_MS = 12 * 60 * 60 * 1000;
+
+/** Bounds on how many hours an inherent admin can grant in one go. */
+export const MIN_TEMP_ADMIN_HOURS = 1;
+export const MAX_TEMP_ADMIN_HOURS = 720; // 30 days
 
 export function isAdminEmail(email: string | null | undefined): boolean {
   if (!email) return false;

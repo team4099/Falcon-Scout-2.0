@@ -20,6 +20,15 @@
         ],
         "createdAt": "2026-09-14T14:35:27.323Z",
         "reason": "intentional joke micro-interaction on the self-deprecating 'pls beg' button's +1 popup, pre-existing and unrelated to this session's changes"
+      },
+      {
+        "rule": "layout-transition",
+        "value": "*",
+        "files": [
+          "src/pages/ManageScoutsPage.tsx"
+        ],
+        "createdAt": "2026-09-16T13:23:54.341Z",
+        "reason": "pre-existing sidebar collapse width/max-width transition, unrelated to this session's Grant Admin hours change; narrow one-off collapse animation, not addressed here"
       }
     ]
   }

@@ -1,6 +1,8 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import {
+  MAX_TEMP_ADMIN_HOURS,
+  MIN_TEMP_ADMIN_HOURS,
   TEMP_ADMIN_DURATION_MS,
   isAdminEmail,
   isCurrentUserAdminEligible,
@@ -91,13 +93,15 @@ export const setAdminLabel = mutation({
 });
 
 /**
- * Grant a user temporary admin for 12 hours. Inherent-admin only — a
- * temporary admin cannot call this, so they can never bootstrap another one.
- * Re-granting an existing active grant simply extends it another 12 hours.
+ * Grant a user temporary admin for a caller-chosen number of hours (default
+ * 12 if omitted, clamped to [MIN_TEMP_ADMIN_HOURS, MAX_TEMP_ADMIN_HOURS]).
+ * Inherent-admin only — a temporary admin cannot call this, so they can
+ * never bootstrap another one. Re-granting an existing active grant simply
+ * replaces its expiry with a fresh one starting now.
  */
 export const grantTemporaryAdmin = mutation({
-  args: { userId: v.id("users") },
-  handler: async (ctx, { userId }) => {
+  args: { userId: v.id("users"), hours: v.optional(v.number()) },
+  handler: async (ctx, { userId, hours }) => {
     const granterId = await requireInherentAdmin(ctx);
     if (userId === granterId) {
       throw new Error("You already have admin access.");
@@ -107,7 +111,11 @@ export const grantTemporaryAdmin = mutation({
       throw new Error("This account is already a designated team lead.");
     }
 
-    const expiresAt = Date.now() + TEMP_ADMIN_DURATION_MS;
+    const durationMs =
+      hours === undefined || !Number.isFinite(hours)
+        ? TEMP_ADMIN_DURATION_MS
+        : Math.min(MAX_TEMP_ADMIN_HOURS, Math.max(MIN_TEMP_ADMIN_HOURS, hours)) * 60 * 60 * 1000;
+    const expiresAt = Date.now() + durationMs;
     const existing = await ctx.db
       .query("temporaryAdminGrants")
       .withIndex("by_user", (q) => q.eq("userId", userId))

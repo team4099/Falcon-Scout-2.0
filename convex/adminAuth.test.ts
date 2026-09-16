@@ -152,6 +152,25 @@ describe("temporary admin grants", () => {
     expect(await scoutAs.query(api.admin.isCurrentUserAdmin, {})).toBe(true);
   });
 
+  test("an inherent admin can choose a custom grant duration, clamped to [1, 720] hours", async () => {
+    const t = convexTest(schema, modules);
+    const { as: chiefAs } = await realAdmin(t);
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
+    const otherId = await t.run((ctx) => ctx.db.insert("users", { name: "Other" }));
+
+    const before = Date.now();
+    const { expiresAt } = await chiefAs.mutation(api.admin.grantTemporaryAdmin, { userId: scoutId, hours: 2 });
+    expect(expiresAt).toBeGreaterThan(before + 1 * 60 * 60 * 1000);
+    expect(expiresAt).toBeLessThanOrEqual(before + 2 * 60 * 60 * 1000 + 1000);
+
+    const beforeOver = Date.now();
+    const { expiresAt: overExpiresAt } = await chiefAs.mutation(api.admin.grantTemporaryAdmin, {
+      userId: otherId,
+      hours: 999999,
+    });
+    expect(overExpiresAt).toBeLessThanOrEqual(beforeOver + 720 * 60 * 60 * 1000 + 1000);
+  });
+
   test("a temporary admin cannot grant admin to anyone else", async () => {
     const t = convexTest(schema, modules);
     const { as: chiefAs } = await realAdmin(t);

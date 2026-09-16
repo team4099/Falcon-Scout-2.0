@@ -972,6 +972,7 @@ export default function ManageScoutsPage() {
   const [togglingRot,  setTogglingRot]    = useState<string | null>(null);
   const [togglingExclude, setTogglingExclude] = useState(false);
   const [togglingAdmin, setTogglingAdmin] = useState(false);
+  const [grantHoursDraft, setGrantHoursDraft] = useState("12");
   const [togglingDriveTeam, setTogglingDriveTeam] = useState(false);
   const [deletingScoutReports, setDeletingScoutReports] = useState(false);
   const [deletingAllReports, setDeletingAllReports] = useState(false);
@@ -1128,12 +1129,12 @@ export default function ManageScoutsPage() {
     }
   }, [currentEvent?.eventKey, dbExcludedScoutIds, setScheduleExclusions]);
 
-  async function handleGrantAdmin(userId: string) {
+  async function handleGrantAdmin(userId: string, hours: number) {
     setTogglingAdmin(true);
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { expiresAt } = await grantTemporaryAdmin({ userId: userId as any });
-      toast.success(`Admin access granted for 12 hours.`, {
+      const { expiresAt } = await grantTemporaryAdmin({ userId: userId as any, hours });
+      toast.success(`Admin access granted for ${hours} hour${hours === 1 ? "" : "s"}.`, {
         description: `Expires ${new Date(expiresAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}.`,
       });
     } catch (err) {
@@ -2000,7 +2001,7 @@ export default function ManageScoutsPage() {
                               )}
                               {!hasTempAdmin && (
                                 <div style={{ fontSize: 11, color: "var(--muted-foreground)", lineHeight: 1.4, marginTop: 1 }}>
-                                  Grant 12 hours of admin access.
+                                  Grant admin access for a set number of hours.
                                 </div>
                               )}
                             </div>
@@ -2014,14 +2015,42 @@ export default function ManageScoutsPage() {
                                 Revoke
                               </Button>
                             ) : (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={togglingAdmin}
-                                onClick={() => handleGrantAdmin(selectedUser._id)}
-                              >
-                                Grant Admin
-                              </Button>
+                              <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                                <input
+                                  type="number"
+                                  inputMode="numeric"
+                                  min={1}
+                                  max={720}
+                                  step={1}
+                                  value={grantHoursDraft}
+                                  onChange={(e) => setGrantHoursDraft(e.target.value)}
+                                  disabled={togglingAdmin}
+                                  aria-label="Hours of admin access to grant"
+                                  style={{
+                                    width: 52,
+                                    fontSize: 13,
+                                    padding: "6px 6px",
+                                    borderRadius: 8,
+                                    border: "1px solid oklch(1 0 0 / 15%)",
+                                    background: "oklch(1 0 0 / 4%)",
+                                    color: "var(--foreground)",
+                                    textAlign: "center",
+                                  }}
+                                />
+                                <span style={{ fontSize: 11.5, color: "var(--muted-foreground)" }}>hrs</span>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={togglingAdmin || !Number.isFinite(Number(grantHoursDraft)) || Number(grantHoursDraft) < 1}
+                                  onClick={() => {
+                                    const parsed = Math.round(Number(grantHoursDraft));
+                                    const hours = Math.min(720, Math.max(1, Number.isFinite(parsed) ? parsed : 12));
+                                    handleGrantAdmin(selectedUser._id, hours);
+                                  }}
+                                >
+                                  Grant Admin
+                                </Button>
+                              </div>
                             )}
                           </div>
                         </div>
