@@ -625,6 +625,7 @@ function KanbanCol({
   onEditCard,
   onRemoveCard,
   onRemoveColumn,
+  onRenameColumn,
   onDragStart,
   onDragEnd,
   onCardDragOver,
@@ -654,6 +655,7 @@ function KanbanCol({
   onEditCard: (card: KanbanCard) => void;
   onRemoveCard: (cardId: string) => void;
   onRemoveColumn: (colId: string) => void;
+  onRenameColumn: (colId: string, title: string) => void;
   onDragStart: (e: React.DragEvent, cardId: string) => void;
   onDragEnd: () => void;
   onCardDragOver: (e: React.DragEvent, cardId: string) => void;
@@ -665,6 +667,22 @@ function KanbanCol({
 }) {
   const sorted = [...cards].sort((a, b) => a.position - b.position);
   const isUnsorted = column.id === "unsorted";
+
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(column.title);
+
+  function startEditingTitle() {
+    setTitleDraft(column.title);
+    setIsEditingTitle(true);
+  }
+
+  function commitTitle() {
+    const trimmed = titleDraft.trim();
+    setIsEditingTitle(false);
+    if (trimmed && trimmed !== column.title) {
+      onRenameColumn(column.id, trimmed);
+    }
+  }
 
   return (
     <div
@@ -711,17 +729,48 @@ function KanbanCol({
           !isUnsorted ? "cursor-grab active:cursor-grabbing" : "cursor-default"
         }`}
       >
-        <div className="flex items-center gap-1.5 min-w-0">
+        <div className="flex items-center gap-1.5 min-w-0 flex-1">
           {!isUnsorted && (
             <GripVertical className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0" />
           )}
-          <span className="font-semibold text-sm truncate">{column.title}</span>
+          {isEditingTitle ? (
+            <input
+              autoFocus
+              value={titleDraft}
+              onChange={(e) => setTitleDraft(e.target.value)}
+              onBlur={commitTitle}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitTitle();
+                if (e.key === "Escape") setIsEditingTitle(false);
+              }}
+              onClick={(e) => e.stopPropagation()}
+              draggable={false}
+              onDragStart={(e) => e.stopPropagation()}
+              className="font-semibold text-sm bg-background border border-primary/50 rounded px-1 py-0.5 min-w-0 flex-1"
+            />
+          ) : (
+            <span
+              className="font-semibold text-sm truncate cursor-text"
+              onDoubleClick={startEditingTitle}
+            >
+              {column.title}
+            </span>
+          )}
           {isUnsorted && (
             <span className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground/50 ml-1 shrink-0">pinned</span>
           )}
         </div>
         <div className="flex items-center gap-1 text-muted-foreground shrink-0">
           <span className="text-xs font-mono">{sorted.length}</span>
+          {!isEditingTitle && (
+            <button
+              onClick={startEditingTitle}
+              className="p-0.5 rounded hover:bg-primary/10 hover:text-primary"
+              title="Rename column"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+          )}
           {!isUnsorted && (
             <button
               onClick={() => onRemoveColumn(column.id)}
@@ -1420,6 +1469,19 @@ function BoardView({
     setConfirmRemoveColId(colId);
   }
 
+  async function handleRenameColumn(colId: string, title: string) {
+    const next = columns.map((c) => (c.id === colId ? { ...c, title } : c));
+    try {
+      await updateColumns({ boardId, columns: next });
+    } catch (err) {
+      toast.error(
+        err instanceof Error && /admin/i.test(err.message)
+          ? "Renaming a column needs admin mode."
+          : "Couldn't rename the column. Try again."
+      );
+    }
+  }
+
   async function doRemoveColumn(colId: string) {
     await updateColumns({ boardId, columns: columns.filter((c) => c.id !== colId) });
   }
@@ -1824,6 +1886,7 @@ function BoardView({
               }}
               onRemoveCard={handleRemoveCard}
               onRemoveColumn={handleRemoveColumn}
+              onRenameColumn={handleRenameColumn}
               onDragStart={handleDragStart}
               onDragEnd={handleDragEnd}
               onCardDragOver={handleCardDragOver}

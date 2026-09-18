@@ -1667,22 +1667,22 @@ export default function ManageScoutsPage() {
                   <Avatar user={selectedUser} size={40} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     {editingName ? (
-                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
                         <input
                           autoFocus
                           value={nameDraft}
                           onChange={(e) => setNameDraft(e.target.value)}
                           onKeyDown={(e) => { if (e.key === "Enter") handleSaveName(selectedUser._id); if (e.key === "Escape") setEditingName(false); }}
                           style={{
-                            flex: 1, fontSize: 14, fontWeight: 700, padding: "3px 7px", borderRadius: 6,
+                            flex: 1, minWidth: 0, fontSize: 14, fontWeight: 700, padding: "3px 7px", borderRadius: 6,
                             border: "1px solid oklch(0.85 0.18 95 / 40%)",
                             background: "oklch(1 0 0 / 5%)", color: "var(--foreground)",
                           }}
                         />
-                        <button onClick={() => handleSaveName(selectedUser._id)} disabled={savingName} style={{ border: "none", background: "transparent", cursor: "pointer", color: "oklch(0.75 0.18 95)", display: "flex" }} title="Save">
+                        <button onClick={() => handleSaveName(selectedUser._id)} disabled={savingName} style={{ border: "none", background: "transparent", cursor: "pointer", color: "oklch(0.75 0.18 95)", display: "flex", flexShrink: 0 }} title="Save">
                           <Save size={14} />
                         </button>
-                        <button onClick={() => setEditingName(false)} disabled={savingName} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted-foreground)", display: "flex" }} title="Cancel">
+                        <button onClick={() => setEditingName(false)} disabled={savingName} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted-foreground)", display: "flex", flexShrink: 0 }} title="Cancel">
                           <XCircle size={14} />
                         </button>
                       </div>
@@ -1726,21 +1726,25 @@ export default function ManageScoutsPage() {
                     )}
                   </div>
 
-                  {/* Submission count pill */}
-                  <div
-                    style={{
-                      background: "oklch(0.85 0.18 95)",
-                      borderRadius: 20,
-                      padding: "4px 12px",
-                      fontSize: 12,
-                      fontWeight: 800,
-                      color: "oklch(0.1 0 0)",
-                      boxShadow: "0 2px 10px oklch(0.85 0.18 95 / 40%)",
-                      flexShrink: 0,
-                    }}
-                  >
-                    {selectedSubmissions.length} report{selectedSubmissions.length !== 1 ? "s" : ""}
-                  </div>
+                  {/* Submission count pill — hidden while editing the name so the
+                      Save/Cancel buttons always have room on narrow screens */}
+                  {!editingName && (
+                    <div
+                      className="hidden sm:block"
+                      style={{
+                        background: "oklch(0.85 0.18 95)",
+                        borderRadius: 20,
+                        padding: "4px 12px",
+                        fontSize: 12,
+                        fontWeight: 800,
+                        color: "oklch(0.1 0 0)",
+                        boxShadow: "0 2px 10px oklch(0.85 0.18 95 / 40%)",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {selectedSubmissions.length} report{selectedSubmissions.length !== 1 ? "s" : ""}
+                    </div>
+                  )}
 
                   {/* Desktop-only X close */}
                   <Button
