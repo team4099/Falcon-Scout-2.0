@@ -92,10 +92,6 @@ const FG        = "var(--foreground)";
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function displayName(u: User) { return u.name ?? u.email ?? "?"; }
-function firstName(u: User) {
-  const n = displayName(u);
-  return n.split(" ")[0] ?? n.slice(0, 8);
-}
 function avatarLetter(u: User) { return displayName(u).charAt(0).toUpperCase(); }
 
 function tbaMatchLabel(m: TBAMatch): string {
@@ -229,7 +225,7 @@ function ScoutSelector({ users, pinnedId, onPin, matchCounts, matches, onBatchAs
           {!isLandscapePhone && (
             <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: G }}>
               {isMobile && pinnedId
-                ? `Scout: ${pinned?.name?.split(" ")[0] ?? "?"}`
+                ? `Scout: ${pinned ? displayName(pinned) : "?"}`
                 : "Pin a Scout"}
             </span>
           )}
@@ -269,7 +265,7 @@ function ScoutSelector({ users, pinnedId, onPin, matchCounts, matches, onBatchAs
                   >
                     <Avatar user={u} size={22} />
                     <span style={{ fontSize: 11, fontWeight: 700, color: active ? G : FG, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left" }}>
-                      {firstName(u)}
+                      {displayName(u)}
                     </span>
                     {cnt > 0 && (
                       <span style={{ background: active ? G : G_MED, color: active ? G_TXT : G, borderRadius: 20, padding: "0 5px", fontSize: 9, fontWeight: 800, flexShrink: 0 }}>
@@ -298,12 +294,12 @@ function ScoutSelector({ users, pinnedId, onPin, matchCounts, matches, onBatchAs
                     padding: "8px 10px", borderRadius: 12, cursor: "pointer", flexShrink: 0,
                     background: active ? G_DIM : SURF_HVR,
                     border: `1.5px solid ${active ? G_STR : SURF_BORD}`,
-                    outline: "none", transition: "all 0.12s", minWidth: 58,
+                    outline: "none", transition: "all 0.12s", minWidth: 58, maxWidth: 104,
                   }}
                 >
                   <Avatar user={u} size={32} />
-                  <span style={{ fontSize: 10, fontWeight: 700, color: active ? G : FG, whiteSpace: "nowrap", maxWidth: 58, overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {firstName(u)}
+                  <span style={{ fontSize: 10, fontWeight: 700, color: active ? G : FG, whiteSpace: "nowrap", maxWidth: 92, overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {displayName(u)}
                   </span>
                   {cnt > 0 && (
                     <span style={{ background: active ? G : SURF_BORD, color: active ? G_TXT : MUTED, borderRadius: 20, padding: "0px 5px", fontSize: 10, fontWeight: 800 }}>
@@ -364,7 +360,7 @@ function ScoutSelector({ users, pinnedId, onPin, matchCounts, matches, onBatchAs
           <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 10 }}>
             <Zap size={13} style={{ color: G }} />
             <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: G }}>
-              Batch Assign — {firstName(pinned)}
+              Batch Assign — {displayName(pinned)}
             </span>
           </div>
 
@@ -460,7 +456,7 @@ function ScoutSelector({ users, pinnedId, onPin, matchCounts, matches, onBatchAs
 
 interface MatchGridProps {
   matches: TBAMatch[];
-  assignMap: Record<number, Partial<Record<Position, { scoutId: string; name: string; fullName: string }>>>;
+  assignMap: Record<number, Partial<Record<Position, { scoutId: string; name: string }>>>;
   pinnedId: string | null;
   onCellClick: (matchNum: number, matchLbl: string, pos: Position) => void;
   onCycleClick: (cycleMatches: TBAMatch[], pos: Position) => void;
@@ -779,7 +775,7 @@ function OrphanWarning({
 interface SingleMatchRowProps {
   m: TBAMatch;
   lbl: string;
-  row: Partial<Record<Position, { scoutId: string; name: string; fullName: string }>>;
+  row: Partial<Record<Position, { scoutId: string; name: string }>>;
   pinnedId: string | null;
   onCellClick: (matchNum: number, matchLbl: string, pos: Position) => void;
   saving: Set<string>;
@@ -961,7 +957,7 @@ function SingleMatchRow({
                                 {POS_META[p].short}
                               </span>
                               <span style={{ fontSize: 13, fontWeight: isPinned ? 800 : 500, color: isPinned ? G : a ? FG : MUTED, lineHeight: 1.3 }}>
-                                {a ? a.fullName : <span style={{ opacity: 0.35, fontSize: 11 }}>Unassigned</span>}
+                                {a ? a.name : <span style={{ opacity: 0.35, fontSize: 11 }}>Unassigned</span>}
                               </span>
                             </div>
                           );
@@ -980,7 +976,7 @@ function SingleMatchRow({
                                 {POS_META[p].short}
                               </span>
                               <span style={{ fontSize: 13, fontWeight: isPinned ? 800 : 500, color: isPinned ? G : a ? FG : MUTED, lineHeight: 1.3 }}>
-                                {a ? a.fullName : <span style={{ opacity: 0.35, fontSize: 11 }}>Unassigned</span>}
+                                {a ? a.name : <span style={{ opacity: 0.35, fontSize: 11 }}>Unassigned</span>}
                               </span>
                             </div>
                           );
@@ -1005,7 +1001,7 @@ function SingleMatchRow({
 interface CycleRowProps {
   cycleMatches: TBAMatch[];
   cycleNumber: number;
-  assignMap: Record<number, Partial<Record<Position, { scoutId: string; name: string; fullName: string }>>>;
+  assignMap: Record<number, Partial<Record<Position, { scoutId: string; name: string }>>>;
   pinnedId: string | null;
   onCycleClick: (cycleMatches: TBAMatch[], pos: Position) => void;
   saving: Set<string>;
@@ -1172,7 +1168,7 @@ function RotationCard({ rotation, users, onEdit, onDelete, readOnly }: {
               padding: "2px 9px", borderRadius: 20, fontSize: 12, fontWeight: 600,
               background: G_DIM, color: G, border: `1px solid ${G_MED}`,
             }}>
-              {u ? firstName(u) : "?"}
+              {u ? displayName(u) : "?"}
             </span>
           );
         })}
@@ -1310,7 +1306,7 @@ function ElimsRotationPanel({ rotation, users, allUsers: allUsersRaw, onSave, on
                         }}
                       >
                         {on && <Check size={11} />}
-                        {firstName(u)}
+                        {displayName(u)}
                       </button>
                     );
                   })
@@ -1348,7 +1344,7 @@ function ElimsRotationPanel({ rotation, users, allUsers: allUsersRaw, onSave, on
                           }}
                         >
                           {on && <Check size={11} />}
-                          {firstName(u)}
+                          {displayName(u)}
                         </button>
                       );
                     })}
@@ -1395,7 +1391,7 @@ function ElimsRotationPanel({ rotation, users, allUsers: allUsersRaw, onSave, on
                     background: G, color: G_TXT,
                     boxShadow: `0 1px 6px ${G} / 25%`,
                   }}>
-                    {u ? firstName(u) : "?"}
+                    {u ? displayName(u) : "?"}
                   </span>
                 );
               })}
@@ -1490,7 +1486,7 @@ function RotationForm({ users, allUsers: allUsersRaw, initial, onSave, onCancel,
         }}
       >
         {on && <Check size={11} />}
-        {firstName(u)}
+        {displayName(u)}
       </button>
     );
   }
@@ -1908,7 +1904,7 @@ function ExcludePanel({
                 textDecoration: (dbExcluded || excluded) ? "line-through" : "none",
                 opacity: (dbExcluded || excluded) ? 0.75 : 1,
               }}>
-                {firstName(u)}
+                {displayName(u)}
               </span>
               {dbExcluded && (
                 <span style={{
@@ -2015,7 +2011,7 @@ function PitScoutingTab({
                     ? <img src={u.image} alt="" referrerPolicy="no-referrer" style={{ width: 14, height: 14, borderRadius: "50%", objectFit: "cover" }} />
                     : <span style={{ width: 14, height: 14, borderRadius: "50%", background: pinned ? G_TXT+"30" : G_MED, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 800, color: pinned ? G_TXT : G, flexShrink: 0 }}>{avatarLetter(u)}</span>
                   }
-                  {firstName(u)}
+                  {displayName(u)}
                   {count > 0 && (
                     <span style={{ background: pinned ? "oklch(0 0 0 / 20%)" : G_MED, borderRadius: 20, padding: "0 5px", fontSize: 10, fontWeight: 800, color: pinned ? G_TXT : G }}>
                       {count}
@@ -2143,7 +2139,7 @@ function PitScoutingTab({
                             background: hasPinned ? "oklch(0 0 0 / 20%)" : G_MED,
                             color: hasPinned ? G_TXT : G,
                           }}>
-                            {u ? firstName(u) : "?"}
+                            {u ? displayName(u) : "?"}
                           </span>
                         );
                       })}
@@ -2467,11 +2463,11 @@ export default function SchedulingPage() {
   const pitHiddenCount = (allUsers?.length ?? 0) - pitUsers.length;
 
   const assignMap = useMemo(() => {
-    const map: Record<number, Partial<Record<Position, { scoutId: string; name: string; fullName: string }>>> = {};
+    const map: Record<number, Partial<Record<Position, { scoutId: string; name: string }>>> = {};
     for (const a of allAssignments ?? []) {
       if (!map[a.matchNumber]) map[a.matchNumber] = {};
       const u = userMap[a.scoutId];
-      map[a.matchNumber][a.position] = { scoutId: a.scoutId, name: u ? firstName(u) : "?", fullName: u ? displayName(u) : "?" };
+      map[a.matchNumber][a.position] = { scoutId: a.scoutId, name: u ? displayName(u) : "?" };
     }
     return map;
   }, [allAssignments, userMap]);

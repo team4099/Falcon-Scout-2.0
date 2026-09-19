@@ -1371,7 +1371,7 @@ export default function ManageScoutsPage() {
             <StatCard
               icon={Trophy}
               label="Top Scout"
-              value={topScout ? displayName(topScout).split(" ")[0] : "—"}
+              value={topScout ? displayName(topScout) : "—"}
               sub={topScout ? `${topCount} report${topCount !== 1 ? "s" : ""}` : "no reports yet"}
               onClick={() => setShowRanking(true)}
             />

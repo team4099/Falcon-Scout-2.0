@@ -267,10 +267,8 @@ function PreCompetitionCard({
 }) {
   const navigate = useNavigate();
   const userMap = Object.fromEntries(allUsers.map(u => [u._id, u]));
-  const getFirst = (u: { name?: string; email?: string } | undefined) => {
-    const n = u?.name ?? u?.email ?? "?";
-    return n.split(" ")[0] ?? n.slice(0, 8);
-  };
+  const getName = (u: { name?: string; email?: string } | undefined) =>
+    u?.name ?? u?.email ?? "?";
 
   // All unique teammate IDs across all assigned teams
   const teammateIds = [...new Set(assignments.flatMap(a => a.scoutIds))];
@@ -369,7 +367,7 @@ function PreCompetitionCard({
                     {u?.image && (
                       <img src={u.image} alt="" referrerPolicy="no-referrer" style={{ width: 13, height: 13, borderRadius: "50%", objectFit: "cover" }} />
                     )}
-                    {getFirst(u)}
+                    {getName(u)}
                   </span>
                 );
               })}
