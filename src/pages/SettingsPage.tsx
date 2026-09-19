@@ -23,6 +23,8 @@ import {
   Lock,
   RefreshCw,
   ShieldX,
+  Activity,
+  AlertTriangle,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -34,7 +36,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { getTBAKey, setTBAKey, clearApiCache } from "@/lib/api";
+import {
+  getTBAKey, setTBAKey, clearApiCache,
+  getStatboticsHealth, subscribeStatboticsHealth, checkStatboticsHosts,
+  statboticsHostLabel,
+  type StatboticsHealth,
+} from "@/lib/api";
 import { useUIStore } from "@/store/uiStore";
 
 // ── API Key field ─────────────────────────────────────────────────────────────
@@ -133,6 +140,93 @@ function ApiKeyField({
           {linkLabel}
           <ExternalLink className="h-3 w-3" />
         </a>
+      </p>
+    </div>
+  );
+}
+
+// ── Statbotics source card ────────────────────────────────────────────────────
+// EPA data comes from the official Statbotics API, with a community mirror as
+// an automatic standby. Which one is live is otherwise invisible — a silent
+// failover looks identical to working normally until the mirror also goes down,
+// so admins get to see it here.
+
+function StatboticsSourceCard() {
+  const [health, setHealth] = useState<StatboticsHealth>(() => getStatboticsHealth());
+  const [checking, setChecking] = useState(false);
+
+  useEffect(() => subscribeStatboticsHealth(setHealth), []);
+
+  const onMirror = health.active === "mirror";
+
+  async function handleRecheck() {
+    setChecking(true);
+    try {
+      const result = await checkStatboticsHosts();
+      if (result.primary) {
+        toast.success("Official Statbotics API is up — switched back to it.");
+      } else if (result.mirror) {
+        toast.warning("Official API is still down. Using the mirror.");
+      } else {
+        toast.error("Both Statbotics hosts are unreachable.");
+      }
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-5 space-y-4">
+      <div className="flex items-center gap-2">
+        <Activity className="h-4 w-4 text-primary" />
+        <h3 className="font-semibold">Statbotics Data Source</h3>
+      </div>
+
+      <div
+        className={`flex items-start gap-3 rounded-lg border p-3 ${
+          onMirror
+            ? "border-amber-500/40 bg-amber-500/10"
+            : "border-emerald-500/40 bg-emerald-500/10"
+        }`}
+      >
+        {onMirror
+          ? <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-500" />
+          : <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5 text-emerald-500" />}
+        <div className="min-w-0 space-y-1">
+          <p className="text-sm font-semibold">
+            {onMirror ? "Using backup mirror" : "Using official API"}
+          </p>
+          <p className="text-xs text-muted-foreground break-all">
+            {statboticsHostLabel(health.active)}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {onMirror
+              ? "The official API failed, so EPA data is coming from the community mirror. It retries the official host automatically every 5 minutes."
+              : "EPA and match prediction data is coming from the official Statbotics API."}
+          </p>
+        </div>
+      </div>
+
+      {health.lastError && (
+        <p className="text-xs text-muted-foreground">
+          Last failure: {statboticsHostLabel(health.lastError.source)}
+          {health.lastError.status > 0 ? ` returned ${health.lastError.status}` : " was unreachable"}
+          {" · "}
+          {new Date(health.lastError.at).toLocaleString()}
+        </p>
+      )}
+
+      <Separator />
+
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-medium">Re-check both hosts</p>
+        <Button variant="outline" size="sm" onClick={handleRecheck} disabled={checking}>
+          {checking ? "Checking…" : "Re-check"}
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground -mt-2">
+        Tests the official API and the mirror right now, and switches back to the
+        official one if it has recovered.
       </p>
     </div>
   );
@@ -405,6 +499,9 @@ export default function SettingsPage() {
           </div>
         )}
       </div>
+
+      {/* Statbotics source — admin-facing diagnostics */}
+      {isAdminMode && <StatboticsSourceCard />}
 
       {/* API Keys */}
       <div className="bg-card border border-border rounded-xl p-5 space-y-5">
