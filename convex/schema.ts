@@ -122,6 +122,17 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_event", ["eventKey"]),
 
+  // Admin-entered qual match count, used to build the scheduling grid before
+  // TBA publishes the real schedule (which often lands only hours before the
+  // event starts). Assignments key on match number, so once TBA does publish,
+  // the real matches simply take over the grid and everything already
+  // assigned resolves against them — nothing is migrated.
+  eventMatchPlans: defineTable({
+    eventKey:       v.string(),
+    qualMatchCount: v.number(),
+    updatedAt:      v.number(),
+  }).index("by_event", ["eventKey"]),
+
   // Per-match scouting slots — 6 positions per match (red1-3, blue1-3)
   matchAssignments: defineTable({
     eventKey: v.string(),

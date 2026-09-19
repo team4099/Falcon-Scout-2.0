@@ -32,3 +32,13 @@ dev-dist
 # Local-only Claude Code project context (not shared with the team repo)
 CLAUDE.md
 project_specs.md
+
+# Local agent tooling — installed per-developer by `npx convex ai-files install`
+# and the skills installer. Not part of the app build; regenerate with that
+# command rather than committing 80+ generated skill files.
+.agents/
+.claude/skills/
+AGENTS.md
+skills-lock.json
+convex/_generated/ai/
+convex/tsconfig.json

@@ -110,6 +110,34 @@ function matchSortKey(m: TBAMatch) {
   return (lvl[m.comp_level] ?? 99) * 1_000_000 + m.set_number * 10_000 + m.match_number;
 }
 
+/** Build stand-in qual matches 1..count for an event TBA hasn't scheduled yet.
+ *
+ *  TBA typically posts the qual schedule only hours before the event starts,
+ *  which left this grid empty and un-assignable until then. These placeholders
+ *  carry no alliance or timing data — the grid never renders any — so the only
+ *  fields that matter are comp_level and match_number. Their labels are what
+ *  tbaMatchLabel() would produce for the real match ("Q17"), so an assignment
+ *  saved against a placeholder is indistinguishable from one saved after TBA
+ *  publishes: the real matches simply replace these and the saved rows line up
+ *  by match number.
+ */
+function synthesizeQualMatches(eventKey: string, count: number): TBAMatch[] {
+  return Array.from({ length: count }, (_, i) => ({
+    key: `${eventKey}_planned_qm${i + 1}`,
+    comp_level: "qm" as const,
+    set_number: 1,
+    match_number: i + 1,
+    time: null,
+    predicted_time: null,
+    actual_time: null,
+    winning_alliance: "" as const,
+    alliances: {
+      red:  { team_keys: [], score: -1 },
+      blue: { team_keys: [], score: -1 },
+    },
+  }));
+}
+
 // ── Avatar ────────────────────────────────────────────────────────────────────
 
 function Avatar({ user, size = 36 }: { user: User; size?: number }) {
@@ -583,6 +611,163 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, onCycleClick, sa
             : pinnedId ? "Click a cell to assign · click same scout again to unassign" : "← Pin a scout to start assigning"}
         </span>
       </div>
+      )}
+    </div>
+  );
+}
+
+// ── Match plan panel ──────────────────────────────────────────────────────────
+// Shown above the grid whenever TBA has no qual schedule for the event. Lets an
+// admin enter how many quals the competition runs so the grid can be built and
+// assigned against plain match numbers ahead of TBA posting anything.
+
+interface MatchPlanPanelProps {
+  plannedCount: number;
+  readOnly: boolean;
+  onSave: (count: number) => Promise<void>;
+}
+
+function MatchPlanPanel({ plannedCount, readOnly, onSave }: MatchPlanPanelProps) {
+  const [draft, setDraft]   = useState(plannedCount > 0 ? String(plannedCount) : "");
+  const [editing, setEditing] = useState(plannedCount === 0);
+  const [saving, setSaving] = useState(false);
+  const [error, setError]   = useState<string | null>(null);
+
+  // A count set from another device (or another admin) should land here rather
+  // than leaving this input showing a stale number.
+  useEffect(() => {
+    setDraft(plannedCount > 0 ? String(plannedCount) : "");
+    setEditing(plannedCount === 0);
+  }, [plannedCount]);
+
+  const parsed = parseInt(draft, 10);
+  const valid  = Number.isInteger(parsed) && parsed > 0 && parsed <= 400;
+
+  async function save(count: number) {
+    setSaving(true); setError(null);
+    try {
+      await onSave(count);
+      setEditing(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't save match count");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={{
+      flexShrink: 0, padding: "10px 14px", borderRadius: 10,
+      background: G_DIM, border: `1.5px solid ${G_MED}`,
+      display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+    }}>
+      <AlertCircle size={17} style={{ color: G, flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 180 }}>
+        <div style={{ fontWeight: 700, fontSize: 13, color: FG }}>
+          {plannedCount > 0
+            ? `Planning ${plannedCount} qual matches`
+            : "TBA hasn't posted this event's schedule yet"}
+        </div>
+        <div style={{ fontSize: 11.5, color: MUTED, marginTop: 2 }}>
+          {plannedCount > 0
+            ? "Assignments save against match numbers and carry over automatically once TBA publishes."
+            : readOnly
+              ? "An admin can enter the qual match count to start assigning now."
+              : "Enter how many qual matches the competition runs to start assigning now."}
+        </div>
+        {error && (
+          <div style={{ fontSize: 11.5, color: "var(--destructive)", marginTop: 4 }}>{error}</div>
+        )}
+      </div>
+
+      {!readOnly && (editing ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+          <input
+            type="number" min={1} max={400} value={draft} autoFocus
+            onChange={e => setDraft(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && valid && !saving) void save(parsed); }}
+            placeholder="e.g. 78"
+            style={{
+              width: 92, padding: "7px 10px", borderRadius: 8, fontSize: 13, fontWeight: 700,
+              background: SURFACE, border: `1.5px solid ${SURF_BORD}`, color: FG, outline: "none",
+            }}
+          />
+          <button
+            onClick={() => { if (valid) void save(parsed); }}
+            disabled={!valid || saving}
+            style={{
+              display: "flex", alignItems: "center", gap: 6,
+              padding: "7px 14px", borderRadius: 8, fontSize: 13, fontWeight: 700,
+              background: G, color: G_TXT, border: "none",
+              cursor: !valid || saving ? "not-allowed" : "pointer",
+              opacity: !valid || saving ? 0.5 : 1,
+            }}
+          >
+            {saving
+              ? <><Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />Saving…</>
+              : <><Check size={13} />Build grid</>}
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+          <button
+            onClick={() => setEditing(true)}
+            style={{
+              display: "flex", alignItems: "center", gap: 6,
+              padding: "7px 12px", borderRadius: 8, fontSize: 12.5, fontWeight: 700,
+              background: SURFACE, color: FG, border: `1.5px solid ${SURF_BORD}`, cursor: "pointer",
+            }}
+          >
+            <Pencil size={12} />Change count
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Orphaned-assignment warning ───────────────────────────────────────────────
+// TBA published fewer quals than were planned for, so these assignments point at
+// matches that will never be played. Deleting them is destructive and always the
+// admin's call — it's real planning work — so this only offers the button.
+
+function OrphanWarning({
+  count, maxMatchNumber, readOnly, onClear,
+}: { count: number; maxMatchNumber: number; readOnly: boolean; onClear: () => Promise<void> }) {
+  const [clearing, setClearing] = useState(false);
+
+  return (
+    <div style={{
+      flexShrink: 0, padding: "10px 14px", borderRadius: 10,
+      background: "oklch(0.577 0.245 27 / 10%)",
+      border: "1.5px solid oklch(0.577 0.245 27 / 32%)",
+      display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+    }}>
+      <TriangleAlert size={17} style={{ color: "var(--destructive)", flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 180 }}>
+        <div style={{ fontWeight: 700, fontSize: 13, color: FG }}>
+          {count} assignment{count === 1 ? "" : "s"} past the real schedule
+        </div>
+        <div style={{ fontSize: 11.5, color: MUTED, marginTop: 2 }}>
+          TBA's schedule ends at Q{maxMatchNumber}. These were planned for later matches that don't exist, so they no longer appear on the grid.
+        </div>
+      </div>
+      {!readOnly && (
+        <button
+          onClick={async () => { setClearing(true); try { await onClear(); } finally { setClearing(false); } }}
+          disabled={clearing}
+          style={{
+            display: "flex", alignItems: "center", gap: 6, flexShrink: 0,
+            padding: "7px 14px", borderRadius: 8, fontSize: 12.5, fontWeight: 700,
+            background: "oklch(0.577 0.245 27 / 14%)", color: "var(--destructive)",
+            border: "1.5px solid oklch(0.577 0.245 27 / 38%)",
+            cursor: clearing ? "wait" : "pointer", opacity: clearing ? 0.6 : 1,
+          }}
+        >
+          {clearing
+            ? <><Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />Clearing…</>
+            : <><Trash2 size={13} />Clear them</>}
+        </button>
       )}
     </div>
   );
@@ -2054,6 +2239,14 @@ export default function SchedulingPage() {
     `sched_pit_rotations_${eventKey || "none"}`
   ) as PitRotation[] | undefined;
 
+  const matchPlan = useCached(
+    useQuery(
+      api.schedules.getMatchPlan,
+      eventKey ? { eventKey } : "skip"
+    ) as { qualMatchCount: number } | null | undefined,
+    `sched_match_plan_${eventKey || "none"}`
+  ) as { qualMatchCount: number } | null | undefined;
+
   const allPreferences = useCached(
     useQuery(
       api.schedules.listAllPreferences,
@@ -2083,6 +2276,8 @@ export default function SchedulingPage() {
   const clearAllPitScouting      = useAdminMutation(api.pitScouting.clearAllPitScoutingAssignments);
   const batchUpsertPitScouting   = useAdminMutation(api.pitScouting.batchUpsertPitScoutingAssignments);
   const bulkSetPitScoutingPref   = useAdminMutation(api.schedules.adminBulkSetPitScoutingPreference);
+  const setMatchPlan             = useAdminMutation(api.schedules.setMatchPlan);
+  const clearAssignmentsAbove    = useAdminMutation(api.schedules.clearMatchAssignmentsAbove);
 
   const pitScoutingTeams = useCached(
     useQuery(
@@ -2233,6 +2428,31 @@ export default function SchedulingPage() {
       .finally(() => setMatchesLoading(false));
   }, [eventKey]);
 
+  // ── Planned vs. real matches ────────────────────────────────────────────────
+  // TBA is the source of truth the moment it has one. Until then the grid runs
+  // on placeholders built from the admin-entered qual count, so scouts can be
+  // assigned to match numbers before the schedule is posted. The handover needs
+  // no migration: assignments key on match number, and the placeholder labels
+  // ("Q17") are exactly what tbaMatchLabel() produces for the real match.
+  const tbaQualCount  = useMemo(() => matches.filter(m => m.comp_level === "qm").length, [matches]);
+  const plannedCount  = matchPlan?.qualMatchCount ?? 0;
+  const usingPlanned  = tbaQualCount === 0 && plannedCount > 0;
+
+  const effectiveMatches = useMemo(
+    () => (usingPlanned ? synthesizeQualMatches(eventKey, plannedCount) : matches),
+    [usingPlanned, eventKey, plannedCount, matches]
+  );
+
+  // Assignments TBA's real schedule has no match for — left behind when the
+  // planned count overshot the actual qual count. Only meaningful once TBA has
+  // published; never computed against placeholders.
+  const orphanedAssignments = useMemo(
+    () => (tbaQualCount === 0
+      ? []
+      : (allAssignments ?? []).filter(a => a.matchNumber > tbaQualCount)),
+    [allAssignments, tbaQualCount]
+  );
+
   const userMap = useMemo(() => Object.fromEntries((allUsers ?? []).map(u => [u._id, u])), [allUsers]);
 
   // Scouts who opted into pit rotations (wantsPitRotation === true)
@@ -2281,9 +2501,19 @@ export default function SchedulingPage() {
     }
   }
 
+  async function handleSaveMatchPlan(count: number) {
+    if (!currentEvent) return;
+    await setMatchPlan({ eventKey: currentEvent.eventKey, qualMatchCount: count });
+  }
+
+  async function handleClearOrphans() {
+    if (!currentEvent || tbaQualCount === 0) return;
+    await clearAssignmentsAbove({ eventKey: currentEvent.eventKey, maxMatchNumber: tbaQualCount });
+  }
+
   async function handleBatchAssign(start: number, end: number, positions: Set<Position>) {
     if (!currentEvent || !pinnedScoutId) return;
-    const inRange = matches.filter(m => m.comp_level === "qm" && m.match_number >= start && m.match_number <= end);
+    const inRange = effectiveMatches.filter(m => m.comp_level === "qm" && m.match_number >= start && m.match_number <= end);
     const assignments: Parameters<typeof batchSet>[0]["assignments"] = [];
     for (const m of inRange) {
       for (const pos of positions) {
@@ -2420,10 +2650,10 @@ export default function SchedulingPage() {
   //  - "pitOnly": Pit Rotations tab's Auto-Assign. Strips matchAssignments
   //    so Apply only touches pit rotations.
   const handleAutoGenerate = useCallback(async (mode: "matchOnly" | "pitOnly") => {
-    if (!currentEvent || !allUsers || !matches.length) return;
+    if (!currentEvent || !allUsers || !effectiveMatches.length) return;
     setAutoGenRunning(true);
     try {
-      const qualMatches = matches
+      const qualMatches = effectiveMatches
         .filter(m => m.comp_level === "qm")
         .map(m => ({ matchNumber: m.match_number, matchLabel: tbaMatchLabel(m) }));
 
@@ -2480,7 +2710,7 @@ export default function SchedulingPage() {
     } finally {
       setAutoGenRunning(false);
     }
-  }, [currentEvent, allUsers, matches, allPreferences, allAssignments, pitRotations, excludedScoutIds, dbExcludedSet, driveTeamIds, pitAssignmentsMap]);
+  }, [currentEvent, allUsers, effectiveMatches, allPreferences, allAssignments, pitRotations, excludedScoutIds, dbExcludedSet, driveTeamIds, pitAssignmentsMap]);
 
   const handleAutoApply = useCallback(async () => {
     if (!autoGenResult || !currentEvent) return;
@@ -2528,7 +2758,7 @@ export default function SchedulingPage() {
   // Match scouting only ever covers qual matches — elims are always manual
   // (ElimsRotationPanel), so they're excluded from the grid, the scout
   // selector's per-scout counts, and the "N/M slots filled" progress stat.
-  const qualMatches = useMemo(() => matches.filter(m => m.comp_level === "qm"), [matches]);
+  const qualMatches = useMemo(() => effectiveMatches.filter(m => m.comp_level === "qm"), [effectiveMatches]);
 
   const totalSlots  = qualMatches.length * 6;
   const filledSlots = (allAssignments ?? []).length;
@@ -2638,7 +2868,7 @@ export default function SchedulingPage() {
           {!readOnly && !isLandscapePhone && currentEvent && allUsers && allUsers.length > 0 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {activeTab === "matches" && allUsers && matches.length > 0 && (
+                {activeTab === "matches" && allUsers && effectiveMatches.length > 0 && (
                   <button
                     onClick={() => handleAutoGenerate("matchOnly")}
                     disabled={autoGenRunning}
@@ -2660,7 +2890,7 @@ export default function SchedulingPage() {
                       : <><Sparkles size={14} />Auto-Generate Matches</>}
                   </button>
                 )}
-                {activeTab === "pit" && allUsers && matches.length > 0 && (
+                {activeTab === "pit" && allUsers && effectiveMatches.length > 0 && (
                   <button
                     onClick={() => handleAutoGenerate("pitOnly")}
                     disabled={autoGenRunning}
@@ -2794,44 +3024,64 @@ export default function SchedulingPage() {
 
           {/* ── Match assignments tab ───────────────────────────────────── */}
           {activeTab === "matches" && (
-            <div style={{ flex: 1, display: "flex", flexDirection: stackLayout ? "column" : "row", gap: isLandscapePhone ? 6 : 12, minHeight: 0 }}>
-              {matchesLoading ? (
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: isLandscapePhone ? 6 : 10, minHeight: 0 }}>
+              {/* A TBA fetch that's still in flight no longer blocks the grid —
+                  planned matches (or cached ones) are already assignable, and
+                  the real schedule swaps in underneath when it arrives. */}
+              {matchesLoading && qualMatches.length === 0 ? (
                 <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, color: MUTED }}>
                   <Loader2 size={20} style={{ animation: "spin 1s linear infinite" }} />
                   <span style={{ fontSize: 14 }}>Loading matches from TBA…</span>
                 </div>
-              ) : matchesError ? (
-                <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, textAlign: "center" }}>
-                  <AlertCircle size={28} style={{ color: MUTED, opacity: 0.5 }} />
-                  <div>
-                    <div style={{ fontWeight: 600, marginBottom: 4, color: FG }}>Couldn't load matches</div>
-                    <div style={{ fontSize: 12, color: MUTED }}>Check your TBA API key in Settings.</div>
-                  </div>
-                </div>
               ) : (
                 <>
-                  <ScoutSelector
-                    users={allUsers ?? []}
-                    pinnedId={pinnedScoutId}
-                    onPin={setPinnedScoutId}
-                    matchCounts={matchCounts}
-                    matches={qualMatches}
-                    onBatchAssign={handleBatchAssign}
-                    isMobile={isMobile}
-                    isLandscapePhone={isLandscapePhone}
-                    readOnly={readOnly}
-                  />
-                  <MatchGrid
-                    matches={qualMatches}
-                    assignMap={assignMap}
-                    pinnedId={pinnedScoutId}
-                    onCellClick={handleCellClick}
-                    onCycleClick={handleCycleClick}
-                    saving={savingCells}
-                    isMobile={isMobile}
-                    isLandscapePhone={isLandscapePhone}
-                    readOnly={readOnly}
-                  />
+                  {tbaQualCount === 0 && !matchesLoading && (
+                    <MatchPlanPanel
+                      plannedCount={plannedCount}
+                      readOnly={readOnly}
+                      onSave={handleSaveMatchPlan}
+                    />
+                  )}
+
+                  {orphanedAssignments.length > 0 && (
+                    <OrphanWarning
+                      count={orphanedAssignments.length}
+                      maxMatchNumber={tbaQualCount}
+                      readOnly={readOnly}
+                      onClear={handleClearOrphans}
+                    />
+                  )}
+
+                  {matchesError && tbaQualCount === 0 && plannedCount === 0 && (
+                    <div style={{ fontSize: 11.5, color: MUTED, textAlign: "center", padding: "2px 0" }}>
+                      Couldn't reach TBA — check your API key in Settings.
+                    </div>
+                  )}
+
+                  <div style={{ flex: 1, display: "flex", flexDirection: stackLayout ? "column" : "row", gap: isLandscapePhone ? 6 : 12, minHeight: 0 }}>
+                    <ScoutSelector
+                      users={allUsers ?? []}
+                      pinnedId={pinnedScoutId}
+                      onPin={setPinnedScoutId}
+                      matchCounts={matchCounts}
+                      matches={qualMatches}
+                      onBatchAssign={handleBatchAssign}
+                      isMobile={isMobile}
+                      isLandscapePhone={isLandscapePhone}
+                      readOnly={readOnly}
+                    />
+                    <MatchGrid
+                      matches={qualMatches}
+                      assignMap={assignMap}
+                      pinnedId={pinnedScoutId}
+                      onCellClick={handleCellClick}
+                      onCycleClick={handleCycleClick}
+                      saving={savingCells}
+                      isMobile={isMobile}
+                      isLandscapePhone={isLandscapePhone}
+                      readOnly={readOnly}
+                    />
+                  </div>
                 </>
               )}
             </div>

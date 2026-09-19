@@ -9,6 +9,86 @@ const positionValidator = v.union(
   v.literal("blue1"), v.literal("blue2"), v.literal("blue3")
 );
 
+/** Upper bound on a manually-entered qual count. The largest FRC events run
+ *  well under this; the cap exists so a typo can't spawn a 100k-row grid. */
+const MAX_PLANNED_QUALS = 400;
+
+// ── Match Plan ────────────────────────────────────────────────────────────────
+// TBA usually publishes the qual schedule only hours before the event starts,
+// which used to leave the scheduling grid empty and un-assignable until then.
+// An admin can instead enter the qual match count up front and assign against
+// plain match numbers; once TBA publishes, the real matches take over the grid
+// and the already-saved assignments resolve against them by match number.
+
+/** The admin-entered qual match count for an event (null if never set). */
+export const getMatchPlan = query({
+  args: { eventKey: v.string() },
+  handler: async (ctx, { eventKey }) => {
+    if (!(await isSignedIn(ctx))) return null;
+    return await ctx.db
+      .query("eventMatchPlans")
+      .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
+      .first();
+  },
+});
+
+/** Set the qual match count for an event. Passing 0 clears the plan. */
+export const setMatchPlan = mutation({
+  args: {
+    eventKey: v.string(),
+    qualMatchCount: v.number(),
+    adminKey: v.optional(v.string()),
+  },
+  handler: async (ctx, { eventKey, qualMatchCount, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
+    if (!Number.isInteger(qualMatchCount) || qualMatchCount < 0 || qualMatchCount > MAX_PLANNED_QUALS) {
+      throw new Error(`Match count must be a whole number between 0 and ${MAX_PLANNED_QUALS}`);
+    }
+    const existing = await ctx.db
+      .query("eventMatchPlans")
+      .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
+      .first();
+
+    // 0 means "no plan" — drop the row rather than storing a count that would
+    // render an empty grid indistinguishable from a real zero-match event.
+    if (qualMatchCount === 0) {
+      if (existing) await ctx.db.delete(existing._id);
+      return;
+    }
+
+    if (existing) {
+      await ctx.db.patch(existing._id, { qualMatchCount, updatedAt: Date.now() });
+    } else {
+      await ctx.db.insert("eventMatchPlans", { eventKey, qualMatchCount, updatedAt: Date.now() });
+    }
+  },
+});
+
+/** Delete every assignment for an event above `maxMatchNumber`.
+ *
+ *  Used when TBA publishes a schedule shorter than the planned count: those
+ *  assignments reference matches that will never exist, so the grid can no
+ *  longer show them and they'd otherwise be stranded in the table forever.
+ *  Admin-triggered, never automatic — they represent real planning work.
+ */
+export const clearMatchAssignmentsAbove = mutation({
+  args: {
+    eventKey: v.string(),
+    maxMatchNumber: v.number(),
+    adminKey: v.optional(v.string()),
+  },
+  handler: async (ctx, { eventKey, maxMatchNumber, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
+    const all = await ctx.db
+      .query("matchAssignments")
+      .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
+      .collect();
+    const orphans = all.filter((a) => a.matchNumber > maxMatchNumber);
+    await Promise.all(orphans.map((a) => ctx.db.delete(a._id)));
+    return orphans.length;
+  },
+});
+
 // ── Match Assignments ─────────────────────────────────────────────────────────
 
 /** All assignments for an event (admin view) */
