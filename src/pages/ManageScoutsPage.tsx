@@ -37,6 +37,7 @@ import {
   Pencil,
   Save,
   XCircle,
+  ArrowDownAZ,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -915,6 +916,7 @@ export default function ManageScoutsPage() {
   const [addingScout, setAddingScout] = useState(false);
   const [addScoutEmail, setAddScoutEmail] = useState("");
   const [savingScout, setSavingScout] = useState(false);
+  const [sortAlpha, setSortAlpha] = useState(false);
 
   const currentEvent = useCached(useQuery(api.events.getCurrentEvent), "current_event");
   const eventKey = currentEvent?.eventKey ?? "";
@@ -1013,9 +1015,15 @@ export default function ManageScoutsPage() {
     else scoutsWithoutSubs.push(user);
   });
 
-  scoutsWithSubs.sort(
-    (a, b) => (submissionsByScout[b._id]?.length ?? 0) - (submissionsByScout[a._id]?.length ?? 0)
-  );
+  if (sortAlpha) {
+    scoutsWithSubs.sort((a, b) => displayName(a).localeCompare(displayName(b)));
+    scoutsWithoutSubs.sort((a, b) => displayName(a).localeCompare(displayName(b)));
+  } else {
+    scoutsWithSubs.sort(
+      (a, b) => (submissionsByScout[b._id]?.length ?? 0) - (submissionsByScout[a._id]?.length ?? 0)
+    );
+    scoutsWithoutSubs.sort((a, b) => displayName(a).localeCompare(displayName(b)));
+  }
 
   const selectedUser = (allUsers ?? []).find((u) => u._id === selectedUserId) ?? null;
   const selectedSubmissions = selectedUserId
@@ -1457,10 +1465,29 @@ export default function ManageScoutsPage() {
                   {(allUsers ?? []).length}
                 </span>
                 <button
+                  onClick={() => setSortAlpha((v) => !v)}
+                  title={sortAlpha ? "Sorted A–Z · click to sort by reports" : "Sort alphabetically"}
+                  style={{
+                    marginLeft: "auto",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 22,
+                    height: 22,
+                    borderRadius: "50%",
+                    border: "1px solid oklch(0.85 0.18 95 / 40%)",
+                    background: sortAlpha ? "oklch(0.85 0.18 95)" : "oklch(0.85 0.18 95 / 12%)",
+                    color: sortAlpha ? "oklch(0.1 0 0)" : "oklch(0.85 0.18 95)",
+                    cursor: "pointer",
+                    flexShrink: 0,
+                  }}
+                >
+                  <ArrowDownAZ size={12} />
+                </button>
+                <button
                   onClick={() => setAddingScout((v) => !v)}
                   title="Add a scout by email"
                   style={{
-                    marginLeft: "auto",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -1587,7 +1614,7 @@ export default function ManageScoutsPage() {
                             setSelectedUserId(selectedUserId === user._id ? null : user._id)
                           }
                           hasSubmissions={true}
-                          rank={idx + 1}
+                          rank={sortAlpha ? undefined : idx + 1}
                           hasPrefs={!!prefsById[user._id]}
                           isExcluded={excludedSet.has(user._id)}
                         />

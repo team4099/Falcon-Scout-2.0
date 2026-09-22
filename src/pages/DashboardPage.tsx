@@ -1387,8 +1387,23 @@ export default function DashboardPage() {
         setSbTeams(map);
         // Persist transformed map so it can be seeded next render
         lsSet(`dash_sbTeams_${eventKey}`, map, TTL.SHORT);
+      }
 
-        // Also fetch overall (season) EPA for every team at this event.
+      if (Array.isArray(tbaTeamData)) {
+        const nums = (tbaTeamData as Array<{ team_number: number }>).map((t) => t.team_number);
+        setTbaTeams(nums);
+        lsSet(`dash_tbaTeams_${eventKey}`, nums, TTL.MEDIUM);
+        // Sync the roster to Convex so the backend can validate team numbers
+        syncRoster({ eventKey, teamNumbers: nums }).catch(() => {});
+        // Prime avatar memory cache for all event teams in the background
+        for (const num of nums) primeAvatar(num, eventYear);
+
+        // Fetch overall (season) EPA for every team on the roster. Keyed off
+        // the TBA roster rather than Statbotics' own event_teams rows: those
+        // rows don't exist until Statbotics has processed this event (e.g. it
+        // hasn't started yet), but season EPA is available per-team the whole
+        // time, so gating it on event-level data left it blank for no reason.
+        //
         // Statbotics' /team_years batch endpoint holds thousands of rows for
         // a given year but caps `limit` at 1000, silently dropping most teams
         // from a single page — fetch per-team instead, bounded by the event
@@ -1396,12 +1411,11 @@ export default function DashboardPage() {
         //
         // Run these a few at a time: statbotics asks API users not to hammer
         // their servers, and a 80-wide parallel burst is exactly that.
-        const eventTeams = (sbData as Array<{ team: number }>).map((t) => t.team);
         void (async () => {
           const overall: Record<number, number> = {};
-          for (let i = 0; i < eventTeams.length; i += SB_FETCH_CONCURRENCY) {
+          for (let i = 0; i < nums.length; i += SB_FETCH_CONCURRENCY) {
             if (cancelled) return;
-            const batch = eventTeams.slice(i, i + SB_FETCH_CONCURRENCY);
+            const batch = nums.slice(i, i + SB_FETCH_CONCURRENCY);
             const results = await Promise.all(
               batch.map((team) =>
                 fetchStatboticsTeamYear(team, eventYear).catch(() => null)
@@ -1417,16 +1431,6 @@ export default function DashboardPage() {
           setSbOverall(overall);
           lsSet(`dash_sbOverall_${eventKey}`, overall, TTL.SHORT);
         })();
-      }
-
-      if (Array.isArray(tbaTeamData)) {
-        const nums = (tbaTeamData as Array<{ team_number: number }>).map((t) => t.team_number);
-        setTbaTeams(nums);
-        lsSet(`dash_tbaTeams_${eventKey}`, nums, TTL.MEDIUM);
-        // Sync the roster to Convex so the backend can validate team numbers
-        syncRoster({ eventKey, teamNumbers: nums }).catch(() => {});
-        // Prime avatar memory cache for all event teams in the background
-        for (const num of nums) primeAvatar(num, eventYear);
       }
 
       if (tbaRankData && typeof tbaRankData === "object" && "rankings" in tbaRankData) {
