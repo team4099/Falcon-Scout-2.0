@@ -2271,7 +2271,6 @@ export default function SchedulingPage() {
   const togglePitScout           = useAdminMutation(api.pitScouting.upsertPitScoutingAssignment);
   const clearAllPitScouting      = useAdminMutation(api.pitScouting.clearAllPitScoutingAssignments);
   const batchUpsertPitScouting   = useAdminMutation(api.pitScouting.batchUpsertPitScoutingAssignments);
-  const bulkSetPitScoutingPref   = useAdminMutation(api.schedules.adminBulkSetPitScoutingPreference);
   const setMatchPlan             = useAdminMutation(api.schedules.setMatchPlan);
   const clearAssignmentsAbove    = useAdminMutation(api.schedules.clearMatchAssignmentsAbove);
 
@@ -2351,33 +2350,8 @@ export default function SchedulingPage() {
       scoutIds: a.scoutIds as Id<"users">[],
     }));
     await batchUpsertPitScouting({ eventKey: currentEvent.eventKey, assignments });
-
-    // Cutting/adding pairs to keep every pair within 4-8 teams means some
-    // scouts' own wantsPitScouting preference should change to match — but
-    // that's editing what a scout said about themselves, not just building
-    // a schedule, so it gets its own explicit confirm rather than applying
-    // silently alongside the team assignments above.
-    if (result.preferenceChanges.length > 0) {
-      const nameOf = (id: string) => {
-        const u = allUsers.find(u => u._id === id);
-        return u?.name ?? u?.email ?? id.slice(0, 6);
-      };
-      const turnedOff = result.preferenceChanges.filter(c => !c.wantsPitScouting).map(c => nameOf(c.scoutId));
-      const turnedOn = result.preferenceChanges.filter(c => c.wantsPitScouting).map(c => nameOf(c.scoutId));
-      const lines = [
-        turnedOff.length > 0 ? `Turn OFF pit scouting preference for: ${turnedOff.join(", ")} (their pair was cut — too many pairs for the team count)` : null,
-        turnedOn.length > 0 ? `Turn ON pit scouting preference for: ${turnedOn.join(", ")} (recruited to help cover more teams)` : null,
-      ].filter((l): l is string => l !== null).join("\n");
-      const confirmed = window.confirm(
-        `Also update ${result.preferenceChanges.length} scout${result.preferenceChanges.length !== 1 ? "s" : ""}' pit scouting preference to match this assignment?\n\n${lines}`
-      );
-      if (confirmed) {
-        await bulkSetPitScoutingPref({
-          eventKey: currentEvent.eventKey,
-          changes: result.preferenceChanges.map(c => ({ scoutId: c.scoutId as Id<"users">, wantsPitScouting: c.wantsPitScouting })),
-        });
-      }
-    }
+    // Scheduling never edits scout preferences — admins do that in Manage Scouts.
+    if (result.warnings.length > 0) window.alert(result.warnings.join("\n\n"));
   }
 
   // Load / persist excluded scout IDs per event

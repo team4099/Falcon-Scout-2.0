@@ -90,6 +90,64 @@ describe("setUserName", () => {
   });
 });
 
+describe("addScoutByEmail", () => {
+  test("a non-admin cannot add a scout", async () => {
+    const t = convexTest(schema, modules);
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
+    const scoutAs = t.withIdentity({ subject: scoutId, issuer: "test" });
+    await expect(
+      scoutAs.mutation(api.users.addScoutByEmail, { email: "new@team4099.com" }),
+    ).rejects.toThrow(/Admin access required/i);
+  });
+
+  test("an admin can add a scout by email, and it's visible in listUsers", async () => {
+    const t = convexTest(schema, modules);
+    const { as: chiefAs } = await realAdmin(t);
+    const newId = await chiefAs.mutation(api.users.addScoutByEmail, {
+      email: "New.Scout@Team4099.com",
+    });
+    const users = await chiefAs.query(api.users.listUsers, {});
+    const added = users.find((u) => u._id === newId);
+    expect(added?.email).toBe("new.scout@team4099.com");
+    expect(added?.name).toBe("new.scout");
+  });
+
+  test("rejects a non-team4099.com email", async () => {
+    const t = convexTest(schema, modules);
+    const { as: chiefAs } = await realAdmin(t);
+    await expect(
+      chiefAs.mutation(api.users.addScoutByEmail, { email: "outsider@gmail.com" }),
+    ).rejects.toThrow(/team4099\.com/i);
+  });
+
+  test("rejects a duplicate email", async () => {
+    const t = convexTest(schema, modules);
+    const { as: chiefAs } = await realAdmin(t);
+    await chiefAs.mutation(api.users.addScoutByEmail, { email: "dup@team4099.com" });
+    await expect(
+      chiefAs.mutation(api.users.addScoutByEmail, { email: "dup@team4099.com" }),
+    ).rejects.toThrow(/already exists/i);
+  });
+
+  test("the added placeholder's verified email lets a later Google sign-in claim it instead of creating a duplicate", async () => {
+    const t = convexTest(schema, modules);
+    const { as: chiefAs } = await realAdmin(t);
+    const placeholderId = await chiefAs.mutation(api.users.addScoutByEmail, {
+      email: "future.scout@team4099.com",
+    });
+    // Mirrors @convex-dev/auth's own linking check (uniqueUserWithVerifiedEmail):
+    // a verified-email match on `users` is what account linking keys off of.
+    const linked = await t.run((ctx) =>
+      ctx.db
+        .query("users")
+        .withIndex("email", (q) => q.eq("email", "future.scout@team4099.com"))
+        .filter((q) => q.neq(q.field("emailVerificationTime"), undefined))
+        .first(),
+    );
+    expect(linked?._id).toBe(placeholderId);
+  });
+});
+
 describe("setAdminLabel", () => {
   test("a non-admin cannot set a label", async () => {
     const t = convexTest(schema, modules);

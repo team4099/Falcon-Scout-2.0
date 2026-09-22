@@ -52,6 +52,41 @@ export const setUserName = mutation({
 });
 
 /**
+ * Admin-only: pre-add a scout by email so they show up in Manage Scouts,
+ * scheduling, and pit assignment before they've ever signed in. Google
+ * sign-in is restricted to @team4099.com (see convex/auth.ts), so only those
+ * addresses are accepted here.
+ *
+ * Stamping `emailVerificationTime` matters, not just cosmetically: Convex
+ * Auth's default account-linking (see uniqueUserWithVerifiedEmail in
+ * @convex-dev/auth) only merges a new Google sign-in into an *existing* user
+ * row when that row's email is marked verified. Without this, the real
+ * sign-in would create a second, disconnected user instead of claiming this
+ * placeholder.
+ */
+export const addScoutByEmail = mutation({
+  args: { email: v.string() },
+  handler: async (ctx, { email }) => {
+    await requireAdmin(ctx);
+    const normalized = email.trim().toLowerCase();
+    if (!normalized.endsWith("@team4099.com")) {
+      throw new Error("Only team4099.com emails can be added.");
+    }
+    const existing = await ctx.db
+      .query("users")
+      .withIndex("email", (q) => q.eq("email", normalized))
+      .first();
+    if (existing) throw new Error("A scout with that email already exists.");
+    const name = normalized.slice(0, normalized.indexOf("@"));
+    return await ctx.db.insert("users", {
+      email: normalized,
+      name,
+      emailVerificationTime: Date.now(),
+    });
+  },
+});
+
+/**
  * Called once per session by the client right after a successful sign-in
  * (see App.tsx). Clears a soft-delete so a deactivated user who signs back
  * in is immediately restored everywhere, per the "until they sign in again"

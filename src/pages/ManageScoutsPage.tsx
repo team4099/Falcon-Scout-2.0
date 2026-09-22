@@ -912,6 +912,9 @@ export default function ManageScoutsPage() {
   const [savingName, setSavingName] = useState(false);
   const [deactivating, setDeactivating] = useState<string | null>(null);
   const [showDeactivated, setShowDeactivated] = useState(false);
+  const [addingScout, setAddingScout] = useState(false);
+  const [addScoutEmail, setAddScoutEmail] = useState("");
+  const [savingScout, setSavingScout] = useState(false);
 
   const currentEvent = useCached(useQuery(api.events.getCurrentEvent), "current_event");
   const eventKey = currentEvent?.eventKey ?? "";
@@ -961,6 +964,7 @@ export default function ManageScoutsPage() {
   const setDriveTeamMember  = useAdminMutation(api.admin.setDriveTeamMember);
   const setAdminLabel       = useAdminMutation(api.admin.setAdminLabel);
   const setUserName         = useAdminMutation(api.users.setUserName);
+  const addScoutByEmail     = useAdminMutation(api.users.addScoutByEmail);
   const deactivateUser      = useAdminMutation(api.admin.deactivateUser);
   const reactivateUser      = useAdminMutation(api.admin.reactivateUser);
   const deactivatedUsers = useQuery(api.admin.listDeactivatedUsers) as
@@ -1201,6 +1205,26 @@ export default function ManageScoutsPage() {
     }
   }
 
+  async function handleAddScout() {
+    const trimmed = addScoutEmail.trim().toLowerCase();
+    if (!trimmed) return;
+    if (!trimmed.endsWith("@team4099.com")) {
+      toast.error("Only team4099.com emails can be added.");
+      return;
+    }
+    setSavingScout(true);
+    try {
+      await addScoutByEmail({ email: trimmed });
+      toast.success(`${trimmed} added.`);
+      setAddScoutEmail("");
+      setAddingScout(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't add scout.");
+    } finally {
+      setSavingScout(false);
+    }
+  }
+
   async function handleToggleDriveTeam(userId: string, isDriveTeam: boolean) {
     setTogglingDriveTeam(true);
     try {
@@ -1422,7 +1446,6 @@ export default function ManageScoutsPage() {
                 </span>
                 <span
                   style={{
-                    marginLeft: "auto",
                     background: "oklch(0.85 0.18 95 / 20%)",
                     color: "oklch(0.85 0.18 95)",
                     borderRadius: 20,
@@ -1433,7 +1456,82 @@ export default function ManageScoutsPage() {
                 >
                   {(allUsers ?? []).length}
                 </span>
+                <button
+                  onClick={() => setAddingScout((v) => !v)}
+                  title="Add a scout by email"
+                  style={{
+                    marginLeft: "auto",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 22,
+                    height: 22,
+                    borderRadius: "50%",
+                    border: "1px solid oklch(0.85 0.18 95 / 40%)",
+                    background: addingScout ? "oklch(0.85 0.18 95)" : "oklch(0.85 0.18 95 / 12%)",
+                    color: addingScout ? "oklch(0.1 0 0)" : "oklch(0.85 0.18 95)",
+                    cursor: "pointer",
+                    flexShrink: 0,
+                  }}
+                >
+                  <UserPlus size={12} />
+                </button>
               </div>
+
+              {addingScout && (
+                <div
+                  style={{
+                    padding: "10px 12px",
+                    borderBottom: "1px solid oklch(1 0 0 / 8%)",
+                    display: "flex",
+                    gap: 6,
+                    flexShrink: 0,
+                    background: "oklch(1 0 0 / 2%)",
+                  }}
+                >
+                  <input
+                    autoFocus
+                    type="email"
+                    value={addScoutEmail}
+                    onChange={(e) => setAddScoutEmail(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleAddScout();
+                      if (e.key === "Escape") setAddingScout(false);
+                    }}
+                    placeholder="scout@team4099.com"
+                    disabled={savingScout}
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      background: "oklch(1 0 0 / 5%)",
+                      border: "1px solid oklch(1 0 0 / 12%)",
+                      borderRadius: 8,
+                      padding: "6px 9px",
+                      fontSize: 12,
+                      color: "var(--foreground)",
+                      outline: "none",
+                    }}
+                  />
+                  <button
+                    onClick={handleAddScout}
+                    disabled={savingScout || !addScoutEmail.trim()}
+                    style={{
+                      padding: "6px 12px",
+                      borderRadius: 8,
+                      border: "none",
+                      background: "oklch(0.85 0.18 95)",
+                      color: "oklch(0.1 0 0)",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: savingScout ? "not-allowed" : "pointer",
+                      opacity: !addScoutEmail.trim() ? 0.5 : 1,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {savingScout ? "Adding…" : "Add"}
+                  </button>
+                </div>
+              )}
 
               <ScrollArea style={{ flex: 1 }}>
                 <div style={{ padding: "10px 10px 16px" }}>

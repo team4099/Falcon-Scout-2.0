@@ -44,6 +44,7 @@
  *    scouts with zero preferences selected first, then scouts with the
  *    fewest preferences selected — never from scouts who opted into pit
  *    rotation specifically, and existing manual team assignments are kept
+ *  - Scheduling NEVER changes scout preferences; only admins can (Manage Scouts)
  */
 
 export type Position = "red1" | "red2" | "red3" | "blue1" | "blue2" | "blue3";
@@ -636,13 +637,6 @@ export interface PitScoutingOutput {
   teamAssignments: { teamNumber: number; scoutIds: string[] }[];
   groups: string[][];
   warnings: string[];
-  /** Scouts whose wantsPitScouting preference should change as a result of
-   *  this run — a pair cut for having too few teams to cover turns its
-   *  members' flag off; a scout recruited to form a new pair turns it on.
-   *  Caller decides whether/how to apply this (e.g. a confirm step before
-   *  writing it back), generatePitScoutingTeams itself never mutates
-   *  preferences. */
-  preferenceChanges: { scoutId: string; wantsPitScouting: boolean }[];
 }
 
 const PIT_SCOUTING_MIN_TEAMS_PER_PAIR = 4;
@@ -697,13 +691,13 @@ export function generatePitScoutingTeams(input: PitScoutingInput): PitScoutingOu
   const preserved = [...existingByTeam.entries()].map(([teamNumber, scoutIds]) => ({ teamNumber, scoutIds }));
 
   if (teamNumbers.length === 0) {
-    return { teamAssignments: [], groups: [], warnings: ["No TBA teams loaded for this event."], preferenceChanges: [] };
+    return { teamAssignments: [], groups: [], warnings: ["No TBA teams loaded for this event."] };
   }
   if (unassignedTeams.length === 0) {
-    return { teamAssignments: preserved, groups: [], warnings: [], preferenceChanges: [] };
+    return { teamAssignments: preserved, groups: [], warnings: [] };
   }
   if (scouts.length === 0) {
-    return { teamAssignments: preserved, groups: [], warnings: ["No scouts available for pit scouting."], preferenceChanges: [] };
+    return { teamAssignments: preserved, groups: [], warnings: ["No scouts available for pit scouting."] };
   }
 
   // 1. Pair up wantsPitScouting opt-ins first, preference-aware.
@@ -731,31 +725,31 @@ export function generatePitScoutingTeams(input: PitScoutingInput): PitScoutingOu
   const targetPairs = Math.max(minPairsForCap, Math.min(idealPairsForTarget, baseCount + extraPairsAchievableWithZero));
 
   // 3b. Too many opted-in pairs already (each would fall below the 4-team
-  // floor) — cut the excess. Cut whole pairs (last-formed first) rather than
-  // splitting them, and flag their members' wantsPitScouting preference to
-  // be turned off so a later run/step knows they're free for pit rotation
-  // or match scouting instead. generatePitScoutingTeams never writes this
-  // itself — the caller applies preferenceChanges (typically after a
-  // confirm step, since it's editing a scout's own stated preference).
-  const cutScoutIds: string[] = [];
+  // floor) — leave the excess out of this run's assignment. Cut whole pairs
+  // (last-formed first) rather than splitting them. Scouts' stated
+  // preferences are NEVER changed by scheduling — only an admin can edit
+  // them (Manage Scouts → adminSetPreferences).
+  let cutCount = 0;
   while (pairs.length > targetPairs) {
-    const removed = pairs.pop();
-    if (removed) cutScoutIds.push(...removed);
+    cutCount += pairs.pop()?.length ?? 0;
+  }
+  if (cutCount > 0) {
+    warnings.push(
+      `${cutCount} opted-in pit scout(s) weren't needed for ${unassignedTeams.length} teams and were left unassigned — ` +
+      `their preferences are unchanged.`
+    );
   }
 
-  const addedScoutIds: string[] = [];
   let ri = 0;
   // Resolve a pending solo (odd opt-in) by pairing them with the first recruit.
   let pendingSolo = solo;
   if (pendingSolo && ri < recruitPool.length) {
     pairs.push([pendingSolo, recruitPool[ri]._id]);
-    addedScoutIds.push(recruitPool[ri]._id);
     ri++;
     pendingSolo = undefined;
   }
   while (pairs.length < targetPairs && ri + 1 < recruitPool.length) {
     pairs.push([recruitPool[ri]._id, recruitPool[ri + 1]._id]);
-    addedScoutIds.push(recruitPool[ri]._id, recruitPool[ri + 1]._id);
     ri += 2;
   }
   // One leftover recruit (odd pool) — a lone scout can't form a valid 2-person
@@ -763,7 +757,6 @@ export function generatePitScoutingTeams(input: PitScoutingInput): PitScoutingOu
   if (ri < recruitPool.length && pairs.length > 0) {
     pairs.sort((a, b) => a.length - b.length);
     pairs[0].push(recruitPool[ri]._id);
-    addedScoutIds.push(recruitPool[ri]._id);
     ri++;
   }
   if (pendingSolo) {
@@ -773,13 +766,8 @@ export function generatePitScoutingTeams(input: PitScoutingInput): PitScoutingOu
     else pairs.push([pendingSolo]);
   }
 
-  const preferenceChanges: PitScoutingOutput["preferenceChanges"] = [
-    ...cutScoutIds.map(scoutId => ({ scoutId, wantsPitScouting: false })),
-    ...addedScoutIds.map(scoutId => ({ scoutId, wantsPitScouting: true })),
-  ];
-
   if (pairs.length === 0) {
-    return { teamAssignments: preserved, groups: [], warnings: ["No scouts available to form pit scouting pairs."], preferenceChanges };
+    return { teamAssignments: preserved, groups: [], warnings: ["No scouts available to form pit scouting pairs."] };
   }
   if (pairs.length < minPairsForCap) {
     warnings.push(
@@ -796,7 +784,7 @@ export function generatePitScoutingTeams(input: PitScoutingInput): PitScoutingOu
     for (const t of slice) teamAssignments.push({ teamNumber: t, scoutIds: pairs[i] });
   }
 
-  return { teamAssignments, groups: pairs, warnings, preferenceChanges };
+  return { teamAssignments, groups: pairs, warnings };
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1158,9 +1146,9 @@ export function runTests(): TestResult[] {
   });
 
   // T20b ── generatePitScoutingTeams: too many opted-in pairs for the team
-  // count (each would fall below the new 4-team floor) get cut, and the cut
-  // members are flagged to have wantsPitScouting turned off.
-  test("T20b Pit scouting cuts excess pairs and flags their members' preference off", () => {
+  // count (each would fall below the new 4-team floor) are left out of the
+  // assignment, with a warning — preferences are never touched.
+  test("T20b Pit scouting cuts excess pairs and warns", () => {
     const scouts = makeScouts(6);
     // 3 opted-in pairs, but only 8 teams — floor of 4/pair means only 2
     // pairs are needed (ideal = ceil(8/4) = 2), so one pair must be cut.
@@ -1172,10 +1160,10 @@ export function runTests(): TestResult[] {
     const teamNumbers = Array.from({ length: 8 }, (_, i) => 400 + i);
     const out = generatePitScoutingTeams({ teamNumbers, scouts, preferences: prefs });
     assert(out.groups.length === 2, `Expected 2 pairs after cutting excess, got ${out.groups.length}`);
-    const cut = out.preferenceChanges.filter(c => c.wantsPitScouting === false);
-    assert(cut.length === 2, `Expected 2 scouts cut, got ${cut.length}`);
-    const cutIds = new Set(cut.map(c => c.scoutId));
-    for (const g of out.groups) for (const id of g) assert(!cutIds.has(id), `Cut scout ${id} still appears in an active pair`);
+    const placed = new Set(out.groups.flat());
+    assert(placed.size === 4, `Expected 4 scouts placed after cutting 2, got ${placed.size}`);
+    assert(out.warnings.some(w => w.includes("2 opted-in pit scout(s)")), "Expected a warning naming the 2 cut scouts");
+    assert(!("preferenceChanges" in out), "Pit scouting output must not propose preference changes");
     const teamsPerPair = new Map<string, number>();
     for (const a of out.teamAssignments) {
       const key = a.scoutIds.join(",");
@@ -1185,21 +1173,20 @@ export function runTests(): TestResult[] {
   });
 
   // T20c ── generatePitScoutingTeams: recruited scouts (added to cover more
-  // teams than the opted-in pairs can handle) are flagged to have
-  // wantsPitScouting turned on.
-  test("T20c Pit scouting flags recruited scouts' preference on", () => {
+  // teams than the opted-in pairs can handle) are placed in pairs, and their
+  // input preferences are left exactly as given.
+  test("T20c Pit scouting recruits without mutating preferences", () => {
     const scouts = makeScouts(10);
     const prefs = makePrefs(scouts, [
       { wantsPitScouting: true, preferredPartners: ["s2"] }, { wantsPitScouting: true, preferredPartners: ["s1"] },
       // s3-s10: zero preferences, available as recruits
     ]);
     const teamNumbers = Array.from({ length: 32 }, (_, i) => 500 + i); // needs up to 8 pairs at the 4-team floor
+    const before = JSON.stringify(prefs);
     const out = generatePitScoutingTeams({ teamNumbers, scouts, preferences: prefs });
-    const added = out.preferenceChanges.filter(c => c.wantsPitScouting === true);
-    assert(added.length > 0, "Expected at least one recruited scout to be flagged wantsPitScouting: true");
-    for (const { scoutId } of added) {
-      assert(out.groups.some(g => g.includes(scoutId)), `Recruited scout ${scoutId} not actually placed in a pair`);
-    }
+    const recruited = out.groups.flat().filter(id => id !== "s1" && id !== "s2");
+    assert(recruited.length > 0, "Expected at least one recruited scout placed in a pair");
+    assert(JSON.stringify(prefs) === before, "generatePitScoutingTeams mutated its input preferences");
   });
 
   // T21 ── Re-running Auto-Generate against its own previously-applied output
