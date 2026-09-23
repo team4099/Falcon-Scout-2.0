@@ -353,6 +353,7 @@ export default defineSchema({
       v.literal("scouting_reward"),
       v.literal("pit_duty_reward"),
       v.literal("pit_duty_revoked"),
+      v.literal("admin_award"),
       v.literal("beg"),
       v.literal("bet_placed"),
       v.literal("bet_won"),

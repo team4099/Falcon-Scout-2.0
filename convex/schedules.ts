@@ -415,9 +415,23 @@ export const unreportPitDuty = mutation({
     if (existing) {
       await ctx.db.delete(existing._id);
       // Reverse the reportPitDuty payout — otherwise report→undo→report
-      // repeated farms unlimited coins.
+      // repeated farms unlimited coins. Claw back what the ledger says this
+      // rotation actually paid (net of earlier revokes), not the current
+      // constant, so check-ins made before a reward change or before the
+      // ledger existed can't be over- or under-reversed.
+      const txns = await ctx.db
+        .query("coinTransactions")
+        .withIndex("by_user_event", (q) => q.eq("userId", userId).eq("eventKey", existing.eventKey))
+        .collect();
+      const outstanding = txns
+        .filter(
+          (t) =>
+            t.relatedId === rotationId &&
+            (t.type === "pit_duty_reward" || t.type === "pit_duty_revoked")
+        )
+        .reduce((sum, t) => sum + t.amount, 0);
       await revokeCoins(
-        ctx, userId, existing.eventKey, PIT_DUTY_REWARD, "pit_duty_revoked",
+        ctx, userId, existing.eventKey, outstanding, "pit_duty_revoked",
         "Pit duty undone", rotationId,
       );
     }

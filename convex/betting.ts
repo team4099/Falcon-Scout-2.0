@@ -11,7 +11,10 @@ const STARTING_BALANCE = 1000;
 export const DEFAULT_SCOUT_REWARD = 50;
 
 /** Coins paid for reporting to a pit-duty shift (no form submission to reward instead). */
-export const PIT_DUTY_REWARD = 25;
+export const PIT_DUTY_REWARD = 100;
+
+/** Upper bound on a single admin grant — a typo guard, not an economy limit. */
+const MAX_ADMIN_AWARD = 100_000;
 
 const MIN_BET = 10;
 /** Coins are whole and the economy starts at 1000; nothing legitimate stakes more. */
@@ -39,6 +42,7 @@ type TransactionType =
   | "scouting_reward"
   | "pit_duty_reward"
   | "pit_duty_revoked"
+  | "admin_award"
   | "beg"
   | "bet_placed"
   | "bet_won"
@@ -91,7 +95,7 @@ export async function awardCoins(
   userId: Id<"users">,
   eventKey: string,
   amount: number,
-  reason: "scouting_reward" | "pit_duty_reward",
+  reason: "scouting_reward" | "pit_duty_reward" | "admin_award",
   note?: string,
   relatedId?: string,
 ): Promise<void> {
@@ -151,6 +155,35 @@ export async function revokeCoins(
   });
   await logTransaction(ctx, userId, eventKey, reason, -amount, balanceAfter, note, relatedId);
 }
+
+/**
+ * Admin-only: grant a scout bonus coins with a mandatory reason. The reason is
+ * stored as the ledger note, so the scout sees why in their Log tab.
+ * Grants only — there is deliberately no admin "take coins" path here.
+ */
+export const adminAwardCoins = mutation({
+  args: {
+    eventKey: v.string(),
+    scoutId:  v.id("users"),
+    amount:   v.number(),
+    message:  v.string(),
+  },
+  handler: async (ctx, { eventKey, scoutId, amount, message }) => {
+    await requireAdmin(ctx);
+    if (!Number.isInteger(amount) || amount <= 0) {
+      throw new Error("Amount must be a positive whole number of coins");
+    }
+    if (amount > MAX_ADMIN_AWARD) {
+      throw new Error(`Amount can't exceed ${MAX_ADMIN_AWARD} coins`);
+    }
+    const note = message.trim();
+    if (!note) throw new Error("A message explaining the award is required");
+    if (note.length > 200) throw new Error("Message must be 200 characters or fewer");
+    if (!(await ctx.db.get(scoutId))) throw new Error("Scout not found");
+
+    await awardCoins(ctx, scoutId, eventKey, amount, "admin_award", note);
+  },
+});
 
 // ── Balance ───────────────────────────────────────────────────────────────────
 

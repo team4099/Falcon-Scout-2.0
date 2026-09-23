@@ -20,12 +20,8 @@ import type { MutationCtx } from "./_generated/server";
  *    exact team" — still enough to block scouting matches nobody rostered
  *    them for.
  *  - "pit": the scout must be on this team's `pitScoutingTeams` roster.
- *  - "checklist": the scout must be on a non-elims `pitRotations` shift that
- *    covers this match number — checklists are handed out to whoever is on
- *    pit duty for that window (see `computeMyChecklistAssignments` in
- *    MySchedulePage.tsx).
- *  - "super": there is no assignment mechanism for super scouting anywhere
- *    in the app (no table, no My Schedule entry) — always false.
+ *  - Everything else (checklist, super, unknown): never pays. Only match and
+ *    pit scouting are rewarded; pit duty has its own payout on check-in.
  */
 async function isAssignedForReward(
   ctx: MutationCtx,
@@ -53,25 +49,37 @@ async function isAssignedForReward(
         .first();
       return team?.scoutIds.includes(scoutId) ?? false;
     }
-    case "checklist": {
-      const rotations = await ctx.db
-        .query("pitRotations")
-        .withIndex("by_event", (q) => q.eq("eventKey", args.eventKey))
-        .collect();
-      return rotations.some(
-        (r) =>
-          !r.isElims &&
-          r.startMatch != null &&
-          r.endMatch != null &&
-          args.matchNumber >= r.startMatch &&
-          args.matchNumber <= r.endMatch &&
-          r.scoutIds.includes(scoutId)
-      );
-    }
     default:
-      // "super" and anything unrecognized: no assignment source, no reward.
       return false;
   }
+}
+
+/**
+ * Has this scout already submitted a match-scouting form for this match?
+ *
+ * Match assignments are one robot per scout per match, but the server can't
+ * resolve a position to a team number, so "assigned to this match" is the
+ * finest check available. Without a per-match cap a scout could submit all six
+ * teams of an assigned match and be paid six times.
+ */
+async function alreadyScoutedMatch(
+  ctx: MutationCtx,
+  scoutId: Id<"users">,
+  args: { eventKey: string; matchNumber: number; compLevel?: "qm" | "elim" },
+  exclude: Id<"formSubmissions">,
+): Promise<boolean> {
+  const prior = await ctx.db
+    .query("formSubmissions")
+    .withIndex("by_scout_event_match", (q) =>
+      q.eq("scoutId", scoutId).eq("eventKey", args.eventKey).eq("matchNumber", args.matchNumber)
+    )
+    .collect();
+  for (const r of prior) {
+    if (r._id === exclude || r.compLevel !== args.compLevel) continue;
+    const t = await ctx.db.get(r.templateId);
+    if ((t?.formType ?? "default") === "default") return true;
+  }
+  return false;
 }
 
 /**
@@ -305,19 +313,24 @@ export const submitForm = mutation({
 
     // ── Scouting payout ───────────────────────────────────────────────────
     // Scouting is meant to be the primary way to earn coins, so an accepted
-    // submission pays out — but only the scout's FIRST one for a given match
-    // and team. The offlineId check above only guards replays of a queued
+    // submission pays out — but only for match/pit forms the scout is assigned
+    // to, and only their FIRST one per match (match forms) or per team (pit
+    // forms). The offlineId check above only guards replays of a queued
     // submission; nothing stopped a scout re-submitting the same match from
     // the form over and over, which paid the reward every time.
     //
     // Re-submitting is still allowed (it is how a scout corrects a mistake,
     // and two scouts covering the same team is normal and should pay both) —
     // it just doesn't pay twice.
-    if (userId && !(await alreadyScouted(ctx, userId, args, submissionId))) {
-      const template = await ctx.db.get(args.templateId);
-      const formType = template?.formType ?? "default";
+    const template = userId ? await ctx.db.get(args.templateId) : null;
+    const formType = template?.formType ?? "default";
+    if (userId && (formType === "default" || formType === "pit")) {
+      const repeat =
+        formType === "default"
+          ? await alreadyScoutedMatch(ctx, userId, args, submissionId)
+          : await alreadyScouted(ctx, userId, args, submissionId);
       const reward = template?.coinReward ?? DEFAULT_SCOUT_REWARD;
-      if (reward > 0 && (await isAssignedForReward(ctx, userId, formType, args))) {
+      if (!repeat && reward > 0 && (await isAssignedForReward(ctx, userId, formType, args))) {
         await awardCoins(
           ctx, userId, args.eventKey, reward, "scouting_reward",
           template?.name, submissionId,

@@ -170,16 +170,42 @@ describe("checklist submission requires a signed-in caller", () => {
 
     await as.mutation(api.schedules.reportPitDuty, { eventKey: EVENT, rotationId });
     await as.mutation(api.schedules.reportPitDuty, { eventKey: EVENT, rotationId }); // repeat tap
-    expect(await bal()).toBe(1025); // 1000 + one 25-coin reward, not two
+    expect(await bal()).toBe(1100); // 1000 + one 100-coin reward, not two
 
     await as.mutation(api.schedules.unreportPitDuty, { rotationId });
     expect(await bal()).toBe(1000); // undo claws the reward back
+    await as.mutation(api.schedules.unreportPitDuty, { rotationId }); // repeat undo is a no-op
+    expect(await bal()).toBe(1000);
 
     // Reporting again after a genuine undo pays again — this isn't the farming
     // loop (report→undo→report repeated forever); it's the same "assigned work,
     // done once at a time" rule submitForm already follows for form submissions.
     await as.mutation(api.schedules.reportPitDuty, { eventKey: EVENT, rotationId });
-    expect(await bal()).toBe(1025);
+    expect(await bal()).toBe(1100);
+  });
+
+  test("undo claws back what the ledger paid, not the current constant", async () => {
+    const t = convexTest(schema, modules);
+    const { scoutId, rotationId } = await t.run(async (ctx) => {
+      const scoutId = await ctx.db.insert("users", { name: "Scout" });
+      const rotationId = await ctx.db.insert("pitRotations", {
+        eventKey: EVENT, startMatch: 1, endMatch: 10, scoutIds: [scoutId],
+      });
+      // A check-in from before the reward was raised: paid 25, not 100.
+      await ctx.db.insert("pitDutyCheckIns", { scoutId, eventKey: EVENT, rotationId, reportedAt: 1 });
+      await ctx.db.insert("userBalances", {
+        userId: scoutId, eventKey: EVENT, balance: 1025, totalWon: 0, totalLost: 0, totalBet: 0, totalBegs: 0,
+      });
+      await ctx.db.insert("coinTransactions", {
+        userId: scoutId, eventKey: EVENT, type: "pit_duty_reward", amount: 25,
+        balanceAfter: 1025, relatedId: rotationId, createdAt: 1,
+      });
+      return { scoutId, rotationId };
+    });
+    const as = t.withIdentity({ subject: scoutId, issuer: "test" });
+    await as.mutation(api.schedules.unreportPitDuty, { rotationId });
+    const bal = await t.run(async (ctx) => (await ctx.db.query("userBalances").first())?.balance);
+    expect(bal).toBe(1000);
   });
 
   test("getMyPitDutyCheckIns returns nothing to an anonymous caller", async () => {
@@ -336,7 +362,7 @@ describe("scouting pays once per match", () => {
     expect(rows).toHaveLength(5); // corrections are still accepted
   });
 
-  test("a different match, team or comp level each pays", async () => {
+  test("a different match or comp level each pays", async () => {
     const t = convexTest(schema, modules);
     const { as, templateId, bal, assign } = await scout(t);
     await assign(1);
@@ -344,9 +370,20 @@ describe("scouting pays once per match", () => {
     const base = { templateId, eventKey: EVENT, data: "{}" } as const;
     await as.mutation(api.forms.submitForm, { ...base, matchNumber: 1, compLevel: "qm", teamNumber: 4099 });
     await as.mutation(api.forms.submitForm, { ...base, matchNumber: 2, compLevel: "qm", teamNumber: 4099 });
-    await as.mutation(api.forms.submitForm, { ...base, matchNumber: 1, compLevel: "qm", teamNumber: 254 });
     await as.mutation(api.forms.submitForm, { ...base, matchNumber: 1, compLevel: "elim", teamNumber: 4099 });
-    expect(await bal()).toBe(1200); // 1000 + 4 × 50
+    expect(await bal()).toBe(1150); // 1000 + 3 × 50
+  });
+
+  test("scouting several teams in one assigned match pays only once", async () => {
+    const t = convexTest(schema, modules);
+    const { as, templateId, bal, assign } = await scout(t);
+    await assign(1);
+    for (const teamNumber of [4099, 254, 1114, 118, 971, 148]) {
+      await as.mutation(api.forms.submitForm, {
+        templateId, eventKey: EVENT, matchNumber: 1, compLevel: "qm", teamNumber, data: "{}",
+      });
+    }
+    expect(await bal()).toBe(1050); // one assignment = one reward, not six
   });
 
   test("two scouts covering the same team both get paid", async () => {
@@ -417,28 +454,63 @@ describe("scouting pays once per match", () => {
     expect(await bal()).toBe(1050);
   });
 
-  test("checklist pays only when on a qual pit rotation covering the match", async () => {
+  test("checklists never pay, even on a covering pit rotation", async () => {
     const t = convexTest(schema, modules);
     const { as, bal, userId } = await scout(t);
     const checklistTemplateId = await t.run(async (ctx) => ctx.db.insert("formTemplates", {
       name: "Checklist", formType: "checklist", fields: [], isActive: true, coinReward: 25,
     }));
-    // No rotation yet — should not pay.
-    await as.mutation(api.forms.submitForm, {
-      templateId: checklistTemplateId, eventKey: EVENT, matchNumber: 5, teamNumber: 0, data: "{}",
-    });
-    expect(await bal()).toBe(0);
-
     await t.run(async (ctx) => ctx.db.insert("pitRotations", {
       eventKey: EVENT, startMatch: 1, endMatch: 10, isElims: false, scoutIds: [userId],
     }));
-    // Same match+template is already recorded as submitted (offline retries aside, this is
-    // a correction) — the offlineId-less path always inserts a new row, so this pays once,
-    // matched by the alreadyScouted-equivalent identity for checklists: matchNumber+teamNumber.
-    // Use a different match number covered by the rotation to get a clean "first submission" case.
     await as.mutation(api.forms.submitForm, {
       templateId: checklistTemplateId, eventKey: EVENT, matchNumber: 6, teamNumber: 0, data: "{}",
     });
-    expect(await bal()).toBe(1025);
+    expect(await bal()).toBe(0);
+  });
+});
+
+describe("admin coin awards", () => {
+  const adminEmail = "czhao@team4099.com";
+
+  async function setup() {
+    const t = convexTest(schema, modules);
+    const { adminId, scoutId } = await t.run(async (ctx) => ({
+      adminId: await ctx.db.insert("users", { name: "Admin" }),
+      scoutId: await ctx.db.insert("users", { name: "Scout" }),
+    }));
+    return {
+      t, scoutId,
+      admin: t.withIdentity({ subject: adminId, issuer: "test", email: adminEmail }),
+      scout: t.withIdentity({ subject: scoutId, issuer: "test" }),
+    };
+  }
+
+  test("admin award credits the balance and logs the message", async () => {
+    const { t, scoutId, admin, scout } = await setup();
+    await admin.mutation(api.betting.adminAwardCoins, {
+      eventKey: EVENT, scoutId, amount: 150, message: "  Covered an extra shift  ",
+    });
+    const txns = await scout.query(api.betting.listMyTransactions, { eventKey: EVENT });
+    expect(txns).toHaveLength(1);
+    expect(txns[0]).toMatchObject({ type: "admin_award", amount: 150, note: "Covered an extra shift" });
+    const bal = await t.run(async (ctx) => (await ctx.db.query("userBalances").first())?.balance);
+    expect(bal).toBe(1150);
+  });
+
+  test("a non-admin cannot award coins", async () => {
+    const { scoutId, scout } = await setup();
+    await expect(
+      scout.mutation(api.betting.adminAwardCoins, { eventKey: EVENT, scoutId, amount: 50, message: "self-serve" }),
+    ).rejects.toThrow(/Admin access required/);
+  });
+
+  test("rejects a missing message and bad amounts", async () => {
+    const { scoutId, admin } = await setup();
+    const base = { eventKey: EVENT, scoutId } as const;
+    await expect(admin.mutation(api.betting.adminAwardCoins, { ...base, amount: 50, message: "   " })).rejects.toThrow(/message/i);
+    await expect(admin.mutation(api.betting.adminAwardCoins, { ...base, amount: 0, message: "x" })).rejects.toThrow(/positive/);
+    await expect(admin.mutation(api.betting.adminAwardCoins, { ...base, amount: -5, message: "x" })).rejects.toThrow(/positive/);
+    await expect(admin.mutation(api.betting.adminAwardCoins, { ...base, amount: 1.5, message: "x" })).rejects.toThrow(/whole/);
   });
 });

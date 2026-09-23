@@ -17,7 +17,7 @@ import {
   Coins, TrendingUp, TrendingDown, Trophy, ChevronDown, ChevronUp,
   Plus, Zap, Lock, CheckCircle2, XCircle, RefreshCw,
   HandCoins, Swords, BarChart3, Target, ListFilter,
-  BadgeCheck, AlertCircle, Timer, Users, X, Medal,
+  BadgeCheck, AlertCircle, Timer, Users, X, Medal, Gift,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1987,6 +1987,7 @@ type TransactionType =
   | "scouting_reward"
   | "pit_duty_reward"
   | "pit_duty_revoked"
+  | "admin_award"
   | "beg"
   | "bet_placed"
   | "bet_won"
@@ -2005,7 +2006,8 @@ const TXN_CONFIG: Record<TransactionType, { label: string; icon: React.ElementTy
   scouting_reward: { label: "Scouting reward",  icon: BadgeCheck },
   pit_duty_reward: { label: "Pit duty",         icon: CheckCircle2 },
   pit_duty_revoked: { label: "Pit duty undone", icon: XCircle },
-  beg:              { label: "Begged",          icon: HandCoins },
+  admin_award:      { label: "Admin award",     icon: Gift },
+  beg:             { label: "Begged",          icon: HandCoins },
   bet_placed:       { label: "Bet placed",      icon: Coins },
   bet_won:          { label: "Bet won",         icon: TrendingUp },
   bet_refunded:     { label: "Bet refunded",    icon: RefreshCw },
@@ -2067,6 +2069,78 @@ function TransactionLogTab({ eventKey }: { eventKey: string }) {
         );
       })}
     </div>
+  );
+}
+
+// -- Admin: award coins ---------------------------------------------------------
+
+function AwardCoinsDialog({ eventKey }: { eventKey: string }) {
+  const [open, setOpen] = useState(false);
+  const [scoutId, setScoutId] = useState("");
+  const [amount, setAmount] = useState("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const users = useQuery(api.users.listUsers);
+  const award = useAdminMutation(api.betting.adminAwardCoins);
+
+  const amt = Number(amount);
+  const valid = scoutId !== "" && Number.isInteger(amt) && amt > 0 && message.trim() !== "";
+
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await award({ eventKey, scoutId: scoutId as Id<"users">, amount: amt, message });
+      toast.success(`Awarded ${amt} coins`);
+      setOpen(false);
+      setScoutId(""); setAmount(""); setMessage("");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not award coins");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <Button variant="outline" size="sm" onClick={() => setOpen(true)} className="gap-2">
+        <Gift className="h-4 w-4" /> Award coins
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Award coins</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>Scout</Label>
+              <Select value={scoutId} onValueChange={(v) => setScoutId(v ?? "")}>
+                <SelectTrigger><SelectValue placeholder="Choose a scout" /></SelectTrigger>
+                <SelectContent>
+                  {[...(users ?? [])]
+                    .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""))
+                    .map((u) => (
+                      <SelectItem key={u._id} value={u._id}>{u.name ?? u.email ?? "Unnamed"}</SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Coins</Label>
+              <Input type="number" inputMode="numeric" min={1} step={1} value={amount}
+                onChange={(e) => setAmount(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Reason (shown to the scout)</Label>
+              <Input maxLength={200} value={message} placeholder="e.g. Covered an extra shift"
+                onChange={(e) => setMessage(e.target.value)} />
+            </div>
+            <Button className="w-full" disabled={!valid || busy} onClick={submit}>
+              {busy ? "Awarding…" : "Award"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -2137,6 +2211,8 @@ export default function BettingPage() {
           </div>
         )}
       </div>
+
+      {isAdminMode && <AwardCoinsDialog eventKey={eventKey} />}
 
       {/* Tab bar */}
       <div className="flex rounded-xl bg-muted/60 p-1 gap-1 border border-border/50">
