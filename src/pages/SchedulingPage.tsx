@@ -161,6 +161,7 @@ function Avatar({ user, size = 36 }: { user: User; size?: number }) {
 
 interface ScoutSelectorProps {
   users: User[];
+  prefsByScout?: Map<string, { wantsMoreMatches?: boolean; wantsPitScouting?: boolean }>;
   pinnedId: string | null;
   onPin: (id: string | null) => void;
   matchCounts: Record<string, number>;
@@ -171,7 +172,27 @@ interface ScoutSelectorProps {
   readOnly?: boolean;
 }
 
-function ScoutSelector({ users, pinnedId, onPin, matchCounts, matches, onBatchAssign, isMobile, isLandscapePhone, readOnly }: ScoutSelectorProps) {
+/** Small inline icons marking a scout's "wants more matches" / "wants pit scouting" preferences. */
+function PrefBadges({ prefs, dim }: { prefs?: { wantsMoreMatches?: boolean; wantsPitScouting?: boolean }; dim?: string }) {
+  if (!prefs || (!prefs.wantsMoreMatches && !prefs.wantsPitScouting)) return null;
+  const color = dim ?? G;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+      {prefs.wantsMoreMatches && (
+        <span title="Wants more matches" style={{ display: "inline-flex" }}>
+          <Zap size={10} style={{ color }} />
+        </span>
+      )}
+      {prefs.wantsPitScouting && (
+        <span title="Wants pit scouting" style={{ display: "inline-flex" }}>
+          <Wrench size={10} style={{ color }} />
+        </span>
+      )}
+    </span>
+  );
+}
+
+function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matches, onBatchAssign, isMobile, isLandscapePhone, readOnly }: ScoutSelectorProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
   // In landscape phone mode the panel is always open (side-by-side, never collapsed)
   const bodyVisible = isLandscapePhone ? true : (!isMobile || mobileOpen);
@@ -240,6 +261,12 @@ function ScoutSelector({ users, pinnedId, onPin, matchCounts, matches, onBatchAs
             {readOnly ? "Select a scout to highlight their matches." : "Select a scout, then click grid cells to assign."}
           </p>
         )}
+        {!isMobile && !isLandscapePhone && (
+          <p style={{ fontSize: 10, color: MUTED, margin: "5px 0 0", display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><Zap size={10} style={{ color: G }} />wants more matches</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><Wrench size={10} style={{ color: G }} />wants pit scouting</span>
+          </p>
+        )}
       </div>
 
       {/* Scout list */}
@@ -267,6 +294,7 @@ function ScoutSelector({ users, pinnedId, onPin, matchCounts, matches, onBatchAs
                     <span style={{ fontSize: 11, fontWeight: 700, color: active ? G : FG, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left" }}>
                       {displayName(u)}
                     </span>
+                    <PrefBadges prefs={prefsByScout?.get(u._id)} />
                     {cnt > 0 && (
                       <span style={{ background: active ? G : G_MED, color: active ? G_TXT : G, borderRadius: 20, padding: "0 5px", fontSize: 9, fontWeight: 800, flexShrink: 0 }}>
                         {cnt}
@@ -301,6 +329,7 @@ function ScoutSelector({ users, pinnedId, onPin, matchCounts, matches, onBatchAs
                   <span style={{ fontSize: 10, fontWeight: 700, color: active ? G : FG, whiteSpace: "nowrap", maxWidth: 92, overflow: "hidden", textOverflow: "ellipsis" }}>
                     {displayName(u)}
                   </span>
+                  <PrefBadges prefs={prefsByScout?.get(u._id)} />
                   {cnt > 0 && (
                     <span style={{ background: active ? G : SURF_BORD, color: active ? G_TXT : MUTED, borderRadius: 20, padding: "0px 5px", fontSize: 10, fontWeight: 800 }}>
                       {cnt}
@@ -336,8 +365,9 @@ function ScoutSelector({ users, pinnedId, onPin, matchCounts, matches, onBatchAs
                   >
                     <Avatar user={u} size={30} />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: FG, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: FG, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: 6 }}>
                         {displayName(u)}
+                        <PrefBadges prefs={prefsByScout?.get(u._id)} />
                       </div>
                     </div>
                     {cnt > 0 && (
@@ -1160,7 +1190,9 @@ function RotationCard({ rotation, users, onEdit, onDelete, readOnly }: {
 
       {/* Scout chips */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 5, flex: 1, minWidth: 0 }}>
-        {rotation.scoutIds.map(id => {
+        {[...rotation.scoutIds]
+          .sort((a, b) => displayName(userMap[a] ?? { _id: a }).localeCompare(displayName(userMap[b] ?? { _id: b })))
+          .map(id => {
           const u = userMap[id];
           return (
             <span key={id} style={{
@@ -1382,7 +1414,9 @@ function ElimsRotationPanel({ rotation, users, allUsers: allUsersRaw, onSave, on
             <div style={{ display: "flex", flexWrap: "wrap", gap: 5, flex: 1, minWidth: 0 }}>
               {rotation.scoutIds.length === 0 ? (
                 <span style={{ fontSize: 12, color: MUTED }}>No scouts assigned</span>
-              ) : rotation.scoutIds.map(id => {
+              ) : [...rotation.scoutIds]
+                  .sort((a, b) => displayName(userMap[a] ?? { _id: a }).localeCompare(displayName(userMap[b] ?? { _id: b })))
+                  .map(id => {
                 const u = userMap[id];
                 return (
                   <span key={id} style={{
@@ -1942,6 +1976,7 @@ function PitScoutingTab({
   tbaError,
   assignments,
   allUsers,
+  prefsByScout,
   onToggleScout,
   isMobile,
   readOnly,
@@ -1951,6 +1986,7 @@ function PitScoutingTab({
   tbaError: boolean;
   assignments: Map<number, string[]>;
   allUsers: User[];
+  prefsByScout?: Map<string, { wantsMoreMatches?: boolean; wantsPitScouting?: boolean }>;
   onToggleScout: (teamNumber: number, scoutId: string) => Promise<void>;
   isMobile: boolean;
   readOnly?: boolean;
@@ -2012,6 +2048,7 @@ function PitScoutingTab({
                     : <span style={{ width: 14, height: 14, borderRadius: "50%", background: pinned ? G_TXT+"30" : G_MED, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 800, color: pinned ? G_TXT : G, flexShrink: 0 }}>{avatarLetter(u)}</span>
                   }
                   {displayName(u)}
+                  <PrefBadges prefs={prefsByScout?.get(u._id)} />
                   {count > 0 && (
                     <span style={{ background: pinned ? "oklch(0 0 0 / 20%)" : G_MED, borderRadius: 20, padding: "0 5px", fontSize: 10, fontWeight: 800, color: pinned ? G_TXT : G }}>
                       {count}
@@ -2130,7 +2167,9 @@ function PitScoutingTab({
                   {/* Assigned scout chips */}
                   {scoutIds.length > 0 && (
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 6 }}>
-                      {scoutIds.map(id => {
+                      {[...scoutIds]
+                        .sort((a, b) => displayName(allUsers.find(u => u._id === a) ?? { _id: a }).localeCompare(displayName(allUsers.find(u => u._id === b) ?? { _id: b })))
+                        .map(id => {
                         const u = allUsers.find(u => u._id === id);
                         return (
                           <span key={id} style={{
@@ -2425,14 +2464,30 @@ export default function SchedulingPage() {
 
   const userMap = useMemo(() => Object.fromEntries((allUsers ?? []).map(u => [u._id, u])), [allUsers]);
 
+  // Alphabetized copy of allUsers — used everywhere scouts are listed for
+  // admin selection (order-preserving filters downstream stay alphabetized too).
+  const sortedAllUsers = useMemo(
+    () => [...(allUsers ?? [])].sort((a, b) => displayName(a).localeCompare(displayName(b))),
+    [allUsers]
+  );
+
+  // scoutId -> preference flags, for badging opted-in scouts across the page.
+  const prefsByScout = useMemo(() => {
+    const m = new Map<string, { wantsMoreMatches?: boolean; wantsPitScouting?: boolean; wantsPitRotation?: boolean }>();
+    for (const p of (allPreferences ?? []) as Array<{ scoutId: string; wantsMoreMatches?: boolean; wantsPitScouting?: boolean; wantsPitRotation?: boolean }>) {
+      m.set(p.scoutId, p);
+    }
+    return m;
+  }, [allPreferences]);
+
   // Scouts who opted into pit rotations (wantsPitRotation === true)
   // If no preferences exist at all, fall back to showing everyone.
   const pitUsers = useMemo(() => {
     const prefs = allPreferences as Array<{ scoutId: string; wantsPitRotation: boolean }> | undefined;
-    if (!prefs || prefs.length === 0) return allUsers ?? [];
+    if (!prefs || prefs.length === 0) return sortedAllUsers;
     const optedIn = new Set(prefs.filter(p => p.wantsPitRotation).map(p => p.scoutId));
-    return (allUsers ?? []).filter(u => optedIn.has(u._id));
-  }, [allUsers, allPreferences]);
+    return sortedAllUsers.filter(u => optedIn.has(u._id));
+  }, [sortedAllUsers, allPreferences]);
 
   const pitHiddenCount = (allUsers?.length ?? 0) - pitUsers.length;
 
@@ -2976,7 +3031,7 @@ export default function SchedulingPage() {
               {/* ── Exclude from auto-schedule panel ── */}
               {showExcludePanel && allUsers && allUsers.length > 0 && (
                 <ExcludePanel
-                  allUsers={allUsers}
+                  allUsers={sortedAllUsers}
                   excludedScoutIds={excludedScoutIds}
                   dbExcludedSet={dbExcludedSet}
                   toggleExcluded={toggleExcluded}
@@ -3030,7 +3085,8 @@ export default function SchedulingPage() {
 
                   <div style={{ flex: 1, display: "flex", flexDirection: stackLayout ? "column" : "row", gap: isLandscapePhone ? 6 : 12, minHeight: 0 }}>
                     <ScoutSelector
-                      users={allUsers ?? []}
+                      users={sortedAllUsers}
+                      prefsByScout={prefsByScout}
                       pinnedId={pinnedScoutId}
                       onPin={setPinnedScoutId}
                       matchCounts={matchCounts}
@@ -3070,7 +3126,7 @@ export default function SchedulingPage() {
                 <ElimsRotationPanel
                   rotation={elimsRot}
                   users={pitUsers}
-                  allUsers={allUsers}
+                  allUsers={sortedAllUsers}
                   onSave={async (scoutIds) => {
                     if (!currentEvent) return;
                     await upsertRotation({
@@ -3117,7 +3173,7 @@ export default function SchedulingPage() {
 
                 {/* Qual rotation form (only when not editing, admin editing only) */}
                 {!readOnly && !editingRotation && (
-                  <RotationForm users={pitUsers} allUsers={allUsers} onSave={form => handleSaveRotation(form)} />
+                  <RotationForm users={pitUsers} allUsers={sortedAllUsers} onSave={form => handleSaveRotation(form)} />
                 )}
 
                 {/* Qual rotation list */}
@@ -3131,7 +3187,7 @@ export default function SchedulingPage() {
                     )}
                     {editingRotation && (
                       <RotationForm
-                        users={pitUsers} allUsers={allUsers} isEdit
+                        users={pitUsers} allUsers={sortedAllUsers} isEdit
                         initial={{
                           label: editingRotation.label ?? "",
                           startMatch: String(editingRotation.startMatch ?? ""),
@@ -3146,7 +3202,7 @@ export default function SchedulingPage() {
                       .filter(r => r._id !== editingRotation?._id)
                       .map(r => (
                         <RotationCard
-                          key={r._id} rotation={r} users={allUsers ?? []}
+                          key={r._id} rotation={r} users={sortedAllUsers}
                           onEdit={() => setEditingRotation(r)}
                           onDelete={async () => { await deleteRotation({ id: r._id as Id<"pitRotations"> }); }}
                           readOnly={readOnly}
@@ -3165,7 +3221,8 @@ export default function SchedulingPage() {
                 tbaLoading={tbaTeamsLoading}
                 tbaError={tbaTeamsError}
                 assignments={pitAssignmentsMap}
-                allUsers={allUsers ?? []}
+                allUsers={sortedAllUsers}
+                prefsByScout={prefsByScout}
                 onToggleScout={handleTogglePitScout}
                 isMobile={isMobile}
                 readOnly={readOnly}

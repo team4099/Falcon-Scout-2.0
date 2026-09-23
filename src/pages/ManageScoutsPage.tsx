@@ -1697,7 +1697,13 @@ export default function ManageScoutsPage() {
                         <span style={{ fontSize: 10, fontWeight: 700, color: "var(--muted-foreground)" }}>{deactivatedUsers!.length}</span>
                         <ChevronRight size={12} style={{ color: "var(--muted-foreground)", transform: showDeactivated ? "rotate(90deg)" : "none" }} />
                       </button>
-                      {showDeactivated && deactivatedUsers!.map(({ userId, user }) => (
+                      {showDeactivated && [...deactivatedUsers!]
+                        .sort((a, b) =>
+                          sortAlpha
+                            ? displayName(a.user ?? { _id: a.userId }).localeCompare(displayName(b.user ?? { _id: b.userId }))
+                            : b.deactivatedAt - a.deactivatedAt
+                        )
+                        .map(({ userId, user }) => (
                         <div key={userId} style={{
                           display: "flex", alignItems: "center", gap: 8,
                           padding: "6px 8px", borderRadius: 9, opacity: 0.7,
@@ -2304,7 +2310,13 @@ export default function ManageScoutsPage() {
                                   <div style={{ flex: 1 }}>
                                     <div style={{ fontSize: 11, fontWeight: 700, color: "oklch(0.7 0.18 270)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em" }}>Preferred partners</div>
                                     <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                                      {selectedPrefs.preferredPartners.map(pid => {
+                                      {[...selectedPrefs.preferredPartners]
+                                        .sort((a, b) => {
+                                          const ua = (allUsers ?? []).find(u => u._id === a);
+                                          const ub = (allUsers ?? []).find(u => u._id === b);
+                                          return displayName(ua ?? { _id: a }).localeCompare(displayName(ub ?? { _id: b }));
+                                        })
+                                        .map(pid => {
                                         const partner = (allUsers ?? []).find(u => u._id === pid);
                                         return partner ? (
                                           <span key={pid} style={{
@@ -2312,7 +2324,7 @@ export default function ManageScoutsPage() {
                                             background: "oklch(0.65 0.18 270 / 15%)",
                                             border: "1px solid oklch(0.65 0.18 270 / 30%)",
                                             color: "var(--foreground)",
-                                          }}>{partner.name ?? partner.email ?? "Scout"}</span>
+                                          }}>{displayName(partner)}</span>
                                         ) : null;
                                       })}
                                     </div>
@@ -2385,7 +2397,10 @@ export default function ManageScoutsPage() {
                               <div>
                                 <div style={{ fontSize: 11, fontWeight: 700, color: "oklch(0.7 0.18 270)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" }}>Preferred partners</div>
                                 <div style={{ display: "flex", flexWrap: "wrap", gap: 5, maxHeight: 140, overflowY: "auto" }}>
-                                  {(allUsers ?? []).filter(u => u._id !== selectedUserId).map(u => {
+                                  {(allUsers ?? [])
+                                    .filter(u => u._id !== selectedUserId)
+                                    .sort((a, b) => displayName(a).localeCompare(displayName(b)))
+                                    .map(u => {
                                     const on = prefsDraft.preferredPartners.includes(u._id);
                                     return (
                                       <button
@@ -2398,7 +2413,7 @@ export default function ManageScoutsPage() {
                                           border: `1px solid ${on ? "oklch(0.65 0.18 270 / 45%)" : "oklch(1 0 0 / 12%)"}`,
                                           color: on ? "var(--foreground)" : "var(--muted-foreground)",
                                         }}
-                                      >{u.name ?? u.email ?? "Scout"}</button>
+                                      >{displayName(u)}</button>
                                     );
                                   })}
                                 </div>

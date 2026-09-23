@@ -685,7 +685,9 @@ function PartnerPicker({
   selected: string[];
   onChange: (ids: string[]) => void;
 }) {
-  const scouts = allUsers.filter(u => u._id !== selfId);
+  const scouts = allUsers
+    .filter(u => u._id !== selfId)
+    .sort((a, b) => displayName(a).localeCompare(displayName(b)));
 
   function toggle(id: string) {
     if (selected.includes(id)) {
