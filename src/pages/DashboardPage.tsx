@@ -609,7 +609,7 @@ function TeamRow({
         onClick={onOpenDetail}
       >
         {/* Avatar + team # */}
-        <div className="flex items-center gap-2 w-32 shrink-0">
+        <div className="flex items-center gap-2 w-36 shrink-0 sticky left-0 z-10 -ml-4 pl-4 py-3 -my-3 bg-card">
           <TeamAvatar teamNumber={teamNumber} avatar={avatar} size={30} />
           <div className="min-w-0">
             {rank && (
@@ -739,7 +739,7 @@ function ColumnHeader({
 
   return (
     <div className="flex items-center gap-3 px-4 py-2 bg-muted/40 border-b border-border text-[10px] font-semibold text-muted-foreground uppercase tracking-wider sticky top-0">
-      <div className="w-32 shrink-0">
+      <div className="w-36 shrink-0 sticky left-0 z-10 -ml-4 pl-4 bg-card">
         <Th id="team" label="Team" />
       </div>
       <div className="flex-1 grid gap-x-4"
@@ -1724,6 +1724,9 @@ export default function DashboardPage() {
                   inner region, so the header isn't pinned in place — it scrolls up
                   with the rows like the rest of the page. */}
               <div className={`${mobileTableView ? "block overflow-x-auto overflow-y-visible" : "hidden"} sm:block sm:overflow-x-auto sm:overflow-y-visible`}>
+                {/* Shared min-width: header and every row size to the same
+                    width, so columns (and Links) line up when the phone scrolls. */}
+                <div className="min-w-[840px]">
                 <ColumnHeader sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                 {loadingExternal && tbaTeams.length === 0 ? (
                   <div className="divide-y divide-border">
@@ -1768,6 +1771,7 @@ export default function DashboardPage() {
                     );
                   })
                 )}
+                </div>
               </div>
 
               {/* Mobile card list — hidden when the mobile table view toggle is on */}
