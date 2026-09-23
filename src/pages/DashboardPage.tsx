@@ -1480,14 +1480,26 @@ export default function DashboardPage() {
     return () => { cancelled = true; };
   }, [eventKey]);
 
-  // Build a per-team EPA map for the schedule / banner components
+  // Build a per-team EPA map for the schedule / banner components.
+  //
+  // Keyed off the union of sbTeams and sbOverall, not just sbTeams: for an
+  // event Statbotics hasn't processed yet (upcoming event, no matches played),
+  // sbTeams is empty but sbOverall — each team's season EPA, fetched
+  // independently of event-level rows — is already populated. Iterating
+  // sbTeams alone silently dropped every team's season EPA in that case, even
+  // though it was fetched successfully and sitting in state.
   const epaMap = useMemo(() => {
     const map: Record<number, TeamEpa> = {};
-    for (const [num, sb] of Object.entries(sbTeams)) {
+    const teamNums = new Set([
+      ...Object.keys(sbTeams).map(Number),
+      ...Object.keys(sbOverall).map(Number),
+    ]);
+    for (const num of teamNums) {
+      const sb = sbTeams[num];
       const epaObj = sb && "epa" in sb ? sb.epa : null;
-      map[Number(num)] = {
+      map[num] = {
         ...parseEpaComponents(epaObj),
-        overall: sbOverall[Number(num)] ?? null,
+        overall: sbOverall[num] ?? null,
       };
     }
     return map;
