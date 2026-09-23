@@ -502,8 +502,8 @@ interface MatchGridProps {
   readOnly?: boolean;
 }
 
-/** A qual-match grid row is either a single match, or (once 5 consecutive
- *  quals are available) a merged block covering a whole scouting cycle — so
+/** A qual-match grid row is either a single match (playoffs), or a merged
+ *  block of up to 5 consecutive quals covering a scouting cycle — so
  *  admins assign a cycle in one tap instead of once per match within it. */
 type GridRow =
   | { type: "single"; match: TBAMatch }
@@ -513,11 +513,14 @@ function buildGridRows(matches: TBAMatch[]): GridRow[] {
   const rows: GridRow[] = [];
   let cycleNumber = 0;
   for (let i = 0; i < matches.length; ) {
-    const chunk = matches.slice(i, i + SCOUT_CYCLE);
-    if (chunk.length === SCOUT_CYCLE && chunk.every(m => m.comp_level === "qm")) {
+    // Take up to 5 consecutive quals; a shorter run (leftovers at the end of
+    // quals) still forms a single cycle rather than one row per match.
+    let end = i;
+    while (end < matches.length && end - i < SCOUT_CYCLE && matches[end].comp_level === "qm") end++;
+    if (end > i) {
       cycleNumber += 1;
-      rows.push({ type: "cycle", matches: chunk, cycleNumber });
-      i += SCOUT_CYCLE;
+      rows.push({ type: "cycle", matches: matches.slice(i, end), cycleNumber });
+      i = end;
     } else {
       rows.push({ type: "single", match: matches[i] });
       i += 1;

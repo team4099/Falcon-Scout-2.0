@@ -1262,6 +1262,7 @@ export default function MySchedulePage() {
                       preferredPartners: (myPreferences as any).preferredPartners ?? [],
                       wantsMoreMatches:  (myPreferences as any).wantsMoreMatches  ?? false,
                       wantsPitRotation:  (myPreferences as any).wantsPitRotation  ?? false,
+                      wantsPitScouting:  (myPreferences as any).wantsPitScouting  ?? false,
                     }
                   : null
                 }
