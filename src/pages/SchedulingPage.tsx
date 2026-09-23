@@ -167,8 +167,13 @@ interface ScoutSelectorProps {
   matchCounts: Record<string, number>;
   matches: TBAMatch[];
   onBatchAssign: (start: number, end: number, positions: Set<Position>) => Promise<void>;
-  isMobile?: boolean;
   isLandscapePhone?: boolean;
+  /** True only when the parent is actually stacking panels in a column (narrow
+   *  AND portrait). A narrow-but-landscape window — e.g. a half-screened
+   *  laptop — keeps the parent in row layout, so this panel must NOT switch
+   *  to its "width: 100%" mobile styling there or it swallows the whole row
+   *  and squeezes the match grid down to nothing. */
+  stackLayout?: boolean;
   readOnly?: boolean;
 }
 
@@ -192,10 +197,10 @@ function PrefBadges({ prefs, dim }: { prefs?: { wantsMoreMatches?: boolean; want
   );
 }
 
-function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matches, onBatchAssign, isMobile, isLandscapePhone, readOnly }: ScoutSelectorProps) {
+function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matches, onBatchAssign, isLandscapePhone, stackLayout, readOnly }: ScoutSelectorProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
   // In landscape phone mode the panel is always open (side-by-side, never collapsed)
-  const bodyVisible = isLandscapePhone ? true : (!isMobile || mobileOpen);
+  const bodyVisible = isLandscapePhone ? true : (!stackLayout || mobileOpen);
   const [batchStart, setBatchStart] = useState("");
   const [batchEnd, setBatchEnd]     = useState("");
   const [batchPos, setBatchPos]     = useState<Set<Position>>(new Set());
@@ -224,11 +229,11 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
 
   return (
     <div style={{
-      width: isLandscapePhone ? 130 : isMobile ? "100%" : 248,
+      width: isLandscapePhone ? 130 : stackLayout ? "100%" : 248,
       flexShrink: 0, display: "flex", flexDirection: "column",
       minHeight: 0, borderRadius: 14, border: `1px solid ${SURF_BORD}`,
       background: SURFACE, overflow: "hidden",
-      maxHeight: isMobile && !isLandscapePhone && !mobileOpen ? 52 : undefined,
+      maxHeight: stackLayout && !mobileOpen ? 52 : undefined,
       transition: "max-height 0.25s ease",
     }}>
       {/* Header — tappable toggle on portrait-mobile only */}
@@ -237,15 +242,15 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
           padding: isLandscapePhone ? "8px 10px" : "11px 14px",
           borderBottom: bodyVisible ? `1px solid ${SURF_BORD}` : "none",
           background: G_DIM, flexShrink: 0,
-          cursor: isMobile && !isLandscapePhone ? "pointer" : "default",
+          cursor: stackLayout ? "pointer" : "default",
         }}
-        onClick={isMobile && !isLandscapePhone ? () => setMobileOpen(o => !o) : undefined}
+        onClick={stackLayout ? () => setMobileOpen(o => !o) : undefined}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <Users size={13} style={{ color: G }} />
           {!isLandscapePhone && (
             <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: G }}>
-              {isMobile && pinnedId
+              {stackLayout && pinnedId
                 ? `Scout: ${pinned ? displayName(pinned) : "?"}`
                 : "Pin a Scout"}
             </span>
@@ -253,15 +258,15 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
           <span style={{ marginLeft: isLandscapePhone ? 0 : "auto", background: G_MED, color: G, borderRadius: 20, padding: "1px 8px", fontSize: 11, fontWeight: 700 }}>
             {isLandscapePhone
               ? users.length
-              : isMobile ? (mobileOpen ? "Close ▲" : `${users.length} scouts ▼`) : users.length}
+              : stackLayout ? (mobileOpen ? "Close ▲" : `${users.length} scouts ▼`) : users.length}
           </span>
         </div>
-        {!isMobile && !isLandscapePhone && (
+        {!stackLayout && !isLandscapePhone && (
           <p style={{ fontSize: 11, color: MUTED, margin: "4px 0 0", lineHeight: 1.3 }}>
             {readOnly ? "Select a scout to highlight their matches." : "Select a scout, then click grid cells to assign."}
           </p>
         )}
-        {!isMobile && !isLandscapePhone && (
+        {!stackLayout && !isLandscapePhone && (
           <p style={{ fontSize: 10, color: MUTED, margin: "5px 0 0", display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><Zap size={10} style={{ color: G }} />wants more matches</span>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><Wrench size={10} style={{ color: G }} />wants pit scouting</span>
@@ -306,7 +311,7 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
               })}
             </div>
           </ScrollArea>
-        ) : isMobile ? (
+        ) : stackLayout ? (
           /* Portrait phone: horizontal scrolling carousel */
           <div style={{ overflowX: "auto", overflowY: "hidden", display: "flex", gap: 6, padding: "8px 10px", flexShrink: 0 }}>
             {users.length === 0 && (
@@ -385,7 +390,7 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
       )}
 
       {/* Batch assign — desktop only, admin editing only */}
-      {pinned && bodyVisible && !isMobile && !isLandscapePhone && !readOnly && (
+      {pinned && bodyVisible && !stackLayout && !isLandscapePhone && !readOnly && (
         <div style={{ borderTop: `1px solid ${G_MED}`, padding: "12px 12px 14px", background: G_DIM, flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 10 }}>
             <Zap size={13} style={{ color: G }} />
@@ -493,6 +498,7 @@ interface MatchGridProps {
   saving: Set<string>;
   isMobile?: boolean;
   isLandscapePhone?: boolean;
+  stackLayout?: boolean;
   readOnly?: boolean;
 }
 
@@ -520,9 +526,9 @@ function buildGridRows(matches: TBAMatch[]): GridRow[] {
   return rows;
 }
 
-function MatchGrid({ matches, assignMap, pinnedId, onCellClick, onCycleClick, saving, isMobile, isLandscapePhone, readOnly }: MatchGridProps) {
+function MatchGrid({ matches, assignMap, pinnedId, onCellClick, onCycleClick, saving, isMobile, isLandscapePhone, stackLayout, readOnly }: MatchGridProps) {
   const [expandedMatchKey, setExpandedMatchKey] = useState<string | null>(null);
-  const canExpand = !!(isMobile && !isLandscapePhone && !readOnly);
+  const canExpand = !!(stackLayout && !readOnly);
   const gridRows = useMemo(() => buildGridRows(matches), [matches]);
   if (matches.length === 0) {
     return (
@@ -832,6 +838,14 @@ function SingleMatchRow({
 
   return (
     <Fragment>
+      {/* Divider bar — leftover quals that don't fill a full cycle (e.g. the
+       *  last 1-4 matches of an event) still get the same separator CycleRow
+       *  draws, so the grid's rhythm doesn't just stop once cycles run out. */}
+      {isQual && (
+        <div aria-hidden style={{ margin: "5px 0 3px" }}>
+          <div style={{ height: 2, borderRadius: 2, background: G_MED }} />
+        </div>
+      )}
       {/* Grid row */}
       <div style={{
                   display: "grid", gridTemplateColumns: COL,
@@ -3092,8 +3106,8 @@ export default function SchedulingPage() {
                       matchCounts={matchCounts}
                       matches={qualMatches}
                       onBatchAssign={handleBatchAssign}
-                      isMobile={isMobile}
                       isLandscapePhone={isLandscapePhone}
+                      stackLayout={stackLayout}
                       readOnly={readOnly}
                     />
                     <MatchGrid
@@ -3105,6 +3119,7 @@ export default function SchedulingPage() {
                       saving={savingCells}
                       isMobile={isMobile}
                       isLandscapePhone={isLandscapePhone}
+                      stackLayout={stackLayout}
                       readOnly={readOnly}
                     />
                   </div>
