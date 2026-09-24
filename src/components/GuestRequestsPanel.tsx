@@ -13,13 +13,21 @@ type Decision = "approved" | "denied";
  * requests are listed first with Approve/Deny; approved guests can be revoked
  * and denied ones re-approved. Every action is re-checked by requireAdmin in
  * convex/guests.ts — this panel is only ever shown in Admin Mode.
+ *
+ * It renders even with nothing to show. It used to return null on an empty
+ * list, which meant an admin hunting for "where do I approve guests?" found an
+ * absence rather than an answer — indistinguishable from the feature not
+ * existing. The empty state says where requests come from instead.
  */
 export default function GuestRequestsPanel() {
+  const isAdmin = useQuery(api.admin.isCurrentUserAdmin);
   const requests = useQuery(api.guests.listRequests);
   const decide = useMutation(api.guests.decideRequest);
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  if (!requests || requests.length === 0) return null;
+  // Still loading, or the caller isn't admin-eligible (listRequests returns []
+  // for them regardless — this just avoids showing an empty admin panel).
+  if (requests === undefined || !isAdmin) return null;
 
   const pending = requests.filter((r) => r.status === "pending");
   const decided = requests.filter((r) => r.status !== "pending");
@@ -47,6 +55,14 @@ export default function GuestRequestsPanel() {
           </span>
         )}
       </div>
+
+      {requests.length === 0 && (
+        <p className="text-xs text-muted-foreground">
+          No guest requests yet. Anyone signing in through{" "}
+          <span className="font-medium text-foreground">Guest access</span> on the login screen
+          appears here for approval.
+        </p>
+      )}
 
       <ul className="divide-y divide-border">
         {[...pending, ...decided].map((r) => (
