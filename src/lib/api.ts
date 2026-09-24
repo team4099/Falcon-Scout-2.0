@@ -1,7 +1,7 @@
 // TBA and Statbotics API utilities with persistent two-tier caching.
 //
-// API keys are stored in localStorage by the user via Settings → API Keys.
-// They fall back to VITE_TBA_KEY env var if set (useful for team deployments).
+// TBA requests go through the Convex `tba.fetchTba` action, which holds the API
+// key server-side (Convex env var TBA_API_KEY). No key ever reaches the browser.
 //
 // Cache tiers:
 //   - Team avatars     → IndexedDB (large base64 images, 90-day TTL)
@@ -10,8 +10,8 @@
 //   - Live data        → localStorage, 30-min TTL
 
 import { idbGetEntry, idbSet, lsGet, lsGetStale, lsSet, TTL } from "./persistentCache";
-
-const TBA_BASE = "https://www.thebluealliance.com/api/v3";
+import { convex } from "./convexClient";
+import { api } from "../../convex/_generated/api";
 
 // Statbotics has two hosts. The official API is the source of truth; the
 // community mirror is a standby. The app used to be hard-pointed at the mirror
@@ -21,26 +21,10 @@ const TBA_BASE = "https://www.thebluealliance.com/api/v3";
 const STATBOTICS_PRIMARY = "https://api.statbotics.io/v3";
 const STATBOTICS_MIRROR  = "https://statbotics-production.up.railway.app/v3";
 
-// ── Key storage ───────────────────────────────────────────────────────────────
-
-export const API_KEY_STORAGE = {
-  tba: "falconscout_api_key_tba",
-} as const;
-
-export function getTBAKey(): string {
-  return (
-    localStorage.getItem(API_KEY_STORAGE.tba) ??
-    (import.meta.env.VITE_TBA_KEY as string | undefined) ??
-    ""
-  );
-}
-
-export function setTBAKey(key: string): void {
-  if (key.trim()) {
-    localStorage.setItem(API_KEY_STORAGE.tba, key.trim());
-  } else {
-    localStorage.removeItem(API_KEY_STORAGE.tba);
-  }
+/** Older builds kept a personal TBA key in localStorage. Wipe it so the key
+ *  doesn't linger on shared devices now that the server holds the key. */
+export function purgeLegacyTbaKey(): void {
+  try { localStorage.removeItem("falconscout_api_key_tba"); } catch { /* private mode */ }
 }
 
 // kept for backwards compat — delegates to persistentCache
@@ -78,73 +62,43 @@ export function clearTBAErrCache(eventKey: string): void {
   clearCacheErrKey(`tba_insights_${eventKey}`);
 }
 
-// ── Core fetch with localStorage cache ───────────────────────────────────────
-
-async function fetchWithCache<T>(
-  url: string,
-  cacheKey: string,
-  headers: Record<string, string> = {},
-  ttl: number = TTL.SHORT
-): Promise<T | null> {
-  // If offline: serve any stale cache over a blank screen
-  if (!navigator.onLine) {
-    return lsGetStale<T>(cacheKey);
-  }
-
-  // Fresh cache hit
-  const fresh = lsGet<T>(cacheKey);
-  if (fresh !== null) return fresh;
-
-  // If this endpoint recently errored, don't hammer it — wait 5 minutes before retrying
-  const errKey = `${cacheKey}__err`;
-  if (lsGet<unknown>(errKey) !== null) {
-    return lsGetStale<T>(cacheKey);
-  }
-
-  try {
-    const res = await fetch(url, { headers });
-    if (!res.ok) {
-      console.warn(`[API] ${res.status}  — ${url}`);
-      // Cache the failure so we don't retry for 5 minutes.
-      // updateTimestamp=false so an error doesn't reset "last synced" to "now"
-      lsSet(errKey, { status: res.status }, 5 * 60 * 1000, false);
-      return lsGetStale<T>(cacheKey);
-    }
-    const data = (await res.json()) as T;
-    lsSet(cacheKey, data, ttl);
-    return data;
-  } catch {
-    // Network error (CORS block, DNS failure, etc.) — also back off for 5 minutes
-    // to avoid hammering endpoints that return CORS-less 500s.
-    lsSet(errKey, { status: 0 }, 5 * 60 * 1000, false);
-    return lsGetStale<T>(cacheKey);
-  }
-}
-
-function tbaHeaders(): Record<string, string> | null {
-  const key = getTBAKey();
-  // Return null (not an empty object) when no key is available so callers
-  // can bail out early and avoid making requests that would 401.
-  return key ? { "X-TBA-Auth-Key": key } : null;
-}
+// ── Cached TBA fetch ─────────────────────────────────────────────────────────
 
 /**
- * Like fetchWithCache but returns null without making any network request
- * when no TBA API key is configured.  This avoids 401 responses being
- * cached in the error-backoff layer before the key arrives from Convex.
+ * TBA fetch via the server-side proxy, with the same cache + error-backoff
+ * behaviour as fetchWithCache. `path` is everything after /api/v3.
+ *
+ * A 401 (session not established yet) is deliberately NOT backed off: the
+ * request will succeed moments later once sign-in resolves, and caching the
+ * failure would blank the app for 5 minutes.
  */
 async function fetchTBAWithCache<T>(
-  url: string,
+  path: string,
   cacheKey: string,
   ttl: number
 ): Promise<T | null> {
-  const headers = tbaHeaders();
-  if (!headers) {
-    // No key yet — return stale data if we have it, but don't make a
-    // request that would produce a cached 401 error-backoff entry.
+  if (!navigator.onLine) return lsGetStale<T>(cacheKey);
+
+  const fresh = lsGet<T>(cacheKey);
+  if (fresh !== null) return fresh;
+
+  const errKey = `${cacheKey}__err`;
+  if (lsGet<unknown>(errKey) !== null) return lsGetStale<T>(cacheKey);
+
+  try {
+    const { status, data } = await convex.action(api.tba.fetchTba, { path });
+    if (status === 200) {
+      lsSet(cacheKey, data, ttl);
+      return data as T;
+    }
+    if (status === 401) return lsGetStale<T>(cacheKey);
+    console.warn(`[TBA] ${status} — ${path}`);
+    lsSet(errKey, { status }, 5 * 60 * 1000, false);
+    return lsGetStale<T>(cacheKey);
+  } catch {
+    lsSet(errKey, { status: 0 }, 5 * 60 * 1000, false);
     return lsGetStale<T>(cacheKey);
   }
-  return fetchWithCache<T>(url, cacheKey, headers, ttl);
 }
 
 // ── TBA ───────────────────────────────────────────────────────────────────────
@@ -161,7 +115,7 @@ export interface TBATeam {
 
 export async function fetchTBAEventTeams(eventKey: string) {
   return fetchTBAWithCache<TBATeam[]>(
-    `${TBA_BASE}/event/${eventKey}/teams`,
+    `/event/${eventKey}/teams`,
     `tba_teams_${eventKey}`,
     TTL.MEDIUM  // team lists for an event don't change after registration
   );
@@ -169,7 +123,7 @@ export async function fetchTBAEventTeams(eventKey: string) {
 
 export async function fetchTBAEventRankings(eventKey: string) {
   return fetchTBAWithCache(
-    `${TBA_BASE}/event/${eventKey}/rankings`,
+    `/event/${eventKey}/rankings`,
     `tba_rankings_${eventKey}`,
     TTL.SHORT   // live rankings during the event
   );
@@ -192,7 +146,7 @@ export interface TBAMatch {
 
 export async function fetchTBAEventMatches(eventKey: string) {
   return fetchTBAWithCache<TBAMatch[]>(
-    `${TBA_BASE}/event/${eventKey}/matches`,
+    `/event/${eventKey}/matches`,
     `tba_matches_full_${eventKey}`,
     TTL.SHORT   // match scores update throughout the event
   );
@@ -207,7 +161,7 @@ export async function fetchTBATeamInfo(teamNumber: number) {
     state_prov: string;
     country: string;
   }>(
-    `${TBA_BASE}/team/frc${teamNumber}`,
+    `/team/frc${teamNumber}`,
     `tba_team_${teamNumber}`,
     TTL.LONG    // team name / nickname doesn't change within a season
   );
@@ -235,7 +189,7 @@ export async function fetchTBATeamAvatar(teamNumber: number, year: number): Prom
   // 3. Fetch from TBA
   try {
     const media = await fetchTBAWithCache<Array<{ type: string; details?: { base64Image?: string } }>>(
-      `${TBA_BASE}/team/frc${teamNumber}/media/${year}`,
+      `/team/frc${teamNumber}/media/${year}`,
       `tba_media_${teamNumber}_${year}`,
       TTL.LONG  // avatars don't change mid-season
     );
@@ -497,7 +451,7 @@ export async function fetchTBAEventInsights(eventKey: string) {
     qual?: { average_score?: number; average_win_score?: number };
     playoff?: { average_score?: number };
   }>(
-    `${TBA_BASE}/event/${eventKey}/insights`,
+    `/event/${eventKey}/insights`,
     `tba_insights_${eventKey}`,
     TTL.SHORT
   );

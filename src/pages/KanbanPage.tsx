@@ -1357,7 +1357,10 @@ function BoardView({
     setEpaStatus("loading");
     async function loadEpa() {
       const data = await fetchStatboticsEventTeams(eventKey);
-      if (!Array.isArray(data) || data.length === 0) {
+      // null = every Statbotics host failed (official + mirror) and nothing is
+      // cached. An empty array is a *working* host that simply has no EPA for
+      // this event yet (upcoming event) — cards show "—", but that isn't an outage.
+      if (!Array.isArray(data)) {
         setEpaStatus("error");
         return;
       }
@@ -1821,7 +1824,7 @@ function BoardView({
       {epaStatus === "error" && (
         <div className="flex items-center gap-2 px-3 py-1.5 mb-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs">
           <span className="shrink-0">⚠</span>
-          <span>Statbotics EPA data is currently unavailable — the API may be down. Cards will show "N/A" until data loads.</span>
+          <span>Statbotics EPA data is currently unavailable — both the official API and the mirror failed. Cards will show "N/A" until data loads.</span>
           <button
             className="ml-auto shrink-0 underline hover:text-amber-500 transition-colors"
             onClick={() => {
@@ -1829,7 +1832,7 @@ function BoardView({
               clearCacheErrKey(`sb_event_teams_${eventKey}`);
               setEpaStatus("loading");
               fetchStatboticsEventTeams(eventKey).then((data) => {
-                if (!Array.isArray(data) || data.length === 0) { setEpaStatus("error"); return; }
+                if (!Array.isArray(data)) { setEpaStatus("error"); return; }
                 const map: Record<number, { event: number | null; auto: number | null; teleop: number | null; endgame: number | null }> = {};
                 for (const t of data as Array<{ team: number; epa: unknown }>) {
                   const epaRaw = t.epa;

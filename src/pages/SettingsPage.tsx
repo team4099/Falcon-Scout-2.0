@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery } from "convex/react";
 import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
@@ -11,12 +11,7 @@ import { toast } from "sonner";
 import {
   Settings2,
   CalendarSearch,
-  KeyRound,
-  Eye,
-  EyeOff,
-  Trash2,
   CheckCircle2,
-  ExternalLink,
   ShieldCheck,
   ShieldOff,
   ShieldAlert,
@@ -37,7 +32,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  getTBAKey, setTBAKey, clearApiCache,
+  clearApiCache,
   getStatboticsHealth, subscribeStatboticsHealth, checkStatboticsHosts,
   statboticsHostLabel,
   type StatboticsHealth,
@@ -45,105 +40,6 @@ import {
 import { useUIStore } from "@/store/uiStore";
 
 // ── API Key field ─────────────────────────────────────────────────────────────
-
-function ApiKeyField({
-  label,
-  description,
-  linkHref,
-  linkLabel,
-  storageKey: _storageKey,
-  currentValue,
-  onChange,
-}: {
-  label: string;
-  description: string;
-  linkHref: string;
-  linkLabel: string;
-  storageKey: string;
-  currentValue: string;
-  onChange: (val: string) => void;
-}) {
-  const [draft, setDraft] = useState(currentValue);
-  const [show, setShow] = useState(false);
-  const isSaved = currentValue.length > 0;
-  const isDirty = draft !== currentValue;
-
-  function handleSave() {
-    onChange(draft.trim());
-    toast.success(draft.trim() ? `${label} saved` : `${label} cleared`);
-  }
-
-  function handleClear() {
-    setDraft("");
-    onChange("");
-    toast.success(`${label} cleared`);
-  }
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <Label className="flex items-center gap-2">
-          {label}
-          {isSaved && (
-            <span className="flex items-center gap-1 text-[10px] font-normal text-green-600 dark:text-green-400 bg-green-500/10 px-1.5 py-0.5 rounded-full">
-              <CheckCircle2 className="h-3 w-3" />
-              Saved
-            </span>
-          )}
-        </Label>
-        {isSaved && (
-          <button
-            onClick={handleClear}
-            className="text-xs text-destructive hover:underline flex items-center gap-1"
-          >
-            <Trash2 className="h-3 w-3" /> Remove
-          </button>
-        )}
-      </div>
-
-      <div className="flex gap-2">
-        <div className="relative flex-1">
-          <Input
-            type={show ? "text" : "password"}
-            placeholder={isSaved ? "••••••••••••••••" : "Paste your key here…"}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            className="pr-9 font-mono text-sm"
-          />
-          <button
-            type="button"
-            onClick={() => setShow((s) => !s)}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-            tabIndex={-1}
-          >
-            {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-          </button>
-        </div>
-        <Button
-          onClick={handleSave}
-          disabled={!isDirty}
-          size="sm"
-          className="shrink-0"
-        >
-          Save
-        </Button>
-      </div>
-
-      <p className="text-xs text-muted-foreground">
-        {description}{" "}
-        <a
-          href={linkHref}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-0.5 text-primary hover:underline"
-        >
-          {linkLabel}
-          <ExternalLink className="h-3 w-3" />
-        </a>
-      </p>
-    </div>
-  );
-}
 
 // ── Statbotics source card ────────────────────────────────────────────────────
 // EPA data comes from the official Statbotics API, with a community mirror as
@@ -351,34 +247,6 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [clearCacheConfirm, setClearCacheConfirm] = useState(false);
 
-  // ── TBA key: sourced from Convex (cross-device) with localStorage as fallback ──
-  const userSettings = useQuery(api.users.getUserSettings);
-  const setTbaApiKeyMutation = useMutation(api.users.setTbaApiKey);
-  // Local display state — seeded from localStorage immediately, then synced from Convex
-  const [tbaKey, setTbaKeyState] = useState(() => getTBAKey());
-
-  // When Convex delivers the saved key, mirror it into localStorage so all
-  // fetch functions that call getTBAKey() pick it up without changes.
-  useEffect(() => {
-    if (userSettings === undefined) return; // still loading
-    const cloudKey = userSettings?.tbaApiKey ?? "";
-    // Prefer cloud key; fall back to whatever is already in localStorage
-    const effective = cloudKey || getTBAKey();
-    setTBAKey(effective);
-    setTbaKeyState(effective);
-  }, [userSettings]);
-
-  // Keep state in sync if localStorage changes in another tab
-  useEffect(() => {
-    function onStorage(e: StorageEvent) {
-      if (e.key === "falconscout_api_key_tba") {
-        setTbaKeyState(getTBAKey());
-      }
-    }
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
-
   async function handleSaveEvent() {
     if (!eventKey.trim()) {
       toast.error("Event key is required.");
@@ -503,44 +371,12 @@ export default function SettingsPage() {
       {/* Statbotics source — admin-facing diagnostics */}
       {isAdminMode && <StatboticsSourceCard />}
 
-      {/* API Keys */}
+      {/* Data cache */}
       <div className="bg-card border border-border rounded-xl p-5 space-y-5">
         <div className="flex items-center gap-2">
-          <KeyRound className="h-4 w-4 text-primary" />
-          <h3 className="font-semibold">API Keys</h3>
+          <RefreshCw className="h-4 w-4 text-primary" />
+          <h3 className="font-semibold">Data</h3>
         </div>
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground -mt-2">
-          <RefreshCw className="h-3 w-3 shrink-0" />
-          Keys are synced across all your devices automatically.
-        </div>
-
-        <Separator />
-
-        <ApiKeyField
-          label="The Blue Alliance"
-          description="Required for team lists, rankings, and match schedules. Get a free Read API key at"
-          linkHref="https://www.thebluealliance.com/account"
-          linkLabel="thebluealliance.com/account"
-          storageKey="tba"
-          currentValue={tbaKey}
-          onChange={async (val) => {
-            setTBAKey(val);
-            setTbaKeyState(val);
-            // Persist to Convex so all devices pick it up
-            try {
-              await setTbaApiKeyMutation({ key: val });
-            } catch {
-              // Non-fatal: localStorage still has it for this device
-            }
-            // Clear TBA cache so next fetch uses the new key
-            const cacheKeys = Object.keys(localStorage).filter((k) =>
-              k.startsWith("falconscout_cache_tba_")
-            );
-            cacheKeys.forEach((k) => localStorage.removeItem(k));
-          }}
-        />
-
-        <Separator />
 
         <div className="flex items-center justify-between">
           <p className="text-sm font-medium">Clear data cache</p>

@@ -27,8 +27,7 @@ import {
 import type { TBAMatch } from "@/lib/api";
 import { EMPTY_TEAM_EPA, parseEpaComponents, totalEpa } from "@/lib/epa";
 import type { TeamEpa } from "@/lib/epa";
-import { ExternalLink, Search, FileText, TrendingUp, ClipboardList, Trash2, AlertTriangle, ChevronDown, ChevronUp, Clock, KeyRound, CalendarCheck, Trophy, CalendarDays, Rows3, Table2 } from "lucide-react";
-import { getTBAKey } from "@/lib/api";
+import { ExternalLink, Search, FileText, TrendingUp, ClipboardList, Trash2, AlertTriangle, ChevronDown, ChevronUp, Clock, CalendarCheck, Trophy, CalendarDays, Rows3, Table2 } from "lucide-react";
 import TeamDetailPanel from "@/pages/TeamDetailPanel";
 import { useMutation } from "convex/react";
 import type { Id } from "../../convex/_generated/dataModel";
@@ -1187,57 +1186,6 @@ function MyScouting({
   );
 }
 
-// ── TBA Key Warning Banner ─────────────────────────────────────────────────────
-
-function TbaKeyWarningBanner() {
-  const [dismissed, setDismissed] = useState(false);
-  const [hasKey, setHasKey] = useState(() => Boolean(getTBAKey()));
-
-  // Re-check when localStorage changes (e.g. user saves key in another tab)
-  useEffect(() => {
-    function onStorage(e: StorageEvent) {
-      if (e.key === "falconscout_api_key_tba") {
-        setHasKey(Boolean(getTBAKey()));
-      }
-    }
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
-
-  // Also re-check periodically in case the key was set in this tab via Settings
-  useEffect(() => {
-    const id = setInterval(() => setHasKey(Boolean(getTBAKey())), 2000);
-    return () => clearInterval(id);
-  }, []);
-
-  if (hasKey || dismissed) return null;
-
-  return (
-    <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-amber-500/40 bg-amber-500/8 text-amber-700 dark:text-amber-300 animate-in slide-in-from-top-2 duration-300">
-      <KeyRound className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium leading-snug">No TBA API key configured</p>
-        <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
-          Team lists, rankings, and match schedules won't load without a key.{" "}
-          <a
-            href="/settings"
-            className="underline underline-offset-2 hover:text-amber-500 font-medium"
-          >
-            Add it in Settings →
-          </a>
-        </p>
-      </div>
-      <button
-        onClick={() => setDismissed(true)}
-        className="shrink-0 text-amber-500/70 hover:text-amber-500 transition-colors text-lg leading-none mt-0.5"
-        aria-label="Dismiss"
-      >
-        ×
-      </button>
-    </div>
-  );
-}
-
 // ── Dashboard Page ─────────────────────────────────────────────────────────────
 
 /** How many statbotics season-EPA requests to have in flight at once. Their
@@ -1642,7 +1590,6 @@ export default function DashboardPage() {
       </div>
 
       {/* No-TBA-key warning */}
-      <TbaKeyWarningBanner />
 
       {!eventKey ? (
         <div className="flex flex-col items-center justify-center h-64 text-center">

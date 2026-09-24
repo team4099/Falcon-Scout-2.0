@@ -19,6 +19,7 @@ import type * as http from "../http.js";
 import type * as kanban from "../kanban.js";
 import type * as pitScouting from "../pitScouting.js";
 import type * as schedules from "../schedules.js";
+import type * as tba from "../tba.js";
 import type * as users from "../users.js";
 
 import type {
@@ -39,6 +40,7 @@ declare const fullApi: ApiFromModules<{
   kanban: typeof kanban;
   pitScouting: typeof pitScouting;
   schedules: typeof schedules;
+  tba: typeof tba;
   users: typeof users;
 }>;
 

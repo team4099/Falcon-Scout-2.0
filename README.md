@@ -27,13 +27,23 @@ npm run dev
 To develop against your team's real deployment instead, run
 `npx convex dev --configure` and pick the project.
 
-### Optional: The Blue Alliance key
+### The Blue Alliance key (server-side)
 
-Team lists, rankings, match schedules and avatars all come from TBA. Without a
-key those views stay empty and the app tells you so. Get a free read key from
-[thebluealliance.com/account](https://www.thebluealliance.com/account), then
-either paste it into **Settings → API Keys** (it syncs to your account across
-devices) or set `VITE_TBA_KEY` in `.env.local`.
+Team lists, rankings, match schedules and avatars come from TBA. The key is a
+**Convex environment variable**, never shipped to browsers — the app calls the
+`tba:fetchTba` action, which adds the key server-side. Get a free read key from
+[thebluealliance.com/account](https://www.thebluealliance.com/account), then:
+
+```bash
+npx convex env set TBA_API_KEY <key>            # dev deployment
+npx convex env set TBA_API_KEY <key> --prod     # production
+```
+
+Without it, TBA views stay empty. **Rollout note:** after deploying, run
+`users:scrubStoredTbaKeys` once per deployment (Convex dashboard → Functions)
+to erase keys older builds stored per user, and rotate any key that was
+previously pasted into Settings — it was visible to every signed-in scout.
+Cached clients that haven't updated keep working from their local cache.
 
 ---
 

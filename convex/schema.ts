@@ -192,9 +192,12 @@ export default defineSchema({
     .index("by_scout_rotation", ["scoutId", "rotationId"])
     .index("by_event_rotation", ["eventKey", "rotationId"]),
 
-  // Per-user settings (API keys, preferences) — synced across devices
+  // Per-user settings — synced across devices
   userSettings: defineTable({
     userId:    v.id("users"),
+    // DEPRECATED: the TBA key is now the server env var TBA_API_KEY. Field kept
+    // optional so old rows still validate; never returned to clients and erased
+    // by users:scrubStoredTbaKeys.
     tbaApiKey: v.optional(v.string()),
   }).index("by_user", ["userId"]),
 

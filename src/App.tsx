@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useCached } from "@/hooks/useCached";
 import { useAuthActions, useConvexAuth } from "@convex-dev/auth/react";
 import { api } from "../convex/_generated/api";
-import { setTBAKey, clearTBAErrCache } from "@/lib/api";
+import { purgeLegacyTbaKey } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -258,18 +258,9 @@ function AuthenticatedApp() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backendConnected]);
 
-  // ── Sync TBA key from Convex → localStorage on every app load ──
-  const userSettings = useQuery(api.users.getUserSettings);
-  useEffect(() => {
-    if (userSettings === undefined) return; // still loading
-    const cloudKey = userSettings?.tbaApiKey ?? "";
-    if (cloudKey) {
-      setTBAKey(cloudKey);
-      // Clear any 401 error-backoff entries so the next fetch actually
-      // hits the network now that we have a valid key.
-      if (currentEvent?.eventKey) clearTBAErrCache(currentEvent.eventKey);
-    }
-  }, [userSettings, currentEvent]);
+  // The TBA key now lives only on the server; drop any copy an older build
+  // left in this browser.
+  useEffect(() => { purgeLegacyTbaKey(); }, []);
 
   /** "just now" / "2 min ago" / "1 hr ago" */
   function formatAge(ts: number | null): string {

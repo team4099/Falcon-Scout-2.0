@@ -1,4 +1,4 @@
-import { query, mutation } from "./_generated/server";
+import { query, mutation, internalMutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 import {
@@ -114,36 +114,53 @@ export const reactivateSelf = mutation({
   },
 });
 
-/** Returns the current user's synced settings (null if not logged in). */
+/**
+ * Returns the current user's synced settings (null if not logged in).
+ *
+ * Never includes `tbaApiKey`: the TBA key is a server secret now (see
+ * convex/tba.ts), and rows written by older builds may still hold one.
+ */
 export const getUserSettings = query({
   args: {},
   handler: async (ctx) => {
     const userId = await getApprovedUserId(ctx);
     if (!userId) return null;
-    return (
-      (await ctx.db
-        .query("userSettings")
-        .withIndex("by_user", (q) => q.eq("userId", userId))
-        .unique()) ?? null
-    );
-  },
-});
-
-/** Upserts the TBA API key for the current user. Pass an empty string to clear it. */
-export const setTbaApiKey = mutation({
-  args: { key: v.string() },
-  handler: async (ctx, { key }) => {
-    const userId = await getApprovedUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-    const existing = await ctx.db
+    const row = await ctx.db
       .query("userSettings")
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .unique();
-    const tbaApiKey = key.trim() || undefined;
-    if (existing) {
-      await ctx.db.patch(existing._id, { tbaApiKey });
-    } else {
-      await ctx.db.insert("userSettings", { userId, tbaApiKey });
+    if (!row) return null;
+    const { tbaApiKey: _omit, ...safe } = row;
+    return safe;
+  },
+});
+
+/**
+ * Retired: the TBA key is no longer user-supplied. Kept as a no-op so a cached
+ * client that still calls it at an event doesn't throw. It stores nothing.
+ */
+export const setTbaApiKey = mutation({
+  args: { key: v.string() },
+  handler: async (ctx) => {
+    await requireUser(ctx);
+  },
+});
+
+/**
+ * One-off cleanup: erase every per-user TBA key still sitting in userSettings.
+ * Internal, so it can't be called from a client — run it from the Convex
+ * dashboard (Functions → users:scrubStoredTbaKeys → Run) on each deployment.
+ */
+export const scrubStoredTbaKeys = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    let scrubbed = 0;
+    for (const row of await ctx.db.query("userSettings").collect()) {
+      if (row.tbaApiKey !== undefined) {
+        await ctx.db.patch(row._id, { tbaApiKey: undefined });
+        scrubbed++;
+      }
     }
+    return scrubbed;
   },
 });
