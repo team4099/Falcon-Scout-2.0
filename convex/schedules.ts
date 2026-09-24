@@ -289,10 +289,15 @@ export const upsertPitRotation = mutation({
     endMatch: v.optional(v.number()),
     isElims: v.optional(v.boolean()),
     scoutIds: v.array(v.id("users")),
+    driveTeamScoutIds: v.optional(v.array(v.id("users"))),
     adminKey: v.optional(v.string()),
   },
-  handler: async (ctx, { id, eventKey, label, startMatch, endMatch, isElims, scoutIds, adminKey }) => {
+  handler: async (ctx, { id, eventKey, label, startMatch, endMatch, isElims, scoutIds, driveTeamScoutIds, adminKey }) => {
     await requireAdmin(ctx, adminKey);
+    // A drive team flag only means anything for someone actually on the
+    // rotation — dropping a scout from scoutIds must not leave them flagged.
+    const onRotation = new Set<string>(scoutIds);
+    const driveTeam = (driveTeamScoutIds ?? []).filter((sid) => onRotation.has(sid));
     // ── Determine which scouts are being newly added ───────────────────────────
     let prevScoutIds: string[] = [];
     if (id) {
@@ -304,9 +309,9 @@ export const upsertPitRotation = mutation({
 
     // ── Save the rotation ──────────────────────────────────────────────────────
     if (id) {
-      await ctx.db.patch(id, { label, startMatch, endMatch, isElims, scoutIds });
+      await ctx.db.patch(id, { label, startMatch, endMatch, isElims, scoutIds, driveTeamScoutIds: driveTeam });
     } else {
-      await ctx.db.insert("pitRotations", { eventKey, label, startMatch, endMatch, isElims, scoutIds });
+      await ctx.db.insert("pitRotations", { eventKey, label, startMatch, endMatch, isElims, scoutIds, driveTeamScoutIds: driveTeam });
     }
 
     // ── Clear conflicting match assignments (qual rotations only) ─────────────

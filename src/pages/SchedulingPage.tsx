@@ -13,7 +13,7 @@ import {
   Users, CalendarDays, Wrench, Loader2,
   AlertCircle, Plus, Trash2, Pencil, Check,
   Zap, LayoutGrid, Sparkles, TriangleAlert, ChevronDown as ChevDown,
-  ClipboardList,
+  ClipboardList, Car,
 } from "lucide-react";
 import {
   generateSchedule,
@@ -48,6 +48,7 @@ interface PitRotation {
   endMatch?: number;
   isElims?: boolean;
   scoutIds: string[];
+  driveTeamScoutIds?: string[];
 }
 
 interface PitScoutingTeam {
@@ -1168,6 +1169,106 @@ function CycleRow({
   );
 }
 
+// ── Pit rotation scout picker pieces ─────────────────────────────────────────
+
+/** A scout toggle for a pit rotation. Once the scout is on the rotation, the
+ *  trailing car button flags them as drive team *for this rotation only* —
+ *  each rotation carries its own drive team. */
+function PitScoutChip({ user, selected, driveTeam, onToggle, onToggleDriveTeam }: {
+  user: User;
+  selected: boolean;
+  driveTeam: boolean;
+  onToggle: () => void;
+  onToggleDriveTeam: () => void;
+}) {
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", borderRadius: 20, overflow: "hidden",
+      background: selected ? G : SURF_HVR,
+      border: `1.5px solid ${selected ? G_STR : SURF_BORD}`,
+      transition: "all 0.1s",
+    }}>
+      <button onClick={onToggle}
+        style={{
+          display: "inline-flex", alignItems: "center", gap: 5,
+          padding: selected ? "5px 8px 5px 12px" : "5px 12px",
+          fontSize: 12, fontWeight: 600, cursor: "pointer",
+          background: "transparent", border: "none",
+          color: selected ? G_TXT : MUTED,
+        }}
+      >
+        {selected && <Check size={11} />}
+        {displayName(user)}
+      </button>
+      {selected && (
+        <button onClick={onToggleDriveTeam}
+          title={driveTeam
+            ? `${displayName(user)} is drive team for this rotation — click to unflag`
+            : `Flag ${displayName(user)} as drive team for this rotation`}
+          style={{
+            display: "inline-flex", alignItems: "center",
+            alignSelf: "stretch", padding: "0 9px 0 6px",
+            background: driveTeam ? G_TXT : "transparent", border: "none", cursor: "pointer",
+            color: driveTeam ? G : G_TXT, opacity: driveTeam ? 1 : 0.4,
+          }}
+        >
+          <Car size={12} />
+        </button>
+      )}
+    </span>
+  );
+}
+
+/** Scouts who aren't on pit duty by choice, split by whether they answered the
+ *  preferences form at all: an explicit "no" is a different conversation from
+ *  someone who simply never filled it out, so staffing a short rotation needs
+ *  to tell them apart. Both groups can still be added by hand. */
+function OtherScoutsDisclosure({ optedOut, noResponse, renderChip }: {
+  optedOut: User[];
+  noResponse: User[];
+  renderChip: (u: User) => React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const total = optedOut.length + noResponse.length;
+  if (total === 0) return null;
+
+  const groups = [
+    { key: "out",  label: `Opted out — said no (${optedOut.length})`,        users: optedOut },
+    { key: "none", label: `No response — never answered (${noResponse.length})`, users: noResponse },
+  ].filter(g => g.users.length > 0);
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        style={{
+          display: "inline-flex", alignItems: "center", gap: 5,
+          fontSize: 11, fontWeight: 700, color: MUTED,
+          background: "transparent", border: "none", cursor: "pointer", padding: "2px 0",
+          textTransform: "uppercase", letterSpacing: "0.06em",
+        }}
+      >
+        <ChevDown size={12} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+        {open ? "Hide" : "Add others"} ({total} not opted in)
+      </button>
+      {open && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 8 }}>
+          {groups.map(g => (
+            <div key={g.key}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: MUTED, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
+                {g.label}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {g.users.map(u => renderChip(u))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Qual pit rotation card ────────────────────────────────────────────────────
 
 function RotationCard({ rotation, users, onEdit, onDelete, readOnly }: {
@@ -1175,6 +1276,7 @@ function RotationCard({ rotation, users, onEdit, onDelete, readOnly }: {
 }) {
   const [deleting, setDeleting] = useState(false);
   const userMap = useMemo(() => Object.fromEntries(users.map(u => [u._id, u])), [users]);
+  const driveSet = useMemo(() => new Set(rotation.driveTeamScoutIds ?? []), [rotation.driveTeamScoutIds]);
   const span = rotation.startMatch != null && rotation.endMatch != null
     ? rotation.endMatch - rotation.startMatch + 1 : null;
 
@@ -1211,12 +1313,18 @@ function RotationCard({ rotation, users, onEdit, onDelete, readOnly }: {
           .sort((a, b) => displayName(userMap[a] ?? { _id: a }).localeCompare(displayName(userMap[b] ?? { _id: b })))
           .map(id => {
           const u = userMap[id];
+          const isDrive = driveSet.has(id);
           return (
-            <span key={id} style={{
-              display: "inline-flex", alignItems: "center", gap: 4,
-              padding: "2px 9px", borderRadius: 20, fontSize: 12, fontWeight: 600,
-              background: G_DIM, color: G, border: `1px solid ${G_MED}`,
-            }}>
+            <span key={id}
+              title={isDrive ? "Drive team for this rotation" : undefined}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 4,
+                padding: "2px 9px", borderRadius: 20, fontSize: 12, fontWeight: 600,
+                background: isDrive ? G : G_DIM,
+                color: isDrive ? G_TXT : G,
+                border: `1px solid ${isDrive ? G_STR : G_MED}`,
+              }}>
+              {isDrive && <Car size={11} />}
               {u ? displayName(u) : "?"}
             </span>
           );
@@ -1258,34 +1366,58 @@ function RotationCard({ rotation, users, onEdit, onDelete, readOnly }: {
 // ── Elims pit rotation panel ──────────────────────────────────────────────────
 // Exactly one elims rotation per event, covering all playoff matches.
 
-function ElimsRotationPanel({ rotation, users, allUsers: allUsersRaw, onSave, onDelete, readOnly }: {
+function ElimsRotationPanel({ rotation, users, optedOut, noResponse, allUsers: allUsersRaw, onSave, onDelete, readOnly }: {
   rotation: PitRotation | null;
   users: User[];        // opted-in scouts
-  allUsers?: User[];    // all scouts for manual override
-  onSave: (scoutIds: Set<string>) => Promise<void>;
+  optedOut: User[];     // answered the form and said no
+  noResponse: User[];   // never answered the form
+  allUsers?: User[];    // every scout, for resolving names in display mode
+  onSave: (scoutIds: Set<string>, driveTeamIds: Set<string>) => Promise<void>;
   onDelete: () => Promise<void>;
   readOnly?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set(rotation?.scoutIds ?? []));
+  const [selectedDrive, setSelectedDrive] = useState<Set<string>>(new Set(rotation?.driveTeamScoutIds ?? []));
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [showAllElims, setShowAllElims] = useState(false);
 
   // Sync when rotation changes externally
-  useEffect(() => { setSelected(new Set(rotation?.scoutIds ?? [])); }, [rotation]);
+  useEffect(() => {
+    setSelected(new Set(rotation?.scoutIds ?? []));
+    setSelectedDrive(new Set(rotation?.driveTeamScoutIds ?? []));
+  }, [rotation]);
 
-  const userMap = useMemo(() => Object.fromEntries(users.map(u => [u._id, u])), [users]);
-  const optedInElimsIds = useMemo(() => new Set(users.map(u => u._id)), [users]);
-  const othersElims = useMemo(() => (allUsersRaw ?? []).filter(u => !optedInElimsIds.has(u._id)), [allUsersRaw, optedInElimsIds]);
+  const userMap = useMemo(
+    () => Object.fromEntries([...(allUsersRaw ?? []), ...users].map(u => [u._id, u])),
+    [allUsersRaw, users]
+  );
+  const driveSet = useMemo(() => new Set(rotation?.driveTeamScoutIds ?? []), [rotation]);
 
   function toggleScout(id: string) {
-    setSelected(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+    const wasOn = selected.has(id);
+    setSelected(prev => { const n = new Set(prev); if (wasOn) n.delete(id); else n.add(id); return n; });
+    // Dropping a scout from the rotation drops their drive team flag with them.
+    if (wasOn) setSelectedDrive(prev => { const n = new Set(prev); n.delete(id); return n; });
   }
+
+  function toggleDrive(id: string) {
+    setSelectedDrive(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  }
+
+  const renderChip = (u: User) => (
+    <PitScoutChip
+      key={u._id} user={u}
+      selected={selected.has(u._id)}
+      driveTeam={selectedDrive.has(u._id)}
+      onToggle={() => toggleScout(u._id)}
+      onToggleDriveTeam={() => toggleDrive(u._id)}
+    />
+  );
 
   async function handleSave() {
     setSaving(true);
-    try { await onSave(selected); setEditing(false); } finally { setSaving(false); }
+    try { await onSave(selected, selectedDrive); setEditing(false); } finally { setSaving(false); }
   }
 
   return (
@@ -1339,68 +1471,17 @@ function ElimsRotationPanel({ rotation, users, allUsers: allUsersRaw, onSave, on
             <div style={{ fontSize: 11, fontWeight: 700, color: MUTED, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>
               Scouts on elims pit duty
             </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: othersElims.length > 0 ? 6 : 12 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
               {users.length > 0
-                ? users.map(u => {
-                    const on = selected.has(u._id);
-                    return (
-                      <button key={u._id} onClick={() => toggleScout(u._id)}
-                        style={{
-                          display: "inline-flex", alignItems: "center", gap: 5,
-                          padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer",
-                          background: on ? G : SURF_HVR,
-                          color: on ? G_TXT : MUTED,
-                          border: `1.5px solid ${on ? G_STR : SURF_BORD}`,
-                          transition: "all 0.1s",
-                        }}
-                      >
-                        {on && <Check size={11} />}
-                        {displayName(u)}
-                      </button>
-                    );
-                  })
+                ? users.map(u => renderChip(u))
                 : <span style={{ fontSize: 12, color: MUTED }}>No scouts have opted into pit rotations.</span>
               }
             </div>
+            <div style={{ fontSize: 10.5, color: MUTED, marginBottom: 10, display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <Car size={11} />Tap the car on a selected scout to mark them drive team for this rotation.
+            </div>
             {/* Non-opted-in scouts — manual override */}
-            {othersElims.length > 0 && (
-              <div style={{ marginBottom: 12 }}>
-                <button
-                  onClick={() => setShowAllElims(v => !v)}
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 5,
-                    fontSize: 11, fontWeight: 700, color: MUTED,
-                    background: "transparent", border: "none", cursor: "pointer", padding: "2px 0",
-                    textTransform: "uppercase", letterSpacing: "0.06em",
-                  }}
-                >
-                  <ChevDown size={12} style={{ transform: showAllElims ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
-                  {showAllElims ? "Hide" : "Add others"} ({othersElims.length} not opted in)
-                </button>
-                {showAllElims && (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-                    {othersElims.map(u => {
-                      const on = selected.has(u._id);
-                      return (
-                        <button key={u._id} onClick={() => toggleScout(u._id)}
-                          style={{
-                            display: "inline-flex", alignItems: "center", gap: 5,
-                            padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer",
-                            background: on ? G : SURF_HVR,
-                            color: on ? G_TXT : MUTED,
-                            border: `1.5px solid ${on ? G_STR : SURF_BORD}`,
-                            transition: "all 0.1s",
-                          }}
-                        >
-                          {on && <Check size={11} />}
-                          {displayName(u)}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
+            <OtherScoutsDisclosure optedOut={optedOut} noResponse={noResponse} renderChip={renderChip} />
             <div style={{ display: "flex", gap: 8 }}>
               <button onClick={handleSave} disabled={saving || selected.size === 0}
                 style={{
@@ -1417,7 +1498,11 @@ function ElimsRotationPanel({ rotation, users, allUsers: allUsersRaw, onSave, on
                 }
               </button>
               {rotation && (
-                <button onClick={() => { setSelected(new Set(rotation.scoutIds)); setEditing(false); }}
+                <button onClick={() => {
+                  setSelected(new Set(rotation.scoutIds));
+                  setSelectedDrive(new Set(rotation.driveTeamScoutIds ?? []));
+                  setEditing(false);
+                }}
                   style={{ padding: "8px 14px", borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: "pointer", background: SURF_HVR, color: MUTED, border: `1.5px solid ${SURF_BORD}` }}
                 >
                   Cancel
@@ -1435,13 +1520,18 @@ function ElimsRotationPanel({ rotation, users, allUsers: allUsersRaw, onSave, on
                   .sort((a, b) => displayName(userMap[a] ?? { _id: a }).localeCompare(displayName(userMap[b] ?? { _id: b })))
                   .map(id => {
                 const u = userMap[id];
+                const isDrive = driveSet.has(id);
                 return (
-                  <span key={id} style={{
-                    display: "inline-flex", alignItems: "center", gap: 4,
-                    padding: "3px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600,
-                    background: G, color: G_TXT,
-                    boxShadow: `0 1px 6px ${G} / 25%`,
-                  }}>
+                  <span key={id}
+                    title={isDrive ? "Drive team for this rotation" : undefined}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      padding: "3px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600,
+                      background: G, color: G_TXT,
+                      boxShadow: `0 1px 6px ${G} / 25%`,
+                      outline: isDrive ? `1.5px solid ${G_TXT}` : "none",
+                    }}>
+                    {isDrive && <Car size={11} />}
                     {u ? displayName(u) : "?"}
                   </span>
                 );
@@ -1476,32 +1566,42 @@ interface RotationFormState {
   startMatch: string;
   endMatch: string;
   scoutIds: Set<string>;
+  /** Subset of scoutIds flagged as drive team for this rotation. */
+  driveTeamIds: Set<string>;
 }
 
-function RotationForm({ users, allUsers: allUsersRaw, initial, onSave, onCancel, isEdit }: {
+const emptyRotationForm = (): RotationFormState => ({
+  label: "", startMatch: "", endMatch: "", scoutIds: new Set(), driveTeamIds: new Set(),
+});
+
+function RotationForm({ users, optedOut, noResponse, initial, onSave, onCancel, isEdit }: {
   users: User[];          // opted-in scouts
-  allUsers?: User[];      // every scout (for manual override)
+  optedOut: User[];       // answered the form and said no
+  noResponse: User[];     // never answered the form
   initial?: RotationFormState;
   onSave: (form: RotationFormState) => Promise<void>;
   onCancel?: () => void;
   isEdit?: boolean;
 }) {
-  const [form, setForm] = useState<RotationFormState>(
-    initial ?? { label: "", startMatch: "", endMatch: "", scoutIds: new Set() }
-  );
+  const [form, setForm] = useState<RotationFormState>(initial ?? emptyRotationForm());
   const [saving, setSaving] = useState(false);
-  const [showAll, setShowAll] = useState(false);
-
-  // Scouts who haven't opted in but can be added manually
-  const optedInIds = new Set(users.map(u => u._id));
-  const othersAvail = (allUsersRaw ?? []).filter(u => !optedInIds.has(u._id));
 
   function toggleScout(id: string) {
     setForm(f => {
       const n = new Set(f.scoutIds);
-      if (n.has(id)) n.delete(id);
+      const d = new Set(f.driveTeamIds);
+      // Dropping a scout from the rotation drops their drive team flag too.
+      if (n.has(id)) { n.delete(id); d.delete(id); }
       else n.add(id);
-      return { ...f, scoutIds: n };
+      return { ...f, scoutIds: n, driveTeamIds: d };
+    });
+  }
+
+  function toggleDrive(id: string) {
+    setForm(f => {
+      const d = new Set(f.driveTeamIds);
+      if (d.has(id)) d.delete(id); else d.add(id);
+      return { ...f, driveTeamIds: d };
     });
   }
 
@@ -1510,7 +1610,7 @@ function RotationForm({ users, allUsers: allUsersRaw, initial, onSave, onCancel,
     setSaving(true);
     try {
       await onSave(form);
-      setForm({ label: "", startMatch: "", endMatch: "", scoutIds: new Set() });
+      setForm(emptyRotationForm());
     } finally { setSaving(false); }
   }
 
@@ -1523,24 +1623,15 @@ function RotationForm({ users, allUsers: allUsersRaw, initial, onSave, onCancel,
     color: FG, outline: "none",
   };
 
-  function ScoutChip({ u }: { u: User }) {
-    const on = form.scoutIds.has(u._id);
-    return (
-      <button key={u._id} onClick={() => toggleScout(u._id)}
-        style={{
-          display: "inline-flex", alignItems: "center", gap: 5,
-          padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer",
-          background: on ? G : SURF_HVR,
-          color: on ? G_TXT : MUTED,
-          border: `1.5px solid ${on ? G_STR : SURF_BORD}`,
-          transition: "all 0.1s",
-        }}
-      >
-        {on && <Check size={11} />}
-        {displayName(u)}
-      </button>
-    );
-  }
+  const renderChip = (u: User) => (
+    <PitScoutChip
+      key={u._id} user={u}
+      selected={form.scoutIds.has(u._id)}
+      driveTeam={form.driveTeamIds.has(u._id)}
+      onToggle={() => toggleScout(u._id)}
+      onToggleDriveTeam={() => toggleDrive(u._id)}
+    />
+  );
 
   return (
     <div style={{
@@ -1579,35 +1670,18 @@ function RotationForm({ users, allUsers: allUsersRaw, initial, onSave, onCancel,
       <div style={{ fontSize: 11, fontWeight: 700, color: MUTED, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>
         Scouts on pit duty during this range
       </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: othersAvail.length > 0 ? 8 : 14 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
         {users.length > 0
-          ? users.map(u => <ScoutChip key={u._id} u={u} />)
+          ? users.map(u => renderChip(u))
           : <span style={{ fontSize: 12, color: MUTED }}>No scouts have opted into pit rotations.</span>
         }
       </div>
+      <div style={{ fontSize: 10.5, color: MUTED, marginBottom: 12, display: "inline-flex", alignItems: "center", gap: 4 }}>
+        <Car size={11} />Tap the car on a selected scout to mark them drive team for this rotation.
+      </div>
 
       {/* Non-opted-in scouts — manual override section */}
-      {othersAvail.length > 0 && (
-        <div style={{ marginBottom: 14 }}>
-          <button
-            onClick={() => setShowAll(v => !v)}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 5,
-              fontSize: 11, fontWeight: 700, color: MUTED,
-              background: "transparent", border: "none", cursor: "pointer", padding: "2px 0",
-              textTransform: "uppercase", letterSpacing: "0.06em",
-            }}
-          >
-            <ChevDown size={12} style={{ transform: showAll ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
-            {showAll ? "Hide" : "Add others"} ({othersAvail.length} not opted in)
-          </button>
-          {showAll && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-              {othersAvail.map(u => <ScoutChip key={u._id} u={u} />)}
-            </div>
-          )}
-        </div>
-      )}
+      <OtherScoutsDisclosure optedOut={optedOut} noResponse={noResponse} renderChip={renderChip} />
 
       {/* Buttons */}
       <div style={{ display: "flex", gap: 8 }}>
@@ -2497,16 +2571,25 @@ export default function SchedulingPage() {
     return m;
   }, [allPreferences]);
 
-  // Scouts who opted into pit rotations (wantsPitRotation === true)
-  // If no preferences exist at all, fall back to showing everyone.
-  const pitUsers = useMemo(() => {
+  // Scouts split by what they actually said about pit rotations. "Said no" and
+  // "never answered the form" are the same absence in the data (neither shows
+  // up as an opt-in) but not the same thing when staffing a shift, so they're
+  // kept apart: only a missing scoutPreferences row means no response.
+  // If nobody has answered at all, fall back to treating everyone as available.
+  const { pitUsers, pitOptedOut, pitNoResponse } = useMemo(() => {
     const prefs = allPreferences as Array<{ scoutId: string; wantsPitRotation: boolean }> | undefined;
-    if (!prefs || prefs.length === 0) return sortedAllUsers;
-    const optedIn = new Set(prefs.filter(p => p.wantsPitRotation).map(p => p.scoutId));
-    return sortedAllUsers.filter(u => optedIn.has(u._id));
+    if (!prefs || prefs.length === 0) {
+      return { pitUsers: sortedAllUsers, pitOptedOut: [] as User[], pitNoResponse: [] as User[] };
+    }
+    const answered = new Map(prefs.map(p => [p.scoutId, p.wantsPitRotation]));
+    return {
+      pitUsers:      sortedAllUsers.filter(u => answered.get(u._id) === true),
+      pitOptedOut:   sortedAllUsers.filter(u => answered.get(u._id) === false),
+      pitNoResponse: sortedAllUsers.filter(u => !answered.has(u._id)),
+    };
   }, [sortedAllUsers, allPreferences]);
 
-  const pitHiddenCount = (allUsers?.length ?? 0) - pitUsers.length;
+  const pitHiddenCount = pitOptedOut.length + pitNoResponse.length;
 
   const assignMap = useMemo(() => {
     const map: Record<number, Partial<Record<Position, { scoutId: string; name: string }>>> = {};
@@ -2606,6 +2689,7 @@ export default function SchedulingPage() {
       startMatch: parseInt(form.startMatch),
       endMatch: parseInt(form.endMatch),
       scoutIds: Array.from(form.scoutIds) as Id<"users">[],
+      driveTeamScoutIds: Array.from(form.driveTeamIds) as Id<"users">[],
     });
     setEditingRotation(null);
   }
@@ -2768,6 +2852,7 @@ export default function SchedulingPage() {
           startMatch: rot.startMatch,
           endMatch: rot.endMatch,
           scoutIds: rot.scoutIds as Id<"users">[],
+          driveTeamScoutIds: rot.driveTeamScoutIds as Id<"users">[],
         });
       }
       // 2. Batch create match assignments in chunks of 50
@@ -3144,8 +3229,10 @@ export default function SchedulingPage() {
                 <ElimsRotationPanel
                   rotation={elimsRot}
                   users={pitUsers}
+                  optedOut={pitOptedOut}
+                  noResponse={pitNoResponse}
                   allUsers={sortedAllUsers}
-                  onSave={async (scoutIds) => {
+                  onSave={async (scoutIds, driveTeamIds) => {
                     if (!currentEvent) return;
                     await upsertRotation({
                       id: elimsRot?._id as Id<"pitRotations"> | undefined,
@@ -3153,6 +3240,7 @@ export default function SchedulingPage() {
                       label: "Elims Pit Rotation",
                       isElims: true,
                       scoutIds: Array.from(scoutIds) as Id<"users">[],
+                      driveTeamScoutIds: Array.from(driveTeamIds) as Id<"users">[],
                     });
                   }}
                   onDelete={async () => {
@@ -3171,7 +3259,9 @@ export default function SchedulingPage() {
                 </div>
 
 
-                {/* Opt-in note */}
+                {/* Opt-in breakdown — an explicit "no" and never answering the
+                    form both leave a scout off pit duty, but only one of them
+                    is a decision, so the counts are reported separately. */}
                 {pitHiddenCount > 0 && (
                   <div style={{
                     display: "flex", alignItems: "center", gap: 8,
@@ -3179,19 +3269,24 @@ export default function SchedulingPage() {
                     background: "oklch(0.65 0.18 270 / 8%)",
                     border: "1px solid oklch(0.65 0.18 270 / 25%)",
                     fontSize: 12, color: "oklch(0.7 0.15 270)",
-                    flexShrink: 0,
+                    flexShrink: 0, flexWrap: "wrap",
                   }}>
                     <Wrench size={12} style={{ flexShrink: 0 }} />
                     <span>
-                      Showing <strong>{pitUsers.length}</strong> scout{pitUsers.length !== 1 ? "s" : ""} who opted into pit rotations.
-                      {" "}<strong>{pitHiddenCount}</strong> scout{pitHiddenCount !== 1 ? "s have" : " has"} not opted in and are hidden.
+                      <strong>{pitUsers.length}</strong> opted in
+                      {pitOptedOut.length > 0 && <> · <strong>{pitOptedOut.length}</strong> said no</>}
+                      {pitNoResponse.length > 0 && <> · <strong>{pitNoResponse.length}</strong> never answered the form</>}
+                      . Both hidden groups are under “Add others” below.
                     </span>
                   </div>
                 )}
 
                 {/* Qual rotation form (only when not editing, admin editing only) */}
                 {!readOnly && !editingRotation && (
-                  <RotationForm users={pitUsers} allUsers={sortedAllUsers} onSave={form => handleSaveRotation(form)} />
+                  <RotationForm
+                    users={pitUsers} optedOut={pitOptedOut} noResponse={pitNoResponse}
+                    onSave={form => handleSaveRotation(form)}
+                  />
                 )}
 
                 {/* Qual rotation list */}
@@ -3205,12 +3300,14 @@ export default function SchedulingPage() {
                     )}
                     {editingRotation && (
                       <RotationForm
-                        users={pitUsers} allUsers={sortedAllUsers} isEdit
+                        key={editingRotation._id}
+                        users={pitUsers} optedOut={pitOptedOut} noResponse={pitNoResponse} isEdit
                         initial={{
                           label: editingRotation.label ?? "",
                           startMatch: String(editingRotation.startMatch ?? ""),
                           endMatch: String(editingRotation.endMatch ?? ""),
                           scoutIds: new Set(editingRotation.scoutIds),
+                          driveTeamIds: new Set(editingRotation.driveTeamScoutIds ?? []),
                         }}
                         onSave={form => handleSaveRotation(form, editingRotation._id)}
                         onCancel={() => setEditingRotation(null)}

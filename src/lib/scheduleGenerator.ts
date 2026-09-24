@@ -140,6 +140,8 @@ export interface GeneratedPitRotation {
   startMatch: number;
   endMatch: number;
   scoutIds: string[];
+  /** Subset of scoutIds that are drive team for this window. */
+  driveTeamScoutIds: string[];
 }
 
 export interface GeneratedMatchAssignment {
@@ -359,7 +361,10 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
         wIdx++;
       }
       for (const id of grp) markPitBusy(id, start, end);
-      newPitRotations.push({ label: `Auto Pit ${labelIdx}`, startMatch: start, endMatch: end, scoutIds: grp });
+      newPitRotations.push({
+        label: `Auto Pit ${labelIdx}`, startMatch: start, endMatch: end,
+        scoutIds: grp, driveTeamScoutIds: [...driveTeamCapped],
+      });
     }
     if (wIdx < pitWanters.length) {
       warnings.push(
@@ -425,7 +430,10 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
         grp.push(s._id);
         markPitBusy(s._id, start, end);
       }
-      newPitRotations.push({ label: `Auto Pit ${labelIdx}`, startMatch: start, endMatch: end, scoutIds: grp });
+      newPitRotations.push({
+        label: `Auto Pit ${labelIdx}`, startMatch: start, endMatch: end,
+        scoutIds: grp, driveTeamScoutIds: [],
+      });
     }
   }
 

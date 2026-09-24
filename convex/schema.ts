@@ -175,6 +175,12 @@ export default defineSchema({
     // startMatch/endMatch are ignored (it covers all playoff matches).
     isElims: v.optional(v.boolean()),
     scoutIds: v.array(v.id("users")),
+    // Per-rotation drive team — always a subset of scoutIds. Distinct from the
+    // team-wide driveTeamMembers table (which drives auto-generation): the
+    // people actually driving can differ from one rotation to the next, so the
+    // roster is recorded on the rotation itself. Optional for rows written
+    // before the field existed — treat undefined as "none flagged".
+    driveTeamScoutIds: v.optional(v.array(v.id("users"))),
   })
     .index("by_event", ["eventKey"]),
 
