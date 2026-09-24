@@ -115,7 +115,7 @@ describe("backfillCompLevel", () => {
 describe("submitForm", () => {
   test("persists compLevel so qual N and elim N stay distinct", async () => {
     const t = convexTest(schema, modules);
-    const userId = await t.run(async (ctx) => ctx.db.insert("users", { name: "S" }));
+    const userId = await t.run(async (ctx) => ctx.db.insert("users", { name: "S", email: "s@team4099.com" }));
     const as = t.withIdentity({ subject: userId, issuer: "test" });
     const templateId = await t.run(async (ctx) =>
       ctx.db.insert("formTemplates", { name: "T", fields: [], isActive: true }),
@@ -139,7 +139,7 @@ describe("submitForm", () => {
 
   test("offlineId makes a replayed submission idempotent", async () => {
     const t = convexTest(schema, modules);
-    const userId = await t.run(async (ctx) => ctx.db.insert("users", { name: "S" }));
+    const userId = await t.run(async (ctx) => ctx.db.insert("users", { name: "S", email: "s@team4099.com" }));
     const as = t.withIdentity({ subject: userId, issuer: "test" });
     const templateId = await t.run(async (ctx) =>
       ctx.db.insert("formTemplates", { name: "T", fields: [], isActive: true }),
@@ -161,7 +161,7 @@ describe("submitForm", () => {
 
   test("rejects a team that is not on the event roster", async () => {
     const t = convexTest(schema, modules);
-    const userId = await t.run(async (ctx) => ctx.db.insert("users", { name: "S" }));
+    const userId = await t.run(async (ctx) => ctx.db.insert("users", { name: "S", email: "s@team4099.com" }));
     const as = t.withIdentity({ subject: userId, issuer: "test" });
     const templateId = await t.run(async (ctx) => {
       await ctx.db.insert("eventTeamRosters", {

@@ -2,8 +2,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
-import { getAuthUserId } from "@convex-dev/auth/server";
-import { isSignedIn, requireAdmin } from "./adminAuth";
+import { getApprovedUserId, isSignedIn, requireAdmin } from "./adminAuth";
 
 const STARTING_BALANCE = 1000;
 
@@ -75,7 +74,7 @@ async function logTransaction(
 export const listMyTransactions = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getApprovedUserId(ctx);
     if (!userId) return [];
     const rows = await ctx.db
       .query("coinTransactions")
@@ -191,7 +190,7 @@ export const adminAwardCoins = mutation({
 export const getOrCreateBalance = mutation({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getApprovedUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
 
     const existing = await ctx.db
@@ -218,7 +217,7 @@ export const getOrCreateBalance = mutation({
 export const getMyBalance = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getApprovedUserId(ctx);
     if (!userId) return null;
     return await ctx.db
       .query("userBalances")
@@ -241,7 +240,7 @@ const BEG_AMOUNT = 1;
 export const beg = mutation({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getApprovedUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
 
     const now = Date.now();
@@ -689,7 +688,7 @@ export const placeBet = mutation({
     amount:   v.number(),
   },
   handler: async (ctx, { marketId, optionId, amount }) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getApprovedUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
 
     assertBet(amount);
@@ -749,7 +748,7 @@ export const placeBet = mutation({
 export const listMyBets = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getApprovedUserId(ctx);
     if (!userId) return [];
     return await ctx.db
       .query("bets")

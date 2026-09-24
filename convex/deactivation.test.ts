@@ -22,8 +22,8 @@ async function realAdmin(t: ReturnType<typeof convexTest>) {
 describe("deactivateUser / reactivateUser", () => {
   test("a non-admin cannot deactivate anyone", async () => {
     const t = convexTest(schema, modules);
-    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
-    const otherId = await t.run((ctx) => ctx.db.insert("users", { name: "Other" }));
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" }));
+    const otherId = await t.run((ctx) => ctx.db.insert("users", { name: "Other", email: "other@team4099.com" }));
     const scoutAs = t.withIdentity({ subject: scoutId, issuer: "test" });
     await expect(
       scoutAs.mutation(api.admin.deactivateUser, { userId: otherId }),
@@ -33,7 +33,7 @@ describe("deactivateUser / reactivateUser", () => {
   test("deactivating a user hides them from listUsers; reactivating restores them", async () => {
     const t = convexTest(schema, modules);
     const { as: chiefAs } = await realAdmin(t);
-    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" }));
     const scoutAs = t.withIdentity({ subject: scoutId, issuer: "test" });
 
     expect((await scoutAs.query(api.users.listUsers, {})).some((u) => u._id === scoutId)).toBe(true);
@@ -48,7 +48,7 @@ describe("deactivateUser / reactivateUser", () => {
   test("signing back in (reactivateSelf) clears a deactivation", async () => {
     const t = convexTest(schema, modules);
     const { as: chiefAs } = await realAdmin(t);
-    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" }));
     const scoutAs = t.withIdentity({ subject: scoutId, issuer: "test" });
 
     await chiefAs.mutation(api.admin.deactivateUser, { userId: scoutId });
@@ -73,7 +73,7 @@ describe("deactivateUser / reactivateUser", () => {
 describe("setUserName", () => {
   test("a non-admin cannot rename anyone", async () => {
     const t = convexTest(schema, modules);
-    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" }));
     const scoutAs = t.withIdentity({ subject: scoutId, issuer: "test" });
     await expect(
       scoutAs.mutation(api.users.setUserName, { userId: scoutId, name: "New Name" }),
@@ -83,7 +83,7 @@ describe("setUserName", () => {
   test("an admin can rename a scout", async () => {
     const t = convexTest(schema, modules);
     const { as: chiefAs } = await realAdmin(t);
-    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" }));
     await chiefAs.mutation(api.users.setUserName, { userId: scoutId, name: "Renamed Scout" });
     const users = await chiefAs.query(api.users.listUsers, {});
     expect(users.find((u) => u._id === scoutId)?.name).toBe("Renamed Scout");
@@ -93,7 +93,7 @@ describe("setUserName", () => {
 describe("addScoutByEmail", () => {
   test("a non-admin cannot add a scout", async () => {
     const t = convexTest(schema, modules);
-    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" }));
     const scoutAs = t.withIdentity({ subject: scoutId, issuer: "test" });
     await expect(
       scoutAs.mutation(api.users.addScoutByEmail, { email: "new@team4099.com" }),
@@ -151,7 +151,7 @@ describe("addScoutByEmail", () => {
 describe("setAdminLabel", () => {
   test("a non-admin cannot set a label", async () => {
     const t = convexTest(schema, modules);
-    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" }));
     const scoutAs = t.withIdentity({ subject: scoutId, issuer: "test" });
     await expect(
       scoutAs.mutation(api.admin.setAdminLabel, { userId: scoutId, label: "Whatever" }),
@@ -161,7 +161,7 @@ describe("setAdminLabel", () => {
   test("granting temporary admin seeds the label to 'Temporary Admin' only on a fresh grant", async () => {
     const t = convexTest(schema, modules);
     const { as: chiefAs } = await realAdmin(t);
-    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" }));
 
     await chiefAs.mutation(api.admin.grantTemporaryAdmin, { userId: scoutId });
     let statuses = await chiefAs.query(api.admin.listAdminStatuses, {});

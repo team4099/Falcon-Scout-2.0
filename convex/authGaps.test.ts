@@ -44,7 +44,7 @@ describe("checklist submission requires a signed-in caller", () => {
   test("a signed-in scout's checklist lands in formSubmissions", async () => {
     const t = convexTest(schema, modules);
     const { userId, templateId } = await t.run(async (ctx) => ({
-      userId: await ctx.db.insert("users", { name: "Scout" }),
+      userId: await ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" }),
       templateId: await ctx.db.insert("formTemplates", {
         name: "CL", formType: "checklist", fields: [], isActive: true,
       }),
@@ -70,7 +70,7 @@ describe("checklist submission requires a signed-in caller", () => {
   test("getMySubmissions reports formType even for a deactivated template", async () => {
     const t = convexTest(schema, modules);
     const { userId, templateId } = await t.run(async (ctx) => ({
-      userId: await ctx.db.insert("users", { name: "Scout" }),
+      userId: await ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" }),
       templateId: await ctx.db.insert("formTemplates", {
         name: "Pit", formType: "pit", fields: [], isActive: true,
       }),
@@ -93,9 +93,9 @@ describe("checklist submission requires a signed-in caller", () => {
   test("a scout cannot report for a pit rotation they are not rostered on", async () => {
     const t = convexTest(schema, modules);
     const { outsiderId, rotationId } = await t.run(async (ctx) => {
-      const rosteredId = await ctx.db.insert("users", { name: "Rostered" });
+      const rosteredId = await ctx.db.insert("users", { name: "Rostered", email: "rostered@team4099.com" });
       return {
-        outsiderId: await ctx.db.insert("users", { name: "Outsider" }),
+        outsiderId: await ctx.db.insert("users", { name: "Outsider", email: "outsider@team4099.com" }),
         rotationId: await ctx.db.insert("pitRotations", {
           eventKey: EVENT, startMatch: 1, endMatch: 10, scoutIds: [rosteredId],
         }),
@@ -113,7 +113,7 @@ describe("checklist submission requires a signed-in caller", () => {
   test("an anonymous caller cannot report for pit duty", async () => {
     const t = convexTest(schema, modules);
     const rotationId = await t.run(async (ctx) => {
-      const scoutId = await ctx.db.insert("users", { name: "Scout" });
+      const scoutId = await ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" });
       return await ctx.db.insert("pitRotations", {
         eventKey: EVENT, startMatch: 1, endMatch: 10, scoutIds: [scoutId],
       });
@@ -126,8 +126,8 @@ describe("checklist submission requires a signed-in caller", () => {
   test("reporting twice is idempotent, and undo only removes your own row", async () => {
     const t = convexTest(schema, modules);
     const { scoutId, otherId, rotationId } = await t.run(async (ctx) => {
-      const scoutId = await ctx.db.insert("users", { name: "Scout" });
-      const otherId = await ctx.db.insert("users", { name: "Other" });
+      const scoutId = await ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" });
+      const otherId = await ctx.db.insert("users", { name: "Other", email: "other@team4099.com" });
       return {
         scoutId, otherId,
         rotationId: await ctx.db.insert("pitRotations", {
@@ -154,7 +154,7 @@ describe("checklist submission requires a signed-in caller", () => {
   test("pit duty pays once, double-report doesn't stack, and undo claws it back", async () => {
     const t = convexTest(schema, modules);
     const { scoutId, rotationId } = await t.run(async (ctx) => {
-      const scoutId = await ctx.db.insert("users", { name: "Scout" });
+      const scoutId = await ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" });
       return {
         scoutId,
         rotationId: await ctx.db.insert("pitRotations", {
@@ -187,7 +187,7 @@ describe("checklist submission requires a signed-in caller", () => {
   test("undo claws back what the ledger paid, not the current constant", async () => {
     const t = convexTest(schema, modules);
     const { scoutId, rotationId } = await t.run(async (ctx) => {
-      const scoutId = await ctx.db.insert("users", { name: "Scout" });
+      const scoutId = await ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" });
       const rotationId = await ctx.db.insert("pitRotations", {
         eventKey: EVENT, startMatch: 1, endMatch: 10, scoutIds: [scoutId],
       });
@@ -230,7 +230,7 @@ describe("read queries are gated", () => {
         templateId, eventKey: EVENT, matchNumber: 1, teamNumber: 4099,
         data: "{}", syncedAt: Date.now(),
       });
-      const userId = await ctx.db.insert("users", { name: "Scout" });
+      const userId = await ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" });
       await ctx.db.insert("userBalances", {
         userId, eventKey: EVENT, balance: 5000,
         totalWon: 0, totalLost: 0, totalBet: 0, totalBegs: 0,
@@ -258,7 +258,7 @@ describe("read queries are gated", () => {
         templateId, eventKey: EVENT, matchNumber: 1, teamNumber: 4099,
         data: "{}", syncedAt: Date.now(),
       });
-      return ctx.db.insert("users", { name: "Scout" });
+      return ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" });
     });
     const as = t.withIdentity({ subject: userId, issuer: "test" });
     expect(await as.query(api.forms.listSubmissions, { eventKey: EVENT })).toHaveLength(1);
@@ -269,8 +269,8 @@ describe("read queries are gated", () => {
 describe("personal kanban boards are private", () => {
   async function setupBoards(t: ReturnType<typeof convexTest>) {
     return await t.run(async (ctx) => {
-      const owner    = await ctx.db.insert("users", { name: "Owner" });
-      const intruder = await ctx.db.insert("users", { name: "Intruder" });
+      const owner    = await ctx.db.insert("users", { name: "Owner", email: "owner@team4099.com" });
+      const intruder = await ctx.db.insert("users", { name: "Intruder", email: "intruder@team4099.com" });
       const boardId = await ctx.db.insert("kanbanBoards", {
         name: "My picks", type: "personal", ownerId: owner,
         eventKey: EVENT, columns: [{ id: "a", title: "A" }, { id: "b", title: "B" }],
@@ -310,7 +310,7 @@ describe("personal kanban boards are private", () => {
   test("the central board stays shared", async () => {
     const t = convexTest(schema, modules);
     const { cardId } = await t.run(async (ctx) => {
-      await ctx.db.insert("users", { name: "Owner" });
+      await ctx.db.insert("users", { name: "Owner", email: "owner@team4099.com" });
       const boardId = await ctx.db.insert("kanbanBoards", {
         name: "Picklist", type: "central", eventKey: EVENT,
         columns: [{ id: "a", title: "A" }, { id: "b", title: "B" }],
@@ -319,7 +319,7 @@ describe("personal kanban boards are private", () => {
         boardId, columnId: "a", teamNumber: 4099, eventKey: EVENT, position: 0,
       }) };
     });
-    const other = await t.run(async (ctx) => ctx.db.insert("users", { name: "Other" }));
+    const other = await t.run(async (ctx) => ctx.db.insert("users", { name: "Other", email: "other@team4099.com" }));
     const as = t.withIdentity({ subject: other, issuer: "test" });
     await as.mutation(api.kanban.moveCard, { cardId, columnId: "b", position: 0 });
     const card = await t.run(async (ctx) => await ctx.db.get(cardId));
@@ -329,7 +329,7 @@ describe("personal kanban boards are private", () => {
 
 describe("scouting pays once per match", () => {
   async function scout(t: ReturnType<typeof convexTest>) {
-    const userId = await t.run(async (ctx) => ctx.db.insert("users", { name: "Scout" }));
+    const userId = await t.run(async (ctx) => ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" }));
     const templateId = await t.run(async (ctx) => ctx.db.insert("formTemplates", {
       name: "Match", fields: [], isActive: true, coinReward: 50,
     }));
@@ -476,8 +476,8 @@ describe("admin coin awards", () => {
   async function setup() {
     const t = convexTest(schema, modules);
     const { adminId, scoutId } = await t.run(async (ctx) => ({
-      adminId: await ctx.db.insert("users", { name: "Admin" }),
-      scoutId: await ctx.db.insert("users", { name: "Scout" }),
+      adminId: await ctx.db.insert("users", { name: "Admin", email: "admin@team4099.com" }),
+      scoutId: await ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" }),
     }));
     return {
       t, scoutId,

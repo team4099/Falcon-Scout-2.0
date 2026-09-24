@@ -17,8 +17,8 @@ describe("adminSetPreferences", () => {
   test("a non-admin caller cannot change another scout's preferences", async () => {
     const t = convexTest(schema, modules);
     const { callerId, scoutId } = await t.run(async (ctx) => ({
-      callerId: await ctx.db.insert("users", { name: "Caller" }),
-      scoutId: await ctx.db.insert("users", { name: "Scout" }),
+      callerId: await ctx.db.insert("users", { name: "Caller", email: "caller@team4099.com" }),
+      scoutId: await ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" }),
     }));
     const as = t.withIdentity({ subject: callerId, issuer: "test" });
 
@@ -34,7 +34,7 @@ describe("adminSetPreferences", () => {
     const t = convexTest(schema, modules);
     const { adminId, scoutId } = await t.run(async (ctx) => ({
       adminId: await ctx.db.insert("users", { name: "Admin", email: ADMIN_EMAIL }),
-      scoutId: await ctx.db.insert("users", { name: "Scout" }),
+      scoutId: await ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" }),
     }));
     const asAdmin = t.withIdentity({ subject: adminId, issuer: "test", email: ADMIN_EMAIL });
 

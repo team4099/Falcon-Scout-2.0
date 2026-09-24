@@ -66,8 +66,12 @@ export const { auth, signIn, signOut, store } = convexAuth({
       clientId: process.env.AUTH_GOOGLE_ID,
       clientSecret: process.env.AUTH_GOOGLE_SECRET,
       profile(profile) {
-        if (!profile.email?.endsWith("@team4099.com")) {
-          throw new Error("Only team4099.com emails are allowed");
+        // Anyone with a verified Google address may sign in, but only
+        // @team4099.com accounts get data access automatically. Everyone else
+        // lands on the guest-request screen and sees nothing until an admin
+        // approves them (see convex/guests.ts and requireUser).
+        if (!profile.email || profile.email_verified === false) {
+          throw new Error("A verified Google email is required");
         }
         return {
           id: profile.sub,

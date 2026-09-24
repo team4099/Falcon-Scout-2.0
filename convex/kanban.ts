@@ -1,9 +1,8 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { getAuthUserId } from "@convex-dev/auth/server";
 import type { MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
-import { isSignedIn, requireAdmin, requireUser } from "./adminAuth";
+import { getApprovedUserId, isSignedIn, requireAdmin, requireUser } from "./adminAuth";
 
 // ──────────────────────────────────────────────
 // Kanban Boards
@@ -25,7 +24,7 @@ export const getCentralBoard = query({
 export const getPersonalBoard = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getApprovedUserId(ctx);
     if (!userId) return null;
     const boards = await ctx.db
       .query("kanbanBoards")

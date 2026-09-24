@@ -67,15 +67,69 @@ export async function hasActiveTemporaryGrant(
   return !!grant && grant.expiresAt > Date.now();
 }
 
+export const TEAM_EMAIL_DOMAIN = "@team4099.com";
+
+export function isTeamEmail(email: string | null | undefined): boolean {
+  return !!email && email.trim().toLowerCase().endsWith(TEAM_EMAIL_DOMAIN);
+}
+
 /**
- * Require that the caller is signed in. Returns the user id.
+ * Whether the signed-in caller may touch team data: any @team4099.com account,
+ * or a guest an admin has approved (guestAccess table). Reads the email from
+ * the signed JWT claim (see authCustomClaims in convex/auth.ts), falling back
+ * to the user row for a token minted before that claim existed.
+ */
+async function isCallerApproved(ctx: QueryCtx | MutationCtx, userId: Id<"users">) {
+  const identity = await ctx.auth.getUserIdentity();
+  let email = identity?.email;
+  if (!email) email = (await ctx.db.get(userId))?.email;
+  if (!email) return false;
+  if (isTeamEmail(email)) return true;
+  const normalized = email.trim().toLowerCase();
+  const row = await ctx.db
+    .query("guestAccess")
+    .withIndex("by_email", (q) => q.eq("email", normalized))
+    .first();
+  return row?.status === "approved";
+}
+
+/**
+ * Like getAuthUserId, but null unless the caller is approved (team member or
+ * approved guest). Use instead of getAuthUserId in any function that reads or
+ * writes team data, so a pending guest can't slip past requireUser.
+ */
+export async function getApprovedUserId(ctx: QueryCtx | MutationCtx) {
+  const userId = await getAuthUserId(ctx);
+  if (!userId) return null;
+  return (await isCallerApproved(ctx, userId)) ? userId : null;
+}
+
+/**
+ * Require that the caller is signed in and approved. Returns the user id.
  * Use on anything that writes data but is not admin-only (scouts submitting
  * forms, syncing their own queue, moving picklist cards).
  */
 export async function requireUser(ctx: QueryCtx | MutationCtx) {
   const userId = await getAuthUserId(ctx);
   if (!userId) throw new Error("You must be signed in to do that.");
+  if (!(await isCallerApproved(ctx, userId))) {
+    throw new Error("Your guest access hasn't been approved yet.");
+  }
   return userId;
+}
+
+/** Emails of approved guests, for filtering user lists down to people with access. */
+export async function approvedGuestEmails(ctx: QueryCtx | MutationCtx): Promise<Set<string>> {
+  const rows = await ctx.db
+    .query("guestAccess")
+    .withIndex("by_status", (q) => q.eq("status", "approved"))
+    .collect();
+  return new Set(rows.map((r) => r.email));
+}
+
+/** Whether `user` has team-data access (team email or approved guest). */
+export function hasAccess(user: { email?: string }, approved: Set<string>): boolean {
+  return isTeamEmail(user.email) || (!!user.email && approved.has(user.email.trim().toLowerCase()));
 }
 
 /**
@@ -130,5 +184,5 @@ export async function isCurrentUserAdminEligible(ctx: QueryCtx): Promise<boolean
  * An empty result degrades into the cached value instead.
  */
 export async function isSignedIn(ctx: QueryCtx): Promise<boolean> {
-  return (await getAuthUserId(ctx)) !== null;
+  return (await getApprovedUserId(ctx)) !== null;
 }

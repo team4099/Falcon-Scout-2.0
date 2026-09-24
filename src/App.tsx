@@ -56,6 +56,7 @@ import ManageScoutsPage from "@/pages/ManageScoutsPage";
 import SchedulingPage from "@/pages/SchedulingPage";
 import MySchedulePage from "@/pages/MySchedulePage";
 import BettingPage from "@/pages/BettingPage";
+import GuestAccessPage from "@/pages/GuestAccessPage";
 
 // Base nav items — always visible. Scheduling is here (not the admin-only
 // list below) because non-admins can view everyone's assignments read-only;
@@ -558,21 +559,25 @@ function NotFound() {
 export default function App() {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const viewer = useQuery(api.users.viewer);
+  const access = useQuery(api.guests.myAccess);
+  const hasAccess = access?.status === "team" || access?.status === "approved";
   const online = useOnlineStatus();
   const backendTimedOut = useElapsed(BACKEND_TIMEOUT_MS);
   const reactivateSelf = useMutation(api.users.reactivateSelf);
 
-  // Persist the viewer to localStorage whenever it arrives from Convex
+  // Persist the viewer to localStorage whenever it arrives from Convex. Only
+  // for accounts with access: the cached viewer is what unlocks the offline
+  // escape hatches, and a pending guest must not get them.
   useEffect(() => {
-    if (viewer) setCachedViewer(viewer as Record<string, unknown>);
-  }, [viewer]);
+    if (viewer && hasAccess) setCachedViewer(viewer as Record<string, unknown>);
+  }, [viewer, hasAccess]);
 
   // If an admin soft-deleted this account while they were away, signing
   // back in restores them everywhere — fire once per fresh authenticated
   // session. A no-op for everyone who was never deactivated.
   useEffect(() => {
-    if (isAuthenticated) reactivateSelf({}).catch(() => {});
-  }, [isAuthenticated, reactivateSelf]);
+    if (isAuthenticated && hasAccess) reactivateSelf({}).catch(() => {});
+  }, [isAuthenticated, hasAccess, reactivateSelf]);
 
   // Read the cached session once per mount rather than on every render.
   const offlineReady = useMemo(
@@ -636,6 +641,20 @@ export default function App() {
         </Routes>
       </div>
     );
+  }
+
+  // Signed in with Google but not a team account (or not yet approved): the
+  // server refuses all team data to them anyway, this just shows the
+  // apply/waiting screen instead of an app full of errors.
+  if (access === undefined) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-3">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
+      </div>
+    );
+  }
+  if (access && !hasAccess) {
+    return <GuestAccessPage status={access.status as "none" | "pending" | "denied"} email={viewer.email as string | undefined} />;
   }
 
   return <AuthenticatedApp />;

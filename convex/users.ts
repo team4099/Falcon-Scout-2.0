@@ -1,7 +1,13 @@
 import { query, mutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
-import { requireAdmin, requireUser } from "./adminAuth";
+import {
+  approvedGuestEmails,
+  getApprovedUserId,
+  hasAccess,
+  requireAdmin,
+  requireUser,
+} from "./adminAuth";
 
 export const viewer = query({
   args: {},
@@ -30,10 +36,14 @@ export const listUsers = query({
   args: {},
   handler: async (ctx) => {
     await requireUser(ctx);
-    const [users, deactivated] = await Promise.all([
+    const [allUsers, deactivated, approved] = await Promise.all([
       ctx.db.query("users").collect(),
       ctx.db.query("deactivatedUsers").collect(),
+      approvedGuestEmails(ctx),
     ]);
+    // Pending/denied guests have a user row (they signed in) but no access,
+    // so they must not show up as schedulable scouts.
+    const users = allUsers.filter((u) => hasAccess(u, approved));
     if (deactivated.length === 0) return users;
     const deactivatedSet = new Set(deactivated.map((d) => d.userId));
     return users.filter((u) => !deactivatedSet.has(u._id));
@@ -108,7 +118,7 @@ export const reactivateSelf = mutation({
 export const getUserSettings = query({
   args: {},
   handler: async (ctx) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getApprovedUserId(ctx);
     if (!userId) return null;
     return (
       (await ctx.db
@@ -123,7 +133,7 @@ export const getUserSettings = query({
 export const setTbaApiKey = mutation({
   args: { key: v.string() },
   handler: async (ctx, { key }) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getApprovedUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
     const existing = await ctx.db
       .query("userSettings")

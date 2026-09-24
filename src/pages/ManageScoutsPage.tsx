@@ -5,6 +5,7 @@ import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
 import { useUIStore } from "@/store/uiStore";
 import { Button } from "@/components/ui/button";
+import GuestRequestsPanel from "@/components/GuestRequestsPanel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
@@ -1342,6 +1343,8 @@ export default function ManageScoutsPage() {
           </div>
         )}
       </div>
+
+      <GuestRequestsPanel />
 
       {/* ── No event state ────────────────────────────────────────────────── */}
       {!currentEvent && (

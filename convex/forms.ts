@@ -1,7 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { getAuthUserId } from "@convex-dev/auth/server";
-import { isSignedIn, requireAdmin, requireUser } from "./adminAuth";
+import { getApprovedUserId, isSignedIn, requireAdmin, requireUser } from "./adminAuth";
 import { awardCoins, DEFAULT_SCOUT_REWARD } from "./betting";
 import type { Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
@@ -352,7 +351,7 @@ export const submitForm = mutation({
 export const getMySubmissions = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getApprovedUserId(ctx);
     if (!userId) return [];
     const rows = await ctx.db
       .query("formSubmissions")

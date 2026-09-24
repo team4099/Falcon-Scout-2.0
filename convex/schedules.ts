@@ -1,7 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { getAuthUserId } from "@convex-dev/auth/server";
-import { isSignedIn, requireAdmin } from "./adminAuth";
+import { getApprovedUserId, isSignedIn, requireAdmin } from "./adminAuth";
 import { awardCoins, revokeCoins, PIT_DUTY_REWARD } from "./betting";
 
 const positionValidator = v.union(
@@ -107,7 +106,7 @@ export const listMatchAssignments = query({
 export const getMyMatchAssignments = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getApprovedUserId(ctx);
     if (!userId) return [];
     return await ctx.db
       .query("matchAssignments")
@@ -265,7 +264,7 @@ export const listPitRotations = query({
 export const getMyPitRotations = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getApprovedUserId(ctx);
     if (!userId) return [];
     const all = await ctx.db
       .query("pitRotations")
@@ -351,7 +350,7 @@ export const deletePitRotation = mutation({
 export const getMyPitDutyCheckIns = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getApprovedUserId(ctx);
     if (!userId) return [];
     const rows = await ctx.db
       .query("pitDutyCheckIns")
@@ -371,7 +370,7 @@ export const getMyPitDutyCheckIns = query({
 export const reportPitDuty = mutation({
   args: { eventKey: v.string(), rotationId: v.id("pitRotations") },
   handler: async (ctx, { eventKey, rotationId }) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getApprovedUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
 
     const rotation = await ctx.db.get(rotationId);
@@ -406,7 +405,7 @@ export const reportPitDuty = mutation({
 export const unreportPitDuty = mutation({
   args: { rotationId: v.id("pitRotations") },
   handler: async (ctx, { rotationId }) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getApprovedUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
     const existing = await ctx.db
       .query("pitDutyCheckIns")
@@ -441,7 +440,7 @@ export const unreportPitDuty = mutation({
 export const getMyPreferences = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getApprovedUserId(ctx);
     if (!userId) return null;
     return await ctx.db
       .query("scoutPreferences")
@@ -460,7 +459,7 @@ export const upsertMyPreferences = mutation({
     wantsPitScouting:  v.optional(v.boolean()),
   },
   handler: async (ctx, { eventKey, preferredPartners, wantsMoreMatches, wantsPitRotation, wantsPitScouting }) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getApprovedUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
     const existing = await ctx.db
       .query("scoutPreferences")

@@ -4,6 +4,8 @@ import {
   MAX_TEMP_ADMIN_HOURS,
   MIN_TEMP_ADMIN_HOURS,
   TEMP_ADMIN_DURATION_MS,
+  approvedGuestEmails,
+  hasAccess,
   isAdminEmail,
   isCurrentUserAdminEligible,
   isSignedIn,
@@ -46,11 +48,13 @@ export const listAdminStatuses = query({
     if (!isAdminEmail(identity?.email)) return [];
 
     const now = Date.now();
-    const [users, grants, labels] = await Promise.all([
+    const [allUsers, grants, labels, approved] = await Promise.all([
       ctx.db.query("users").collect(),
       ctx.db.query("temporaryAdminGrants").collect(),
       ctx.db.query("adminLabels").collect(),
+      approvedGuestEmails(ctx),
     ]);
+    const users = allUsers.filter((u) => hasAccess(u, approved));
     const grantByUser = new Map(grants.map((g) => [g.userId, g]));
     const labelByUser = new Map(labels.map((l) => [l.userId, l.label]));
 

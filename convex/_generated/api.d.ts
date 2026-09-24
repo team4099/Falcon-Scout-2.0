@@ -14,6 +14,7 @@ import type * as auth from "../auth.js";
 import type * as betting from "../betting.js";
 import type * as events from "../events.js";
 import type * as forms from "../forms.js";
+import type * as guests from "../guests.js";
 import type * as http from "../http.js";
 import type * as kanban from "../kanban.js";
 import type * as pitScouting from "../pitScouting.js";
@@ -33,6 +34,7 @@ declare const fullApi: ApiFromModules<{
   betting: typeof betting;
   events: typeof events;
   forms: typeof forms;
+  guests: typeof guests;
   http: typeof http;
   kanban: typeof kanban;
   pitScouting: typeof pitScouting;

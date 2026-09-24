@@ -16,7 +16,23 @@ const fieldTypeValidator = v.union(
 
 export default defineSchema({
   ...authTables,
-  
+
+  // Non-@team4099.com accounts may sign in with Google, but hold no data access
+  // until an admin flips their row to "approved" (see convex/guests.ts and
+  // adminAuth.ts's isCallerApproved). Keyed by lowercased email so approval
+  // survives the user row being recreated.
+  guestAccess: defineTable({
+    email: v.string(),
+    name: v.optional(v.string()),
+    message: v.optional(v.string()),
+    status: v.union(v.literal("pending"), v.literal("approved"), v.literal("denied")),
+    requestedAt: v.number(),
+    decidedAt: v.optional(v.number()),
+    decidedBy: v.optional(v.id("users")),
+  })
+    .index("by_email", ["email"])
+    .index("by_status", ["status"]),
+
   formTemplates: defineTable({
     name: v.string(),
     description: v.optional(v.string()),

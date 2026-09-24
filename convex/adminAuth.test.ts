@@ -135,7 +135,7 @@ describe("temporary admin grants", () => {
   test("an inherent admin can grant a scout 12 hours of admin access", async () => {
     const t = convexTest(schema, modules);
     const { as: chiefAs } = await realAdmin(t);
-    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" }));
     const scoutAs = t.withIdentity({ subject: scoutId, issuer: "test" });
 
     await expect(
@@ -155,8 +155,8 @@ describe("temporary admin grants", () => {
   test("an inherent admin can choose a custom grant duration, clamped to [1, 720] hours", async () => {
     const t = convexTest(schema, modules);
     const { as: chiefAs } = await realAdmin(t);
-    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
-    const otherId = await t.run((ctx) => ctx.db.insert("users", { name: "Other" }));
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" }));
+    const otherId = await t.run((ctx) => ctx.db.insert("users", { name: "Other", email: "other@team4099.com" }));
 
     const before = Date.now();
     const { expiresAt } = await chiefAs.mutation(api.admin.grantTemporaryAdmin, { userId: scoutId, hours: 2 });
@@ -174,8 +174,8 @@ describe("temporary admin grants", () => {
   test("a temporary admin cannot grant admin to anyone else", async () => {
     const t = convexTest(schema, modules);
     const { as: chiefAs } = await realAdmin(t);
-    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
-    const otherId = await t.run((ctx) => ctx.db.insert("users", { name: "Other" }));
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" }));
+    const otherId = await t.run((ctx) => ctx.db.insert("users", { name: "Other", email: "other@team4099.com" }));
     await chiefAs.mutation(api.admin.grantTemporaryAdmin, { userId: scoutId });
 
     const scoutAs = t.withIdentity({ subject: scoutId, issuer: "test" });
@@ -199,7 +199,7 @@ describe("temporary admin grants", () => {
     const t = convexTest(schema, modules);
     const scoutId = await t.run(async (ctx) => {
       const chiefId = await ctx.db.insert("users", { name: "Chief", email: "czhao@team4099.com" });
-      const sId = await ctx.db.insert("users", { name: "Scout" });
+      const sId = await ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" });
       await ctx.db.insert("temporaryAdminGrants", {
         userId: sId, grantedBy: chiefId, expiresAt: Date.now() - 1000,
       });
@@ -215,7 +215,7 @@ describe("temporary admin grants", () => {
   test("revoking removes access immediately", async () => {
     const t = convexTest(schema, modules);
     const { as: chiefAs } = await realAdmin(t);
-    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" }));
     await chiefAs.mutation(api.admin.grantTemporaryAdmin, { userId: scoutId });
 
     const scoutAs = t.withIdentity({ subject: scoutId, issuer: "test" });
@@ -227,7 +227,7 @@ describe("temporary admin grants", () => {
 
   test("listAdminStatuses is empty for non-inherent-admin callers", async () => {
     const t = convexTest(schema, modules);
-    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout" }));
+    const scoutId = await t.run((ctx) => ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" }));
     const scoutAs = t.withIdentity({ subject: scoutId, issuer: "test" });
     expect(await scoutAs.query(api.admin.listAdminStatuses, {})).toEqual([]);
     expect(await t.query(api.admin.listAdminStatuses, {})).toEqual([]);
@@ -268,7 +268,7 @@ describe("scout-level mutations stay usable by non-admins", () => {
 
     // submitForm stamps scoutId, so the identity subject has to be a real
     // users row id rather than an arbitrary string.
-    const userId = await t.run(async (ctx) => ctx.db.insert("users", { name: "Scout" }));
+    const userId = await t.run(async (ctx) => ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" }));
     const as = t.withIdentity({ subject: userId, issuer: "test" });
 
     const templateId = await t.run(async (ctx) =>

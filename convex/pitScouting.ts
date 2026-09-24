@@ -1,7 +1,6 @@
 ﻿import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { getAuthUserId } from "@convex-dev/auth/server";
-import { isSignedIn, requireAdmin } from "./adminAuth";
+import { getApprovedUserId, isSignedIn, requireAdmin } from "./adminAuth";
 
 // -- Pit Scouting Assignments -------------------------------------------------
 // Maps individual TBA team numbers to the scouts assigned to pit-scout them.
@@ -22,7 +21,7 @@ export const listPitScoutingTeams = query({
 export const getMyPitScoutingTeam = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getApprovedUserId(ctx);
     if (!userId) return null;
     const all = await ctx.db
       .query("pitScoutingTeams")
