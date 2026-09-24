@@ -57,6 +57,7 @@ import SchedulingPage from "@/pages/SchedulingPage";
 import MySchedulePage from "@/pages/MySchedulePage";
 import BettingPage from "@/pages/BettingPage";
 import GuestAccessPage from "@/pages/GuestAccessPage";
+import { resolveAuthGate, type AccessStatus } from "@/lib/authGate";
 
 // Base nav items — always visible. Scheduling is here (not the admin-only
 // list below) because non-admins can view everyone's assignments read-only;
@@ -212,7 +213,7 @@ function AuthenticatedApp() {
   // connection state for anything the scout reads as "my data is safe".
   const { status: backendStatus, backendConnected } = useBackendReachable();
   const isOnline = backendConnected;
-  const { isAdminMode } = useUIStore();
+  const { isAdminMode, setAdminMode } = useUIStore();
 
   // Build nav dynamically — admin-only items shown/hidden based on isAdminMode
   const NAV = [
@@ -275,6 +276,11 @@ function AuthenticatedApp() {
   }
 
   async function handleSignOut() {
+    // Admin Mode is persisted to localStorage, so without this the next
+    // account signed in on this device (a guest, say) inherits the admin nav.
+    // The server never trusted the toggle, but showing Form Builder / Manage
+    // Scouts to a guest is misleading and invites errors.
+    setAdminMode(false);
     await signOut();
     navigate("/login");
   }
@@ -576,77 +582,53 @@ export default function App() {
     [],
   );
 
-  // ── Escape hatch 1: the browser knows it is offline ─────────────────────
-  // Render straight from cache. This deliberately ignores isAuthenticated:
-  // offline, Convex cannot refresh the token and may report "signed out",
-  // which must never lock a scout out of their data mid-event.
-  if (!online && offlineReady) {
-    return <AuthenticatedApp />;
-  }
+  const gate = resolveAuthGate({
+    online,
+    offlineReady,
+    isLoading,
+    isAuthenticated,
+    backendTimedOut,
+    viewer,
+    access: access as { status: AccessStatus } | null | undefined,
+  });
 
-  // ── Escape hatch 2: online, but the backend never answered ──────────────
-  const explicitlySignedOut = !isLoading && !isAuthenticated;
-  const authUnresolved      = isLoading || viewer === undefined;
-  if (!explicitlySignedOut && authUnresolved && backendTimedOut && offlineReady) {
-    return <AuthenticatedApp />;
-  }
+  switch (gate) {
+    case "cached":
+      // Offline, or the backend never answered — render from the cached
+      // session so a scout is never locked out mid-event.
+      return <AuthenticatedApp />;
 
-  // ── Normal (online) flow ───────────────────────────────────────────────
-  // Still checking auth state
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-3">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
-        <p className="text-sm text-muted-foreground font-medium animate-pulse">Verifying session...</p>
-      </div>
-    );
-  }
+    case "loading":
+      return (
+        <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
+          <p className="text-sm text-muted-foreground font-medium animate-pulse">
+            {isLoading ? "Verifying session..." : "Loading user..."}
+          </p>
+        </div>
+      );
 
-  // Not authenticated
-  if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen bg-background">
-        <Routes>
-          <Route path="*" element={<LoginPage />} />
-        </Routes>
-      </div>
-    );
-  }
+    case "login":
+      return (
+        <div className="min-h-screen bg-background">
+          <Routes>
+            <Route path="*" element={<LoginPage />} />
+          </Routes>
+        </div>
+      );
 
-  // Authenticated but viewer still loading
-  if (viewer === undefined) {
-    return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-3">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
-        <p className="text-sm text-muted-foreground font-medium animate-pulse">Loading user...</p>
-      </div>
-    );
-  }
+    case "guest":
+      // Signed in, but not a team account and not yet approved. The server
+      // refuses all team data to them regardless (requireUser) — this just
+      // shows the apply/waiting screen instead of an app full of errors.
+      return (
+        <GuestAccessPage
+          status={access!.status as "none" | "pending" | "denied"}
+          email={(viewer as { email?: string } | null)?.email}
+        />
+      );
 
-  // Authenticated but no user record (shouldn't happen normally)
-  if (viewer === null) {
-    return (
-      <div className="min-h-screen bg-background">
-        <Routes>
-          <Route path="*" element={<LoginPage />} />
-        </Routes>
-      </div>
-    );
+    case "app":
+      return <AuthenticatedApp />;
   }
-
-  // Signed in with Google but not a team account (or not yet approved): the
-  // server refuses all team data to them anyway, this just shows the
-  // apply/waiting screen instead of an app full of errors.
-  if (access === undefined) {
-    return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-3">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
-      </div>
-    );
-  }
-  if (access && !hasAccess) {
-    return <GuestAccessPage status={access.status as "none" | "pending" | "denied"} email={viewer.email as string | undefined} />;
-  }
-
-  return <AuthenticatedApp />;
 }

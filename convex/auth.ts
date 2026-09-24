@@ -57,6 +57,19 @@ const devProviders =
             isAnonymous: true as const,
           }),
         }),
+        // Third dev-only provider, stamped with a deliberately NON-team email
+        // so the guest flow (apply -> pending -> admin approves -> access) is
+        // reachable on localhost. Without this there is no way to exercise
+        // guest access without a second real Google account, which is why the
+        // flow shipped untested. Same ALLOW_DEV_LOGIN gate as the other two.
+        Anonymous({
+          id: "dev-guest",
+          profile: () => ({
+            name: "Dev Guest",
+            email: "devguest@example.org",
+            isAnonymous: true as const,
+          }),
+        }),
       ]
     : [];
 
