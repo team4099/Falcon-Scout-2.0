@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { stripEmojis } from "@/lib/utils";
 import { useQuery, useMutation } from "convex/react";
 import { useAdminMutation } from "@/hooks/useAdminMutation";
@@ -9,14 +9,13 @@ import { useUIStore } from "@/store/uiStore";
 import {
   fetchTBAEventMatches,
   fetchStatboticsEventTeams,
-  fetchTBAEventRankings,
 } from "@/lib/api";
 import type { TBAMatch } from "@/lib/api";
 import { toast } from "sonner";
 import {
   Coins, TrendingUp, TrendingDown, Trophy, ChevronDown, ChevronUp,
-  Plus, Zap, Lock, CheckCircle2, XCircle, RefreshCw,
-  HandCoins, Swords, BarChart3, Target, ListFilter,
+  Zap, Lock, CheckCircle2, XCircle, RefreshCw,
+  HandCoins, Swords, Target, ListFilter,
   BadgeCheck, AlertCircle, Timer, Users, X, Medal, Gift,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -39,38 +38,21 @@ import {
 // -- Types ---------------------------------------------------------------------
 
 type MarketStatus = "open" | "locked" | "resolved" | "cancelled";
-type MarketType =
-  | "match_winner"
-  | "alliance_score_ou"
-  | "point_differential"
-  | "team_field_bool"
-  | "team_field_numeric"
-  | "team_field_select"
-  | "multi_match_numeric"
-  | "multi_match_count"
-  | "team_top_rank"
-  | "alliance_selection"
-  | "elimination_advance";
 
-interface BetOption { id: string; label: string; seedPool: number; }
+interface BetOption {
+  id: string;
+  label: string;
+  /** Statbotics win probability, 1-99. `seedPool` is the legacy name for it. */
+  winProb?: number;
+  seedPool: number;
+}
 
 interface Market {
   _id: Id<"bettingMarkets">;
   eventKey: string;
   title: string;
   description?: string;
-  type: MarketType;
   matchNumber?: number;
-  matchNumbers?: number[];
-  teamNumber?: number;
-  alliance?: "red" | "blue";
-  templateId?: Id<"formTemplates">;
-  fieldId?: string;
-  fieldLabel?: string;
-  threshold?: number;
-  targetValue?: string;
-  minCount?: number;
-  targetScope?: "team" | "alliance" | "match";
   options: BetOption[];
   status: MarketStatus;
   resolvedOptionId?: string;
@@ -78,13 +60,17 @@ interface Market {
   resolvedAt?: number;
 }
 
-interface FormField {
-  id: string;
-  type: "text" | "number" | "checkbox" | "select" | "counter" | "textarea" | "teamNumber" | "rating";
-  label: string;
-  required: boolean;
-  options?: string[];
-  section?: string;
+/** A bet belonging to the signed-in scout, as returned by listMyBets. */
+interface MyBet {
+  _id: Id<"bets">;
+  marketId: Id<"bettingMarkets">;
+  optionId: string;
+  amount: number;
+  /** Fixed at placement. Absent on bets predating fixed odds. */
+  multiplier?: number;
+  payout?: number;
+  settled?: boolean;
+  placedAt: number;
 }
 
 // -- Helpers -------------------------------------------------------------------
@@ -106,29 +92,28 @@ function formatCoins(n: number): string {
   return String(n);
 }
 
-/** Compute implied probability % for an option given seed + real bets. */
-function impliedPct(option: BetOption, realBets: Record<string, number>, allOptions: BetOption[]): number {
-  const totalPool =
-    allOptions.reduce((s, o) => s + o.seedPool, 0) +
-    Object.values(realBets).reduce((s, v) => s + v, 0);
-  if (totalPool === 0) return 1 / allOptions.length;
-  const optionPool = option.seedPool + (realBets[option.id] ?? 0);
-  return optionPool / totalPool;
+// Odds mirror convex/betting.ts exactly. They are fixed when a market is
+// created, so these are display helpers only — the server recomputes the
+// multiplier from the market row when the bet is actually placed.
+const MIN_MULTIPLIER = 1.05;
+const MAX_MULTIPLIER = 10;
+
+/** Statbotics win probability for an option, as a percent (1-99). */
+function winProbPct(option: BetOption): number {
+  return option.winProb ?? option.seedPool;
 }
 
-/** Estimated payout multiplier if you bet X on this option and win. */
-function estimatePayout(
-  betAmount: number,
-  option: BetOption,
-  realBets: Record<string, number>,
-  allOptions: BetOption[]
-): number {
-  const totalPool =
-    allOptions.reduce((s, o) => s + o.seedPool, 0) +
-    Object.values(realBets).reduce((s, v) => s + v, 0) + betAmount;
-  const winPool = option.seedPool + (realBets[option.id] ?? 0) + betAmount;
-  if (winPool === 0) return 0;
-  return Math.floor((betAmount / winPool) * totalPool);
+/** Fixed payout multiplier: the reciprocal of the win probability, clamped. */
+function multiplierFor(option: BetOption): number {
+  const pct = winProbPct(option);
+  if (!Number.isFinite(pct) || pct <= 0) return MAX_MULTIPLIER;
+  const clamped = Math.min(MAX_MULTIPLIER, Math.max(MIN_MULTIPLIER, 100 / pct));
+  return Math.round(clamped * 100) / 100;
+}
+
+/** Total coins returned (stake included) if this bet wins. */
+function payoutFor(betAmount: number, option: BetOption): number {
+  return Math.floor(betAmount * multiplierFor(option));
 }
 
 const STATUS_CONFIG: Record<MarketStatus, { label: string; color: string; icon: React.ElementType }> = {
@@ -138,19 +123,6 @@ const STATUS_CONFIG: Record<MarketStatus, { label: string; color: string; icon: 
   cancelled: { label: "Cancelled", color: "text-muted-foreground bg-muted/40 border-border/30",   icon: XCircle },
 };
 
-const TYPE_ICONS: Record<MarketType, React.ElementType> = {
-  match_winner:       Swords,
-  alliance_score_ou:  BarChart3,
-  point_differential: TrendingUp,
-  team_field_bool:    CheckCircle2,
-  team_field_numeric: BarChart3,
-  team_field_select:  Target,
-  multi_match_numeric: BarChart3,
-  multi_match_count:   ListFilter,
-  team_top_rank:       Medal,
-  alliance_selection:  Users,
-  elimination_advance: Trophy,
-};
 
 // -- Alliance Label --------------------------------------------------------------
 
@@ -181,25 +153,15 @@ function ColorizedDescription({ text }: { text: string }) {
 
 function ProbBar({
   options,
-  realBets,
   resolvedOptionId,
 }: {
   options: BetOption[];
-  realBets: Record<string, number>;
   resolvedOptionId?: string;
 }) {
-  const pcts = options.map((o) => impliedPct(o, realBets, options));
-  const colors = [
-    "bg-yellow-400",
-    "bg-yellow-400",
-    "bg-yellow-400",
-    "bg-yellow-400",
-    "bg-yellow-400",
-  ];
   return (
     <div className="space-y-2">
-      {options.map((opt, i) => {
-        const pct = pcts[i];
+      {options.map((opt) => {
+        const pct = winProbPct(opt);
         const isWinner = resolvedOptionId === opt.id;
         const isLoser = resolvedOptionId && resolvedOptionId !== opt.id;
         return (
@@ -210,13 +172,14 @@ function ProbBar({
                 <AllianceLabel label={opt.label} />
               </span>
               <span className="font-mono text-muted-foreground">
-                {(pct * 100).toFixed(1)}%
+                {pct.toFixed(0)}% &middot;{" "}
+                <span className="text-amber-400 font-semibold">{multiplierFor(opt).toFixed(2)}x</span>
               </span>
             </div>
             <div className="h-2 rounded-full bg-muted overflow-hidden">
               <div
-                className={`h-full rounded-full transition-all duration-700 ${colors[i % colors.length]} ${isLoser ? "opacity-30" : ""}`}
-                style={{ width: `${Math.max(pct * 100, 2)}%` }}
+                className={`h-full rounded-full transition-all duration-700 bg-yellow-400 ${isLoser ? "opacity-30" : ""}`}
+                style={{ width: `${Math.max(pct, 2)}%` }}
               />
             </div>
           </div>
@@ -228,54 +191,81 @@ function ProbBar({
 
 // -- Bet Placement Panel -------------------------------------------------------
 
+/**
+ * Placing a bet is a one-shot action: no raising, no switching sides, no
+ * cashing out. `myBet` being present is what puts this panel into its
+ * read-only state, and the server rejects a second bet regardless.
+ */
 function BetPanel({
   market,
-  realBets,
   myBalance,
-  onBetPlaced,
+  myBet,
 }: {
   market: Market;
-  realBets: Record<string, number>;
   myBalance: number;
-  onBetPlaced: () => void;
+  myBet?: MyBet;
 }) {
   const [selectedOption, setSelectedOption] = useState(market.options[0]?.id ?? "");
   const [amount, setAmount] = useState(50);
+  const [confirming, setConfirming] = useState(false);
   const placeBet = useMutation(api.betting.placeBet);
   const [placing, setPlacing] = useState(false);
 
   const selected = market.options.find((o) => o.id === selectedOption);
-  const estPayout = selected ? estimatePayout(amount, selected, realBets, market.options) : 0;
-  const profit = estPayout - amount;
+
+  // Already bet — show the locked-in stake and odds instead of the form.
+  if (myBet) {
+    const betOption = market.options.find((o) => o.id === myBet.optionId);
+    const mult = myBet.multiplier ?? (betOption ? multiplierFor(betOption) : 2);
+    const toWin = Math.floor(myBet.amount * mult);
+    return (
+      <div className="border-t border-border/60 pt-4 mt-4 space-y-2">
+        <div className="rounded-xl border border-amber-400/30 bg-amber-400/5 p-3 space-y-1.5">
+          <p className="text-[10px] uppercase tracking-wider text-amber-400/80 font-semibold flex items-center gap-1">
+            <Lock className="h-3 w-3" /> Your bet is locked in
+          </p>
+          <p className="text-sm font-semibold">
+            {formatCoins(myBet.amount)} on <AllianceLabel label={betOption?.label ?? myBet.optionId} />
+            {" "}at <span className="font-mono text-amber-400">{mult.toFixed(2)}x</span>
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Pays <span className="font-mono text-amber-400 font-semibold">{toWin}</span> coins if it wins
+            {" "}(+{toWin - myBet.amount}).
+          </p>
+        </div>
+        <p className="text-[10px] text-muted-foreground">
+          One bet per match. It can&apos;t be raised, switched, or taken back.
+        </p>
+      </div>
+    );
+  }
 
   async function handleBet() {
     if (!selectedOption || amount < 10) return;
     setPlacing(true);
     try {
-      await placeBet({
-        marketId: market._id,
-        optionId: selectedOption,
-        amount,
-      });
+      await placeBet({ marketId: market._id, optionId: selectedOption, amount });
       toast.success(`Bet placed! ${amount} coins on "${selected?.label}"`);
-      onBetPlaced();
     } catch (e: unknown) {
       toast.error((e as Error).message ?? "Failed to place bet");
     } finally {
       setPlacing(false);
+      setConfirming(false);
     }
   }
 
   const quickAmounts = [10, 50, 100, 250, 500];
+  const payout = selected ? payoutFor(amount, selected) : 0;
+  const profit = payout - amount;
 
   return (
     <div className="border-t border-border/60 pt-4 mt-4 space-y-3">
-      {/* Option selector */}
+      {/* Option selector — odds are fixed, so they ride on the button itself */}
       <div className="grid gap-2">
         {market.options.map((opt) => (
           <button
             key={opt.id}
-            onClick={() => setSelectedOption(opt.id)}
+            onClick={() => { setSelectedOption(opt.id); setConfirming(false); }}
             className={`flex items-center justify-between px-3 py-2 rounded-lg border text-sm font-medium transition-all ${
               selectedOption === opt.id
                 ? "border-primary bg-primary/10 text-primary"
@@ -283,8 +273,9 @@ function BetPanel({
             }`}
           >
             <AllianceLabel label={opt.label} />
-            <span className="text-xs opacity-70">
-              {((impliedPct(opt, realBets, market.options)) * 100).toFixed(1)}%
+            <span className="text-xs font-mono">
+              <span className="opacity-60">{winProbPct(opt).toFixed(0)}%</span>{" "}
+              <span className="text-amber-400 font-bold">{multiplierFor(opt).toFixed(2)}x</span>
             </span>
           </button>
         ))}
@@ -296,8 +287,9 @@ function BetPanel({
           {quickAmounts.map((q) => (
             <button
               key={q}
-              onClick={() => setAmount(q)}
-              className={`px-2.5 py-1 rounded-md text-xs font-mono font-semibold transition-colors border ${
+              onClick={() => { setAmount(q); setConfirming(false); }}
+              disabled={q > myBalance}
+              className={`px-2.5 py-1 rounded-md text-xs font-mono font-semibold transition-colors border disabled:opacity-30 ${
                 amount === q
                   ? "bg-primary text-primary-foreground border-primary"
                   : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground bg-card"
@@ -311,7 +303,10 @@ function BetPanel({
             min={10}
             max={myBalance}
             value={amount}
-            onChange={(e) => setAmount(Math.max(10, Math.min(myBalance, Number(e.target.value))))}
+            onChange={(e) => {
+              setAmount(Math.max(10, Math.min(myBalance, Math.floor(Number(e.target.value)) || 10)));
+              setConfirming(false);
+            }}
             className="h-7 w-20 text-xs font-mono"
           />
         </div>
@@ -320,24 +315,46 @@ function BetPanel({
         </p>
       </div>
 
-      {/* Payout preview */}
+      {/* Payout preview — exact, not an estimate: the multiplier is fixed */}
       {selected && amount >= 10 && (
         <div className="flex items-center justify-between rounded-lg bg-muted/60 px-3 py-2 text-xs">
-          <span className="text-muted-foreground">Est. payout if win</span>
-          <span className={`font-mono font-bold flex items-center gap-1 ${profit >= 0 ? "text-amber-400" : "text-red-400"}`}>
-            {estPayout} <Coins className="h-3 w-3" /> (+{profit})
+          <span className="text-muted-foreground">Pays if it wins</span>
+          <span className="font-mono font-bold flex items-center gap-1 text-amber-400">
+            {payout} <Coins className="h-3 w-3" /> (+{profit})
           </span>
         </div>
       )}
 
-      <Button
-        onClick={handleBet}
-        disabled={placing || amount < 10 || amount > myBalance || !selectedOption}
-        className="w-full font-bold bg-yellow-400 hover:bg-yellow-500 text-black border-0"
-      >
-        {placing ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <Coins className="h-4 w-4 mr-2" />}
-        {placing ? "Placing..." : `Bet ${amount} coins`}
-      </Button>
+      {/* Two-step confirm: the bet is final, so a mistimed tap must not place it */}
+      {confirming ? (
+        <div className="space-y-2">
+          <p className="text-[11px] text-center text-amber-400 font-medium">
+            Final — {amount} coins on {stripEmojis(selected?.label ?? "")}. You can&apos;t change or cancel this.
+          </p>
+          <div className="flex gap-2">
+            <Button variant="outline" className="flex-1" onClick={() => setConfirming(false)} disabled={placing}>
+              Back
+            </Button>
+            <Button
+              onClick={handleBet}
+              disabled={placing}
+              className="flex-1 font-bold bg-yellow-400 hover:bg-yellow-500 text-black border-0"
+            >
+              {placing ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
+              {placing ? "Placing..." : "Confirm"}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <Button
+          onClick={() => setConfirming(true)}
+          disabled={amount < 10 || amount > myBalance || !selectedOption}
+          className="w-full font-bold bg-yellow-400 hover:bg-yellow-500 text-black border-0"
+        >
+          <Coins className="h-4 w-4 mr-2" />
+          {`Bet ${amount} coins`}
+        </Button>
+      )}
     </div>
   );
 }
@@ -347,21 +364,19 @@ function BetPanel({
 function MarketCard({
   market,
   myBalance,
-  onResolved,
+  myBet,
   isAdmin,
-  tbaRankings,
 }: {
   market: Market;
   myBalance: number;
-  onResolved: () => void;
+  myBet?: MyBet;
   isAdmin: boolean;
-  hasBet?: boolean;
-  tbaRankings?: Record<number, number>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [resolveOpen, setResolveOpen] = useState(false);
   const [resolveOption, setResolveOption] = useState(market.options[0]?.id ?? "");
 
+  // Only used for the "N coins wagered" line — payouts no longer depend on it.
   const poolDataLive = useQuery(api.betting.getMarketPool, { marketId: market._id });
   const poolData = useCached(poolDataLive, `betting_pool_${market._id}`);
   const realBets: Record<string, number> = poolData ?? {};
@@ -370,7 +385,6 @@ function MarketCard({
   const lockMarket = useAdminMutation(api.betting.lockMarket);
   const unlockMarket = useAdminMutation(api.betting.unlockMarket);
 
-  const TypeIcon = TYPE_ICONS[market.type];
   const sc = STATUS_CONFIG[market.status];
   const StatusIcon = sc.icon;
 
@@ -379,10 +393,9 @@ function MarketCard({
   const handleResolve = async () => {
     try {
       const result = await resolveMarket({ marketId: market._id, resolvedOptionId: resolveOption });
-      const r = result as { settledBets: number; totalPool: number };
-      toast.success(`Market resolved! ${r.settledBets} bets settled.`);
+      const r = result as { settledBets: number; totalPaid: number };
+      toast.success(`Market resolved — ${r.settledBets} bets settled, ${r.totalPaid} coins paid out.`);
       setResolveOpen(false);
-      onResolved();
     } catch (e: unknown) {
       toast.error((e as Error).message ?? "Failed to resolve");
     }
@@ -390,10 +403,13 @@ function MarketCard({
 
   if (market.status === "cancelled") return null;
 
+  const myOption = myBet ? market.options.find((o) => o.id === myBet.optionId) : undefined;
+
   return (
     <>
       <div className={`rounded-2xl border bg-card transition-all duration-200 overflow-hidden ${
         market.status === "resolved" ? "border-border/50 opacity-80" :
+        myBet ? "border-amber-400/40" :
         "border-border hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5"
       }`}>
         {/* Card header */}
@@ -402,7 +418,7 @@ function MarketCard({
           onClick={() => setExpanded((e) => !e)}
         >
           <div className="h-9 w-9 rounded-xl bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
-            <TypeIcon className="h-4 w-4 text-primary" />
+            <Swords className="h-4 w-4 text-primary" />
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
@@ -411,6 +427,12 @@ function MarketCard({
                 <StatusIcon className="h-2.5 w-2.5" />
                 {sc.label}
               </span>
+              {myBet && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border border-amber-400/40 bg-amber-400/10 text-amber-400">
+                  <Lock className="h-2.5 w-2.5" />
+                  Bet placed
+                </span>
+              )}
             </div>
             {market.description && (
               <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
@@ -423,23 +445,12 @@ function MarketCard({
                   <Coins className="h-3 w-3" /> {formatCoins(totalRealBets)} wagered
                 </span>
               )}
-              {market.matchNumber && <span>Match #{market.matchNumber}</span>}
-              {market.matchNumbers && market.matchNumbers.length > 0 && (
-                <span className="flex items-center gap-1 flex-wrap">
-                  {market.matchNumbers.map((n) => (
-                    <span key={n} className="px-1.5 py-0 rounded bg-primary/10 text-primary border border-primary/20 font-semibold">
-                      #{n}
-                    </span>
-                  ))}
+              {market.matchNumber !== undefined && <span>Match #{market.matchNumber}</span>}
+              {myBet && myOption && (
+                <span className="text-amber-400 font-semibold">
+                  You: {formatCoins(myBet.amount)} on {stripEmojis(myOption.label)}
                 </span>
               )}
-              {market.teamNumber && <span>Team {market.teamNumber}</span>}
-              {market.targetScope && (
-                <span className="px-1.5 py-0 rounded bg-muted border border-border font-semibold capitalize">
-                  {market.targetScope === "match" ? "Anyone" : market.targetScope}
-                </span>
-              )}
-              {market.threshold !== undefined && <span>Threshold: {market.threshold}</span>}
             </div>
           </div>
           <div className="shrink-0 mt-1">
@@ -447,43 +458,48 @@ function MarketCard({
           </div>
         </button>
 
-
-
-        {/* Collapsed prob bar preview */}
+        {/* Collapsed odds preview */}
         {!expanded && (
           <div className="px-4 pb-3">
-            <ProbBar options={market.options} realBets={realBets} resolvedOptionId={market.resolvedOptionId} />
+            <ProbBar options={market.options} resolvedOptionId={market.resolvedOptionId} />
           </div>
         )}
 
         {/* Expanded content */}
         {expanded && (
           <div className="px-4 pb-4 space-y-4 border-t border-border/40 pt-4">
-            <ProbBar options={market.options} realBets={realBets} resolvedOptionId={market.resolvedOptionId} />
+            <ProbBar options={market.options} resolvedOptionId={market.resolvedOptionId} />
 
-            {/* Live pool breakdown */}
+            {/* Fixed odds per side. These never move, so this is a fact about the
+                market rather than a live pool readout. */}
             <div className="grid grid-cols-2 gap-2">
               {market.options.map((opt) => (
                 <div key={opt.id} className="rounded-xl bg-muted/60 p-3 space-y-1">
-                  <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider"><AllianceLabel label={opt.label} /></p>
-                  <p className="text-sm font-mono font-bold flex items-center gap-1">
-                    {formatCoins(opt.seedPool + (realBets[opt.id] ?? 0))} <Coins className="h-3 w-3 text-amber-400" />
+                  <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">
+                    <AllianceLabel label={opt.label} />
+                  </p>
+                  <p className="text-sm font-mono font-bold text-amber-400">
+                    {multiplierFor(opt).toFixed(2)}x
                   </p>
                   <p className="text-[10px] text-muted-foreground">
-                    {formatCoins(realBets[opt.id] ?? 0)} real  -  {formatCoins(opt.seedPool)} seed
+                    {winProbPct(opt).toFixed(0)}% to win &middot; {formatCoins(realBets[opt.id] ?? 0)} wagered
                   </p>
                 </div>
               ))}
             </div>
 
-            {/* Bet panel */}
+            {/* Bet panel — read-only once the scout has a bet on this match */}
             {market.status === "open" && (
-              <BetPanel
-                market={market}
-                realBets={realBets}
-                myBalance={myBalance}
-                onBetPlaced={() => {}}
-              />
+              <BetPanel market={market} myBalance={myBalance} myBet={myBet} />
+            )}
+
+            {market.status === "locked" && !myBet && (
+              <p className="text-xs text-muted-foreground text-center py-2">
+                Betting is closed for this match.
+              </p>
+            )}
+            {market.status === "locked" && myBet && (
+              <BetPanel market={market} myBalance={myBalance} myBet={myBet} />
             )}
 
             {/* Resolved outcome */}
@@ -524,16 +540,9 @@ function MarketCard({
       <Dialog open={resolveOpen} onOpenChange={setResolveOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Resolve Market</DialogTitle>
+            <DialogTitle>Which alliance won?</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">{market.title}</p>
-          {market.type === "team_top_rank" && market.teamNumber !== undefined && (
-            <p className="text-xs text-amber-400 font-medium">
-              {tbaRankings?.[market.teamNumber] !== undefined
-                ? `Team ${market.teamNumber} is currently ranked #${tbaRankings[market.teamNumber]}.`
-                : `No live rank found for Team ${market.teamNumber} yet.`}
-            </p>
-          )}
           <div className="space-y-2 py-2">
             {market.options.map((opt) => (
               <button
@@ -562,801 +571,7 @@ function MarketCard({
   );
 }
 
-// -- Create Market Panel -------------------------------------------------------
-
-
-/** Custom multi-select dropdown for picking matches (checkboxes). */
-function MatchMultiSelect({
-  options,
-  selected,
-  onChange,
-}: {
-  options: { value: string; label: string }[];
-  selected: Set<string>;
-  onChange: (next: Set<string>) => void;
-}) {
-  const [open, setOpen] = useState(false);
-
-  function toggle(val: string) {
-    const next = new Set(selected);
-    if (next.has(val)) next.delete(val);
-    else next.add(val);
-    onChange(next);
-  }
-
-  return (
-    <div className="relative flex-1">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="w-full h-8 flex items-center justify-between rounded-md border border-input bg-background px-3 text-sm ring-offset-background hover:bg-accent hover:text-accent-foreground"
-      >
-        <span className="truncate text-left">
-          {selected.size === 0
-            ? "Select matches..."
-            : `${selected.size} match${selected.size !== 1 ? "es" : ""} selected`}
-        </span>
-        <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
-      {open && (
-        <>
-          {/* Backdrop */}
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute z-50 mt-1 w-full max-h-52 overflow-y-auto rounded-lg border border-border bg-popover shadow-lg">
-            {options.length === 0 && (
-              <p className="px-3 py-2 text-xs text-muted-foreground">No matches available</p>
-            )}
-            {options.map((opt) => (
-              <label
-                key={opt.value}
-                className="flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-accent text-sm"
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.has(opt.value)}
-                  onChange={() => toggle(opt.value)}
-                  className="rounded border-border"
-                />
-                <span className="truncate">{opt.label}</span>
-              </label>
-            ))}
-            {options.length > 0 && (
-              <div className="flex gap-2 border-t border-border/40 px-3 py-1.5">
-                <button
-                  type="button"
-                  className="text-[10px] text-primary font-semibold hover:underline"
-                  onClick={() => onChange(new Set(options.map((o) => o.value)))}
-                >
-                  Select All
-                </button>
-                <button
-                  type="button"
-                  className="text-[10px] text-muted-foreground font-semibold hover:underline"
-                  onClick={() => onChange(new Set())}
-                >
-                  Clear
-                </button>
-              </div>
-            )}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function CreateMarketPanel({
-  eventKey,
-  tbaMatches,
-  onCreated,
-}: {
-  eventKey: string;
-  tbaMatches: TBAMatch[];
-  onCreated: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [type, setType] = useState<MarketType>("match_winner");
-  const [matchNum, setMatchNum] = useState("");
-  const [selectedMatchKeys, setSelectedMatchKeys] = useState<Set<string>>(new Set());
-  const [teamNum, setTeamNum] = useState("");
-  const [alliance, setAlliance] = useState<"red" | "blue">("red");
-  const [targetScope, setTargetScope] = useState<"team" | "alliance" | "match">("team");
-  const [dataSource, setDataSource] = useState<"scouting" | "tba">("scouting");
-  const [tbaField, setTbaField] = useState<string>("");
-  const [threshold, setThreshold] = useState("");
-  const [minCount, setMinCount] = useState("");
-  const [selectedTemplateId, setSelectedTemplateId] = useState("");
-  const [selectedFieldId, setSelectedFieldId] = useState("");
-  const [targetValue, setTargetValue] = useState("");
-  const [customTitle, setCustomTitle] = useState("");
-  const [creating, setCreating] = useState(false);
-
-  const templatesLive = useQuery(api.forms.listActiveTemplates);
-  const templates = useCached(templatesLive, "active_templates");
-  const createMarket = useAdminMutation(api.betting.createMarket);
-
-  const isMultiMatch = type === "multi_match_numeric" || type === "multi_match_count";
-  // Event-outcome markets (final rank, alliance selection, playoff depth)
-  // aren't tied to any one match, so they skip the whole match/team-from-match
-  // machinery below and just take a free-typed team number.
-  const isEventWide = type === "team_top_rank" || type === "alliance_selection" || type === "elimination_advance";
-
-  // Match options from TBA  -  show all matches, marking played ones
-  const sortedMatches = [...tbaMatches].sort((a, b) => {
-    const levelOrder: Record<string, number> = { qm: 0, ef: 1, qf: 2, sf: 3, f: 4 };
-    const la = levelOrder[a.comp_level] ?? 5;
-    const lb = levelOrder[b.comp_level] ?? 5;
-    if (la !== lb) return la - lb;
-    if (a.set_number !== b.set_number) return a.set_number - b.set_number;
-    return a.match_number - b.match_number;
-  });
-  const matchOpts = sortedMatches.map((m) => ({
-    value: m.key,
-    label: isPlayed(m) ? `${matchLabel(m)} (played)` : matchLabel(m),
-  }));
-  const selectedMatch = tbaMatches.find((m) => m.key === matchNum);
-
-  // Selected TBA match objects for multi-match
-  const selectedMultiMatches = useMemo(
-    () => tbaMatches.filter((m) => selectedMatchKeys.has(m.key)),
-    [tbaMatches, selectedMatchKeys],
-  );
-
-  // Teams in the selected single match
-  const matchTeams: string[] = selectedMatch
-    ? [
-        ...selectedMatch.alliances.red.team_keys,
-        ...selectedMatch.alliances.blue.team_keys,
-      ].map((k) => k.replace(/^frc/, ""))
-    : [];
-
-  // Teams that appear in ALL selected multi-matches (intersection)
-  const multiMatchTeams: string[] = useMemo(() => {
-    if (selectedMultiMatches.length === 0) return [];
-    const teamSets = selectedMultiMatches.map((m) => {
-      const allKeys = [...m.alliances.red.team_keys, ...m.alliances.blue.team_keys];
-      return new Set(allKeys.map((k) => k.replace(/^frc/, "")));
-    });
-    // Intersect all sets
-    const first = teamSets[0];
-    return [...first].filter((t) => teamSets.every((s) => s.has(t)));
-  }, [selectedMultiMatches]);
-
-  // Labels for selected multi-matches (for title)
-  const multiMatchLabels = selectedMultiMatches.map((m) => matchLabel(m)).join(", ");
-
-  // Match numbers for selected multi-matches
-  const multiMatchNumbers = selectedMultiMatches.map((m) => m.match_number);
-
-
-  // Selected template's bettable fields  -  filtered by the current market type
-  const selectedTemplate = templates?.find((t) => t._id === selectedTemplateId);
-  const allowedFieldTypes: string[] =
-    type === "team_field_bool"       ? ["checkbox"] :
-    type === "team_field_numeric"    ? ["number", "counter"] :
-    type === "team_field_select"     ? ["select"] :
-    type === "multi_match_count"     ? ["checkbox"] :
-    type === "multi_match_numeric"   ? ["number", "counter"] :
-    ["checkbox", "number", "counter", "select"];
-  const bettableFields = (selectedTemplate?.fields as FormField[] | undefined)
-    ?.filter((f) => allowedFieldTypes.includes(f.type));
-  const selectedField = bettableFields?.find((f) => f.id === selectedFieldId);
-
-  // TBA stat options for multi_match_numeric
-  const TBA_STAT_OPTIONS = [
-    { id: "_tba_alliance_score", label: "Alliance Score" },
-    { id: "_tba_point_diff", label: "Point Differential" },
-  ];
-  const selectedTbaStat = TBA_STAT_OPTIONS.find((s) => s.id === tbaField);
-
-  // Does this type need a scouting form?
-  const useTbaSource = type === "multi_match_numeric" && dataSource === "tba";
-  const needsForm = (type === "team_field_bool" || type === "team_field_numeric"
-    || type === "team_field_select" || type === "multi_match_numeric" || type === "multi_match_count")
-    && !useTbaSource;
-
-  // Does this type need a team selector?
-  const needsTeamOrScope = type === "team_field_bool" || type === "team_field_numeric"
-    || type === "team_field_select" || isMultiMatch;
-
-  function buildTitle(): string {
-    if (customTitle.trim()) return customTitle.trim();
-    const mStr = selectedMatch ? matchLabel(selectedMatch) : "";
-    const scopeStr =
-      targetScope === "team" ? `Team ${teamNum}` :
-      targetScope === "alliance" ? `${alliance === "red" ? "Red" : "Blue"} Alliance` :
-      "Any Team";
-    const fieldStr = useTbaSource
-      ? (selectedTbaStat?.label ?? "TBA Stat")
-      : (selectedField?.label ?? "Field");
-    switch (type) {
-      case "match_winner":       return `${mStr}  -  Match Winner`;
-      case "alliance_score_ou":  return `${mStr} ${alliance.toUpperCase()} Score ${threshold ? `Over/Under ${threshold}` : "O/U"}`;
-      case "point_differential": return `${mStr} Point Diff ${threshold ? `Over/Under ${threshold}` : "O/U"}`;
-      case "team_field_bool":    return `${mStr} Team ${teamNum}  -  ${fieldStr} Yes/No`;
-      case "team_field_numeric": return `${mStr} Team ${teamNum}  -  ${fieldStr} Over/Under ${threshold ?? "?"}`;
-      case "team_field_select":  return `${mStr} Team ${teamNum}  -  ${fieldStr} = "${targetValue}"`;
-      case "multi_match_numeric":
-        return `${scopeStr}  -  Total ${fieldStr} O/U ${threshold ?? "?"} across ${multiMatchLabels || "?"}`;
-      case "multi_match_count":
-        return `${scopeStr}  -  ${fieldStr} in >=${minCount || "?"} of ${multiMatchLabels || "?"}`;
-      case "team_top_rank":
-        return `Team ${teamNum || "?"}  -  Finish Top ${threshold || "?"} in Quals?`;
-      case "alliance_selection":
-        return `Team ${teamNum || "?"}  -  Gets Alliance-Picked?`;
-      case "elimination_advance":
-        return `Team ${teamNum || "?"}  -  Reaches ${targetValue || "?"}?`;
-      default: return "Custom Market";
-    }
-  }
-
-  function buildOptions(): BetOption[] {
-    switch (type) {
-      case "match_winner": {
-        const m = selectedMatch;
-        const redPct = 50; const bluePct = 50;
-        void m;
-        return [
-          { id: "red",  label: "Red Alliance",  seedPool: redPct },
-          { id: "blue", label: "Blue Alliance", seedPool: bluePct },
-        ];
-      }
-      case "alliance_score_ou":
-      case "point_differential":
-        return [
-          { id: "over",  label: "Over",  seedPool: 50 },
-          { id: "under", label: "Under", seedPool: 50 },
-        ];
-      case "team_field_bool":
-        return [
-          { id: "yes", label: "Yes", seedPool: 50 },
-          { id: "no",  label: "No",  seedPool: 50 },
-        ];
-      case "team_field_numeric":
-      case "multi_match_numeric":
-        return [
-          { id: "over",  label: "Over",  seedPool: 50 },
-          { id: "under", label: "Under", seedPool: 50 },
-        ];
-      case "multi_match_count":
-        return [
-          { id: "over",  label: "Over",  seedPool: 50 },
-          { id: "under", label: "Under", seedPool: 50 },
-        ];
-      case "team_field_select": {
-        const opts = selectedField?.options ?? [];
-        return opts.length > 0
-          ? opts.map((o) => ({ id: o, label: o, seedPool: Math.floor(100 / opts.length) }))
-          : [{ id: "yes", label: "Yes", seedPool: 50 }, { id: "no", label: "No", seedPool: 50 }];
-      }
-      case "team_top_rank":
-      case "alliance_selection":
-      case "elimination_advance":
-        return [
-          { id: "yes", label: "Yes", seedPool: 50 },
-          { id: "no",  label: "No",  seedPool: 50 },
-        ];
-      default: return [];
-    }
-  }
-
-  async function handleCreate() {
-    const options = buildOptions();
-    if (options.length === 0) { toast.error("No options defined"); return; }
-    setCreating(true);
-    try {
-      await createMarket({
-        eventKey,
-        title:       buildTitle(),
-        type,
-        options,
-        ...(selectedMatch && !isMultiMatch ? { matchNumber: selectedMatch.match_number } : {}),
-        ...(isMultiMatch && multiMatchNumbers.length > 0
-          ? { matchNumbers: multiMatchNumbers }
-          : {}),
-        ...((needsTeamOrScope && targetScope === "team" && teamNum) || (isEventWide && teamNum)
-          ? { teamNumber: Number(teamNum) } : {}),
-        ...(type === "alliance_score_ou" || (isMultiMatch && targetScope === "alliance") ? { alliance } : {}),
-        ...(threshold ? { threshold: Number(threshold) } : {}),
-        ...(targetValue ? { targetValue } : {}),
-        ...(minCount ? { minCount: Number(minCount) } : {}),
-        ...(isMultiMatch ? { targetScope } : {}),
-        ...(selectedTemplateId && !useTbaSource ? { templateId: selectedTemplateId as Id<"formTemplates"> } : {}),
-        ...(useTbaSource && tbaField
-          ? { fieldId: tbaField, fieldLabel: selectedTbaStat?.label }
-          : selectedFieldId ? { fieldId: selectedFieldId, fieldLabel: selectedField?.label } : {}),
-      });
-      toast.success("Market created!");
-      setOpen(false);
-      setCustomTitle("");
-      setMatchNum("");
-      setSelectedMatchKeys(new Set());
-      setTeamNum("");
-      setThreshold("");
-      setMinCount("");
-      setTargetValue("");
-      onCreated();
-    } catch (e: unknown) {
-      toast.error((e as Error).message ?? "Failed to create market");
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  // Disable create button validation
-  const createDisabled = creating
-    || (needsForm && !selectedFieldId)
-    || (useTbaSource && !tbaField)
-    || (isMultiMatch && selectedMatchKeys.size < 2)
-    || (isEventWide && !teamNum)
-    || (type === "team_top_rank" && !threshold)
-    || (type === "elimination_advance" && !targetValue);
-
-  return (
-    <>
-      <Button
-        onClick={() => setOpen(true)}
-        variant="outline"
-        className="gap-2 border-primary/40 text-primary hover:bg-primary/10"
-      >
-        <Plus className="h-4 w-4" />
-        Create Market
-      </Button>
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-lg overflow-y-auto max-h-[85vh]">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Zap className="h-5 w-5 text-primary" />
-              Create Betting Market
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-3 py-1">
-
-            {/* Market Type  -  inline label + select side by side */}
-            <div className="flex items-center gap-3">
-              <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Market Type</Label>
-              <Select value={type} onValueChange={(v) => { setType(v as MarketType); setSelectedFieldId(""); setTeamNum(""); setSelectedMatchKeys(new Set()); setDataSource("scouting"); setTbaField(""); }}>
-                <SelectTrigger className="flex-1 h-8 text-sm [&>span]:truncate">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="match_winner">Match Winner</SelectItem>
-                  <SelectItem value="alliance_score_ou">Alliance Score O/U</SelectItem>
-                  <SelectItem value="point_differential">Point Differential</SelectItem>
-                  <SelectItem value="team_field_bool">Team Checkbox (Yes/No)</SelectItem>
-                  <SelectItem value="team_field_numeric">Team Numeric O/U</SelectItem>
-                  <SelectItem value="team_field_select">Team Select Field</SelectItem>
-                  <SelectItem value="multi_match_numeric">Multi-Match Numeric O/U</SelectItem>
-                  <SelectItem value="multi_match_count">Multi-Match Boolean Count</SelectItem>
-                  <SelectItem value="team_top_rank">Top-N Qual Rank</SelectItem>
-                  <SelectItem value="alliance_selection">Alliance Selection</SelectItem>
-                  <SelectItem value="elimination_advance">Playoff Advance</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="border-t border-border/40" />
-
-            {/* Match (single)  -  for non-multi-match, non-event-wide types */}
-            {!isMultiMatch && !isEventWide && (
-              <div className="flex items-center gap-3">
-                <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Match</Label>
-                <Select value={matchNum} onValueChange={(v) => { setMatchNum(v ?? ""); setTeamNum(""); }}>
-                  <SelectTrigger className="flex-1 h-8 text-sm [&>span]:truncate">
-                    <SelectValue placeholder="Select match...">
-                      {selectedMatch ? (isPlayed(selectedMatch) ? `${matchLabel(selectedMatch)} (played)` : matchLabel(selectedMatch)) : undefined}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {matchOpts.map((m) => (
-                      <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-
-            {/* Event-wide team number  -  for top-N rank / alliance selection / elimination advance */}
-            {isEventWide && (
-              <div className="flex items-center gap-3">
-                <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Team #</Label>
-                <Input
-                  type="number"
-                  className="flex-1 h-8 text-sm"
-                  placeholder="e.g. 4099"
-                  value={teamNum}
-                  onChange={(e) => setTeamNum(e.target.value)}
-                />
-              </div>
-            )}
-
-            {/* Top-N cutoff  -  for team_top_rank */}
-            {type === "team_top_rank" && (
-              <div className="flex items-center gap-3">
-                <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Top N</Label>
-                <Input
-                  type="number"
-                  className="flex-1 h-8 text-sm"
-                  placeholder="e.g. 8"
-                  value={threshold}
-                  onChange={(e) => setThreshold(e.target.value)}
-                />
-              </div>
-            )}
-
-            {/* Playoff stage  -  for elimination_advance */}
-            {type === "elimination_advance" && (
-              <div className="flex items-center gap-3">
-                <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Reaches</Label>
-                <Select value={targetValue} onValueChange={(v) => setTargetValue(v ?? "")}>
-                  <SelectTrigger className="flex-1 h-8 text-sm [&>span]:truncate">
-                    <SelectValue placeholder="Select stage..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="quarterfinals">Quarterfinals</SelectItem>
-                    <SelectItem value="semifinals">Semifinals</SelectItem>
-                    <SelectItem value="finals">Finals</SelectItem>
-                    <SelectItem value="win">Wins It All</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-
-            {/* Multi-match selector  -  checkbox dropdown */}
-            {isMultiMatch && (
-              <div className="flex items-center gap-3">
-                <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Matches</Label>
-                <MatchMultiSelect
-                  options={matchOpts}
-                  selected={selectedMatchKeys}
-                  onChange={(next) => { setSelectedMatchKeys(next); setTeamNum(""); }}
-                />
-              </div>
-            )}
-
-            {/* Show selected match tags */}
-            {isMultiMatch && selectedMultiMatches.length > 0 && (
-              <div className="flex flex-wrap gap-1 pl-[calc(6rem+0.75rem)]">
-                {selectedMultiMatches.map((m) => (
-                  <span key={m.key} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-primary/10 text-primary border border-primary/20">
-                    {matchLabel(m)}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const next = new Set(selectedMatchKeys);
-                        next.delete(m.key);
-                        setSelectedMatchKeys(next);
-                      }}
-                      className="hover:text-red-400"
-                    >
-                      <X className="h-2.5 w-2.5" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-
-            {/* Alliance toggle  -  for alliance_score_ou */}
-            {type === "alliance_score_ou" && (
-              <div className="flex items-center gap-3">
-                <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Alliance</Label>
-                <div className="flex rounded-lg overflow-hidden border border-border">
-                  {(["red", "blue"] as const).map((a) => (
-                    <button
-                      key={a}
-                      type="button"
-                      onClick={() => setAlliance(a)}
-                      className={`px-4 py-1.5 text-sm font-semibold transition-colors ${
-                        alliance === a
-                          ? a === "red" ? "bg-red-500 text-white" : "bg-blue-500 text-white"
-                          : "bg-background text-muted-foreground hover:bg-muted"
-                      }`}
-                    >
-                      {a === "red" ? "Red" : "Blue"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Target scope toggle  -  for multi-match types */}
-            {isMultiMatch && (
-              <div className="flex items-center gap-3">
-                <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Scope</Label>
-                <div className="flex rounded-lg overflow-hidden border border-border">
-                  {(["team", "alliance", "match"] as const).map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => { setTargetScope(s); setTeamNum(""); }}
-                      className={`px-3 py-1.5 text-sm font-semibold transition-colors ${
-                        targetScope === s
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-background text-muted-foreground hover:bg-muted"
-                      }`}
-                    >
-                      {s === "team" ? "Team" : s === "alliance" ? "Alliance" : "Anyone"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Alliance selector  -  shown for multi-match alliance scope */}
-            {isMultiMatch && targetScope === "alliance" && (
-              <div className="flex items-center gap-3">
-                <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Alliance</Label>
-                <div className="flex rounded-lg overflow-hidden border border-border">
-                  {(["red", "blue"] as const).map((a) => (
-                    <button
-                      key={a}
-                      type="button"
-                      onClick={() => setAlliance(a)}
-                      className={`px-4 py-1.5 text-sm font-semibold transition-colors ${
-                        alliance === a
-                          ? a === "red" ? "bg-red-500 text-white" : "bg-blue-500 text-white"
-                          : "bg-background text-muted-foreground hover:bg-muted"
-                      }`}
-                    >
-                      {a === "red" ? "Red" : "Blue"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Team dropdown  -  for single-match team types (uses match teams) */}
-            {(type === "team_field_bool" || type === "team_field_numeric" || type === "team_field_select") && (
-              <div className="flex items-center gap-3">
-                <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Team #</Label>
-                <Select
-                  value={teamNum}
-                  onValueChange={(v) => setTeamNum(v ?? "")}
-                  disabled={matchTeams.length === 0}
-                >
-                  <SelectTrigger className="flex-1 h-8 text-sm [&>span]:truncate">
-                    <SelectValue placeholder={matchTeams.length === 0 ? "Select a match first..." : "Select team..."} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {matchTeams.map((t) => (
-                      <SelectItem key={t} value={t}>{t}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-
-            {/* Team dropdown  -  for multi-match team scope (uses intersection of teams) */}
-            {isMultiMatch && targetScope === "team" && (
-              <div className="flex items-center gap-3">
-                <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Team #</Label>
-                <Select
-                  value={teamNum}
-                  onValueChange={(v) => setTeamNum(v ?? "")}
-                  disabled={multiMatchTeams.length === 0}
-                >
-                  <SelectTrigger className="flex-1 h-8 text-sm [&>span]:truncate">
-                    <SelectValue placeholder={
-                      selectedMatchKeys.size < 2 ? "Select >=2 matches first..." :
-                      multiMatchTeams.length === 0 ? "No teams in all matches" :
-                      "Select team..."
-                    } />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {multiMatchTeams.map((t) => (
-                      <SelectItem key={t} value={t}>{t}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-
-            {/* Warning if no teams appear in all selected matches */}
-            {isMultiMatch && targetScope === "team" && selectedMatchKeys.size >= 2 && multiMatchTeams.length === 0 && (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-xs font-medium ml-[calc(6rem+0.75rem)]">
-                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                No team appears in all selected matches. Try different matches or use Alliance/Anyone scope.
-              </div>
-            )}
-
-            {(type === "alliance_score_ou" || type === "point_differential" || type === "team_field_numeric" || type === "multi_match_numeric") && (
-              <div className="flex items-center gap-3">
-                <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Threshold</Label>
-                <Input
-                  type="number"
-                  className="flex-1 h-8 text-sm"
-                  placeholder={type === "multi_match_numeric" ? "e.g. 15 (combined total)" : "e.g. 120"}
-                  value={threshold}
-                  onChange={(e) => setThreshold(e.target.value)}
-                />
-              </div>
-            )}
-
-            {/* Data source toggle  -  for multi_match_numeric */}
-            {type === "multi_match_numeric" && (
-              <div className="flex items-center gap-3">
-                <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Source</Label>
-                <div className="flex rounded-lg overflow-hidden border border-border">
-                  {(["scouting", "tba"] as const).map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => { setDataSource(s); setSelectedFieldId(""); setTbaField(""); setSelectedTemplateId(""); }}
-                      className={`px-3 py-1.5 text-sm font-semibold transition-colors ${
-                        dataSource === s
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-background text-muted-foreground hover:bg-muted"
-                      }`}
-                    >
-                      {s === "scouting" ? "Scouting Form" : "TBA Stats"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* TBA stat picker  -  shown when multi_match_numeric + tba source */}
-            {useTbaSource && (
-              <div className="flex items-center gap-3">
-                <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">TBA Stat</Label>
-                <Select value={tbaField} onValueChange={(v) => setTbaField(v ?? "")}>
-                  <SelectTrigger className="flex-1 h-8 text-sm [&>span]:truncate">
-                    <SelectValue placeholder="Select stat...">
-                      {selectedTbaStat ? selectedTbaStat.label : undefined}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {TBA_STAT_OPTIONS.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-
-            {/* Scouting form + field */}
-            {needsForm && (
-              <>
-                <div className="flex items-center gap-3">
-                  <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Form</Label>
-                  <Select value={selectedTemplateId} onValueChange={(v) => { setSelectedTemplateId(v ?? ""); setSelectedFieldId(""); }}>
-                    <SelectTrigger className="flex-1 h-8 text-sm [&>span]:truncate">
-                      <SelectValue placeholder="Select form...">
-                        {selectedTemplate ? selectedTemplate.name : undefined}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(templates ?? []).map((t) => (
-                        <SelectItem key={t._id} value={t._id}>{t.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {bettableFields && bettableFields.length > 0 && (
-                  <div className="flex items-center gap-3">
-                    <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Field</Label>
-                    <Select value={selectedFieldId} onValueChange={(v) => setSelectedFieldId(v ?? "")}>
-                      <SelectTrigger className="flex-1 h-8 text-sm [&>span]:truncate">
-                      <SelectValue placeholder="Select field...">
-                        {selectedField ? `${selectedField.label} (${selectedField.type})` : undefined}
-                      </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {bettableFields.map((f) => (
-                          <SelectItem key={f.id} value={f.id}>{f.label} <span className="text-muted-foreground">({f.type})</span></SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-                {selectedTemplateId && bettableFields && bettableFields.length === 0 && (
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-xs font-medium">
-                    <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                    This form has no compatible {allowedFieldTypes.join("/")} fields for this market type.
-                  </div>
-                )}
-              </>
-            )}
-
-            {/* Target value */}
-            {type === "team_field_select" && selectedField?.options && (
-              <div className="flex items-center gap-3">
-                <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Target</Label>
-                <Select value={targetValue} onValueChange={(v) => setTargetValue(v ?? "")}>
-                  <SelectTrigger className="flex-1 h-8 text-sm [&>span]:truncate">
-                    <SelectValue placeholder="Select value..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {selectedField.options.map((o) => (
-                      <SelectItem key={o} value={o}>{o}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-
-            {/* Min count  -  for multi_match_count */}
-            {type === "multi_match_count" && (
-              <div className="flex items-center gap-3">
-                <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Threshold</Label>
-                <Input
-                  type="number"
-                  className="flex-1 h-8 text-sm"
-                  placeholder={`e.g. 3 (of ${selectedMatchKeys.size || "?"} matches)`}
-                  value={minCount}
-                  onChange={(e) => setMinCount(e.target.value)}
-                />
-              </div>
-            )}
-
-            <div className="border-t border-border/40" />
-
-            {/* Custom title */}
-            <div className="flex items-center gap-3">
-              <Label className="shrink-0 w-24 text-right text-xs text-muted-foreground">Title</Label>
-              <Input
-                className="flex-1 h-8 text-sm"
-                placeholder={buildTitle()}
-                value={customTitle}
-                onChange={(e) => setCustomTitle(e.target.value)}
-              />
-            </div>
-
-            {/* Preview */}
-            <div className="rounded-xl bg-muted/40 border border-border/50 px-3 py-2.5 space-y-2">
-              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Preview</p>
-              <p className="text-sm font-medium leading-snug">{buildTitle()}</p>
-              <div className="flex gap-1.5 flex-wrap">
-                {buildOptions().map((o) => (
-                  <span key={o.id} className="px-2 py-0.5 rounded-full text-xs bg-primary/10 text-primary border border-primary/20">
-                    {o.label}
-                  </span>
-                ))}
-              </div>
-              {isMultiMatch && (
-                <div className="flex gap-1.5 flex-wrap mt-1">
-                  <span className="text-[10px] text-muted-foreground">
-                    Scope: {targetScope === "team" ? `Team ${teamNum || "?"}` : targetScope === "alliance" ? `${alliance} alliance` : "Anyone"}
-                    {"  -  "}{selectedMatchKeys.size} matches
-                  </span>
-                </div>
-              )}
-            </div>
-
-            <Button
-              onClick={handleCreate}
-              disabled={createDisabled}
-              className="w-full font-bold"
-            >
-              {creating ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
-              {creating ? "Creating..." : "Create Market"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-    </>
-  );
-}
-
 // -- Markets Tab ---------------------------------------------------------------
-
-const TYPE_FILTER_LABELS: Record<string, string> = {
-  all:                "All",
-  match_winner:       "Match Winner",
-  alliance_score_ou:  "Score",
-  point_differential: "Differential",
-  team_field_bool:    "Team Bool",
-  team_field_numeric: "Team Numeric",
-  team_field_select:  "Team Select",
-  multi_match_numeric: "Multi Numeric",
-  multi_match_count:    "Multi Bool",
-  team_top_rank:        "Top Rank",
-  alliance_selection:   "Alliance Pick",
-  elimination_advance:  "Playoff Advance",
-};
 
 function MarketsTab({
   eventKey,
@@ -1367,44 +582,40 @@ function MarketsTab({
   myBalance: number;
   isAdmin: boolean;
 }) {
-  const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<"all" | MarketStatus>("all");
   const [tbaMatches, setTbaMatches] = useState<TBAMatch[]>([]);
-  const [tbaRankings, setTbaRankings] = useState<Record<number, number>>({});
-  const [autoGenerating, setAutoGenerating] = useState(false);
-  const [didAutoGenerate, setDidAutoGenerate] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  // A ref, not state: this only latches the auto-generate effect so it fires
+  // once, and flipping state inside that effect would cascade a re-render.
+  const didAutoGenerate = useRef(false);
   const [wiping, setWiping] = useState(false);
 
   const marketsQuery = useQuery(api.betting.listMarkets, { eventKey });
   const marketsLive = useCached(marketsQuery, `betting_markets_${eventKey}`);
-  const batchCreateRandom = useAdminMutation(api.betting.batchCreateRandomMarkets);
+  const createMarkets = useAdminMutation(api.betting.batchCreateMatchWinnerMarkets);
   const clearAll = useAdminMutation(api.betting.clearAllMarkets);
 
   useEffect(() => {
     fetchTBAEventMatches(eventKey).then((m) => {
       if (m) setTbaMatches(m);
-    });
-    // Rank hint for team_top_rank markets — an admin resolving one shouldn't
-    // have to go check TBA by hand for something already fetchable here.
-    fetchTBAEventRankings(eventKey).then((data) => {
-      if (data && typeof data === "object" && "rankings" in data) {
-        const map: Record<number, number> = {};
-        for (const r of (data as { rankings: Array<{ team_key: string; rank: number }> }).rankings) {
-          map[Number(r.team_key.replace("frc", ""))] = r.rank;
-        }
-        setTbaRankings(map);
-      }
     }).catch(() => {});
   }, [eventKey]);
 
-  /** Shared helper: builds the match list with EPA-seeded win probabilities and predicted margin */
-  async function buildMatchList(matches: TBAMatch[]) {
+  /**
+   * Turn TBA matches into market seeds with Statbotics win probabilities.
+   *
+   * Summed EPA per alliance is the prediction: red's share of the total EPA is
+   * its win probability, which is what fixes the payout multipliers. A team
+   * missing from Statbotics falls back to 30 (roughly a rookie's EPA) so one
+   * unknown team can't skew a match to a false certainty.
+   */
+  async function buildMatchSeeds(matches: TBAMatch[]) {
     type SBTeamEvent = { team: number; epa?: { mean?: number; total?: { mean?: number } } };
     let sbTeams: SBTeamEvent[] = [];
     try {
       const raw = await fetchStatboticsEventTeams(eventKey);
       if (Array.isArray(raw)) sbTeams = raw as SBTeamEvent[];
-    } catch {}
+    } catch { /* offline or Statbotics down — every team falls back below */ }
 
     const epaMap: Record<number, number> = {};
     for (const t of sbTeams) {
@@ -1420,100 +631,47 @@ function MarketsTab({
       const redEpa  = redTeams.reduce((s, t) => s + (epaMap[t] ?? 30), 0);
       const blueEpa = blueTeams.reduce((s, t) => s + (epaMap[t] ?? 30), 0);
       const total   = redEpa + blueEpa || 1;
-      // Win probability seeds (1-99, summing to 100)
-      const rawRedPct  = redEpa / total;
-      const seedRed  = Math.max(1, Math.min(99, Math.round(rawRedPct * 100)));
-      const seedBlue = 100 - seedRed;
-      // Predicted margin: |redEPA - blueEPA|, rounded to nearest 5, min 5
-      const rawMargin = Math.abs(redEpa - blueEpa);
-      const predictedMargin = Math.max(5, Math.round(rawMargin / 5) * 5);
-      return { matchNumber: m.match_number, matchLabel: matchLabel(m), seedRed, seedBlue, predictedMargin };
+      const winRed  = Math.max(1, Math.min(99, Math.round((redEpa / total) * 100)));
+      return {
+        matchNumber: m.match_number,
+        matchLabel:  matchLabel(m),
+        winRed,
+        winBlue: 100 - winRed,
+      };
     });
   }
 
-  // Auto-generate markets the first time data arrives and there are none
+  async function generate(matches: TBAMatch[], label: string) {
+    setGenerating(true);
+    try {
+      if (matches.length === 0) {
+        toast.info("No matches to generate markets for");
+        return;
+      }
+      const seeds = await buildMatchSeeds(matches);
+      const { created } = await createMarkets({ eventKey, matches: seeds }) as { created: number };
+      if (created > 0) toast.success(`Created ${created} ${label}.`);
+      else toast.info("Every match already has a market.");
+    } catch (e: unknown) {
+      toast.error((e as Error).message ?? "Market generation failed");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  // First load at an event with no markets yet: seed them so scouts aren't
+  // staring at an empty page waiting for an admin to press a button.
   useEffect(() => {
-    if (
-      !isAdmin ||
-      didAutoGenerate ||
-      autoGenerating ||
-      marketsLive === undefined // still loading
-    ) return;
-    if (marketsLive.length > 0) return;
-
-    // Use all matches (played or not) for initial seeding
-    const all = tbaMatches.length > 0 ? tbaMatches : [];
-    if (all.length === 0) return; // no TBA data yet  -  wait
-
-    setDidAutoGenerate(true);
-    setAutoGenerating(true);
-    buildMatchList(all)
-      .then((list) => batchCreateRandom({ eventKey, limit: 4, matches: list }))
-      .then((r) => {
-        const { created } = r as { created: number };
-        if (created > 0) toast.success(`Auto-generated ${created} markets!`);
-      })
-      .catch(() => {})
-      .finally(() => setAutoGenerating(false));
+    if (!isAdmin || didAutoGenerate.current || generating || marketsLive === undefined) return;
+    if (marketsLive.length > 0 || tbaMatches.length === 0) return;
+    didAutoGenerate.current = true;
+    // Queued rather than called inline: generate() flips the `generating` flag
+    // as its first act, and doing that inside an effect body cascades a render.
+    // The ref above means this still runs exactly once.
+    const id = setTimeout(() => generate(tbaMatches, "markets"), 0);
+    return () => clearTimeout(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [marketsLive, tbaMatches, isAdmin]);
-
-  async function handleAutoGenerate() {
-    setAutoGenerating(true);
-    try {
-      const unplayed = tbaMatches.filter((m) => !isPlayed(m));
-      const matchList = await buildMatchList(unplayed);
-
-      if (matchList.length === 0) {
-        toast.info("No unplayed matches to generate markets for");
-        return;
-      }
-
-      const result = await batchCreateRandom({ eventKey, limit: 4, matches: matchList });
-      const { created } = result as { created: number };
-      toast.success(`Auto-generated ${created} new markets!`);
-    } catch (e: unknown) {
-      toast.error((e as Error).message ?? "Auto-generation failed");
-    } finally {
-      setAutoGenerating(false);
-    }
-  }
-
-  async function handleTestGenerate() {
-    setAutoGenerating(true);
-    try {
-      // Use ALL matches (including played) so you can test even post-event.
-      // If TBA returned nothing at all, fall back to 5 synthetic dummy matches.
-      const pool = tbaMatches;
-      if (pool.length === 0) {
-        // Synthetic dummy matches: just need matchNumber + matchLabel + seeds
-        const dummyList = [1, 2, 3, 4, 5].map((n) => ({
-          matchNumber:     n,
-          matchLabel:      `Q${n}`,
-          seedRed:         50,
-          seedBlue:        50,
-          predictedMargin: 15,
-        }));
-        const result = await batchCreateRandom({ eventKey, limit: 4, matches: dummyList });
-        const { created } = result as { created: number };
-        toast.success(`Test: generated ${created} dummy markets!`);
-        return;
-      }
-
-      const matchList = await buildMatchList(pool);
-      const result = await batchCreateRandom({ eventKey, limit: 4, matches: matchList });
-      const { created } = result as { created: number };
-      if (created > 0) {
-        toast.success(`Test: generated ${created} markets from all matches!`);
-      } else {
-        toast.info("All matches already have markets  -  nothing new to create.");
-      }
-    } catch (e: unknown) {
-      toast.error((e as Error).message ?? "Test generation failed");
-    } finally {
-      setAutoGenerating(false);
-    }
-  }
 
   async function handleWipeAll() {
     if (!window.confirm(
@@ -1529,7 +687,7 @@ function MarketsTab({
       toast.success(
         `Wiped ${result.marketsDeleted} markets, ${result.betsDeleted} bets. ${result.balancesReset} balances reset.`
       );
-      setDidAutoGenerate(false); // allow auto-generate to re-trigger
+      didAutoGenerate.current = false; // allow auto-generate to re-trigger
     } catch (e: unknown) {
       toast.error((e as Error).message ?? "Wipe failed");
     } finally {
@@ -1540,23 +698,29 @@ function MarketsTab({
   const markets = (marketsLive ?? []) as Market[];
   const myBetsQuery = useQuery(api.betting.listMyBets, { eventKey });
   const myBetsLive = useCached(myBetsQuery, `betting_my_bets_${eventKey}`);
-  const bettedMarketIds = new Set((myBetsLive ?? []).map((b) => b.marketId));
+
+  // marketId -> my bet on it. One bet per market, so a plain map is enough.
+  const myBetByMarket = useMemo(() => {
+    const map = new Map<string, MyBet>();
+    for (const b of (myBetsLive ?? []) as MyBet[]) map.set(b.marketId, b);
+    return map;
+  }, [myBetsLive]);
 
   const filtered = useMemo(() => {
     return markets
-      .filter((m) => typeFilter === "all" || m.type === typeFilter)
       .filter((m) => statusFilter === "all" || m.status === statusFilter)
       .sort((a, b) => {
-        // Open markets first, then by match number
         const statusOrder = { open: 0, locked: 1, resolved: 2, cancelled: 3 };
         if (a.status !== b.status) return statusOrder[a.status] - statusOrder[b.status];
         return (a.matchNumber ?? 9999) - (b.matchNumber ?? 9999);
       });
-  }, [markets, typeFilter, statusFilter]);
+  }, [markets, statusFilter]);
+
+  const unplayed = tbaMatches.filter((m) => !isPlayed(m));
 
   return (
     <div className="space-y-4">
-      {/* Admin toolbar  -  only visible to admins */}
+      {/* Admin toolbar — only visible to admins */}
       {isAdmin && (
         <div className="flex flex-wrap gap-2 items-center p-3 rounded-xl bg-primary/5 border border-primary/20">
           <span className="text-xs font-semibold text-primary/70 uppercase tracking-wider flex items-center gap-1.5">
@@ -1567,40 +731,34 @@ function MarketsTab({
               size="sm"
               variant="outline"
               className="gap-2 border-amber-400/40 text-amber-400 hover:bg-amber-400/10"
-              onClick={handleAutoGenerate}
-              disabled={autoGenerating || tbaMatches.filter((m) => !isPlayed(m)).length === 0}
+              onClick={() => generate(unplayed, "markets")}
+              disabled={generating || unplayed.length === 0}
             >
-              {autoGenerating
+              {generating
                 ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                 : <Zap className="h-3.5 w-3.5" />}
-              {autoGenerating ? "Generating..." : "Auto-Generate"}
+              {generating ? "Generating..." : "Generate Upcoming"}
             </Button>
 
+            {/* Includes played matches, so markets can be created after an event
+                to test resolution and payouts. */}
             <Button
               size="sm"
               variant="outline"
               className="gap-2 border-amber-400/40 text-amber-400 hover:bg-amber-400/10"
-              onClick={handleTestGenerate}
-              disabled={autoGenerating}
+              onClick={() => generate(tbaMatches, "markets (all matches)")}
+              disabled={generating || tbaMatches.length === 0}
             >
-              {autoGenerating
-                ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                : <Target className="h-3.5 w-3.5" />}
-              Test Generate
+              <Target className="h-3.5 w-3.5" />
+              All Matches
             </Button>
-
-            <CreateMarketPanel
-              eventKey={eventKey}
-              tbaMatches={tbaMatches}
-              onCreated={() => {}}
-            />
 
             <Button
               size="sm"
               variant="outline"
               className="gap-2 border-red-500/40 text-red-500 hover:bg-red-500/10"
               onClick={handleWipeAll}
-              disabled={wiping || autoGenerating}
+              disabled={wiping || generating}
             >
               {wiping
                 ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
@@ -1611,35 +769,25 @@ function MarketsTab({
         </div>
       )}
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-1.5">
-        {Object.entries(TYPE_FILTER_LABELS).map(([k, label]) => (
-          <button
-            key={k}
-            onClick={() => setTypeFilter(k)}
-            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors border ${
-              typeFilter === k
-                ? "bg-primary text-primary-foreground border-primary"
-                : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
+      {/* How it works — the rules are short enough to state outright */}
+      <div className="rounded-xl border border-border/60 bg-muted/30 px-3 py-2.5 text-[11px] text-muted-foreground leading-relaxed">
+        Pick the alliance you think wins. Odds come from Statbotics and are
+        locked in when you bet, so an underdog pays more.{" "}
+        <span className="text-foreground font-medium">One bet per match, and it&apos;s final.</span>
       </div>
 
       <div className="flex gap-1.5">
-        {(["all", "open", "locked", "resolved"] as const).map((s) => (
+        {(["all", "open", "locked", "resolved"] as const).map((st) => (
           <button
-            key={s}
-            onClick={() => setStatusFilter(s)}
+            key={st}
+            onClick={() => setStatusFilter(st)}
             className={`px-2.5 py-0.5 rounded-full text-[11px] font-medium transition-colors border ${
-              statusFilter === s
+              statusFilter === st
                 ? "bg-primary/20 text-primary border-primary/40"
                 : "border-border/50 text-muted-foreground hover:border-primary/30"
             }`}
           >
-            {s === "all" ? "All Status" : STATUS_CONFIG[s].label}
+            {st === "all" ? "All Status" : STATUS_CONFIG[st].label}
           </button>
         ))}
       </div>
@@ -1652,7 +800,9 @@ function MarketsTab({
           </div>
           <p className="font-semibold text-lg">No markets yet</p>
           <p className="text-sm text-muted-foreground max-w-xs">
-            Hit "Auto-Generate Markets" to create match winner markets from the TBA schedule, or create a custom market.
+            {isAdmin
+              ? "Hit \"Generate Upcoming\" to create a match-winner market for every unplayed match."
+              : "An admin needs to generate markets from the match schedule."}
           </p>
         </div>
       )}
@@ -1663,10 +813,8 @@ function MarketsTab({
             key={m._id}
             market={m}
             myBalance={myBalance}
-            onResolved={() => {}}
+            myBet={myBetByMarket.get(m._id)}
             isAdmin={isAdmin}
-            hasBet={bettedMarketIds.has(m._id)}
-            tbaRankings={tbaRankings}
           />
         ))}
         {filtered.length === 0 && markets.length > 0 && (
@@ -1809,7 +957,12 @@ function MyBetsTab({ eventKey }: { eventKey: string }) {
           </h3>
           {pendingBets.map((bet) => {
             const market = marketMap[bet.marketId];
-            const optLabel = market?.options.find((o) => o.id === bet.optionId)?.label ?? bet.optionId;
+            const opt = market?.options.find((o) => o.id === bet.optionId);
+            const optLabel = opt?.label ?? bet.optionId;
+            // Prefer the multiplier stored on the bet: it is what this bet will
+            // actually be paid, even if the market row were ever re-seeded.
+            const mult = bet.multiplier ?? (opt ? multiplierFor(opt) : 2);
+            const toWin = Math.floor(bet.amount * mult);
             return (
               <div key={bet._id} className="rounded-xl bg-card border border-amber-500/20 p-4 flex items-center gap-3">
                 <div className="h-8 w-8 rounded-lg bg-amber-500/10 flex items-center justify-center shrink-0">
@@ -1817,7 +970,13 @@ function MyBetsTab({ eventKey }: { eventKey: string }) {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">{market?.title ?? "Unknown Market"}</p>
-                  <p className="text-xs text-muted-foreground">Bet on: <span className="text-foreground">{optLabel}</span></p>
+                  <p className="text-xs text-muted-foreground">
+                    Bet on: <span className="text-foreground">{optLabel}</span>
+                    {" "}at <span className="font-mono text-amber-400">{mult.toFixed(2)}x</span>
+                  </p>
+                  <p className="text-[10px] text-muted-foreground/70">
+                    Pays <span className="font-mono text-amber-400">{toWin}</span> if it wins
+                  </p>
                 </div>
                 <div className="text-right shrink-0">
                   <p className="font-mono font-bold text-amber-400 flex items-center gap-1 justify-end">{bet.amount} <Coins className="h-3 w-3" /></p>
@@ -1851,7 +1010,12 @@ function MyBetsTab({ eventKey }: { eventKey: string }) {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">{market?.title ?? "Unknown Market"}</p>
-                  <p className="text-xs text-muted-foreground">Bet on: <span className="text-foreground">{optLabel}</span></p>
+                  <p className="text-xs text-muted-foreground">
+                    Bet on: <span className="text-foreground">{optLabel}</span>
+                    {bet.multiplier !== undefined && (
+                      <> at <span className="font-mono">{bet.multiplier.toFixed(2)}x</span></>
+                    )}
+                  </p>
                 </div>
                 <div className="text-right shrink-0">
                   <p className={`font-mono font-bold text-sm flex items-center gap-1 justify-end ${won ? "text-amber-400" : "text-red-400"}`}>

@@ -244,7 +244,11 @@ export default defineSchema({
     eventKey:    v.string(),
     title:       v.string(),
     description: v.optional(v.string()),
-    // Market category
+    // Market category. FalconBet was simplified (2026-09-24) to a single type:
+    // match_winner. The other ten literals are LEGACY ONLY — nothing creates
+    // them, listMarkets filters them out of the UI, and they stay in this union
+    // because `convex deploy` rejects a schema that existing rows violate.
+    // Delete them only after clearing those rows via the Convex dashboard.
     type: v.union(
       v.literal("match_winner"),       // red or blue alliance wins
       v.literal("alliance_score_ou"),  // alliance score over/under threshold
@@ -279,11 +283,20 @@ export default defineSchema({
       v.literal("alliance"),  // red or blue alliance in each match
       v.literal("match"),     // anyone in the match (no team/alliance filter)
     )),
-    // Outcome options — each has a house seed pool to guarantee minimum payout
+    // Outcome options. For match_winner (the only type created now) there are
+    // exactly two: "red" and "blue".
     options: v.array(v.object({
-      id:       v.string(),   // "red","blue","over","under","yes","no", or select value
+      id:       v.string(),   // "red" | "blue" (legacy rows: over/under/yes/no/select value)
       label:    v.string(),
-      seedPool: v.number(),   // virtual coins seeded by house (from Statbotics or 50/50)
+      // Statbotics-derived win probability, 1-99, summing to 100 across options.
+      // This is what fixes the payout multiplier (100 / winProb) at bet time.
+      // Optional only because legacy rows predate it — they carry the same
+      // number in seedPool, which is why placeBet falls back to it.
+      winProb:  v.optional(v.number()),
+      // DEPRECATED. Was the house seed pool for the old parimutuel payout.
+      // For match_winner it always held the win-probability percentage, so it
+      // doubles as the winProb fallback. Do not read it for anything else.
+      seedPool: v.number(),
     })),
     // Lifecycle
     status: v.union(
@@ -301,7 +314,8 @@ export default defineSchema({
     .index("by_event_match", ["eventKey", "matchNumber"])
     .index("by_status",      ["status"]),
 
-  // Individual bets placed by users
+  // Individual bets placed by users. One per user per market, enforced in
+  // placeBet via the by_market_user index — a bet cannot be raised or retracted.
   bets: defineTable({
     marketId: v.id("bettingMarkets"),
     userId:   v.id("users"),
@@ -309,12 +323,17 @@ export default defineSchema({
     amount:   v.number(),
     eventKey: v.string(),
     placedAt: v.number(),
+    // Payout multiplier locked in at placement from the market's Statbotics
+    // win probability, so later bets never move what this bet pays. Optional
+    // because rows predate fixed odds; resolveMarket documents the fallback.
+    multiplier: v.optional(v.number()),
     payout:   v.optional(v.number()),  // set on resolution
     settled:  v.optional(v.boolean()),
   })
-    .index("by_market",     ["marketId"])
-    .index("by_user_event", ["userId", "eventKey"])
-    .index("by_user",       ["userId"]),
+    .index("by_market",      ["marketId"])
+    .index("by_market_user", ["marketId", "userId"])
+    .index("by_user_event",  ["userId", "eventKey"])
+    .index("by_user",        ["userId"]),
 
   // Per-user per-event coin balance
   userBalances: defineTable({

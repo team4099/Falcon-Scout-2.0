@@ -25,9 +25,11 @@ async function setup(t: ReturnType<typeof convexTest>, balance = 1000) {
     });
     return ctx.db.insert("bettingMarkets", {
       eventKey: EVENT, title: "Q1", type: "match_winner",
+      // Red is the 40% underdog, so it pays 2.5x and Blue pays 1.67x. Keeping
+      // them asymmetric is what proves the multiplier is read per option.
       options: [
-        { id: "red", label: "Red", seedPool: 100 },
-        { id: "blue", label: "Blue", seedPool: 100 },
+        { id: "red", label: "Red", winProb: 40, seedPool: 40 },
+        { id: "blue", label: "Blue", winProb: 60, seedPool: 60 },
       ],
       status: "open", createdAt: Date.now(),
     });
@@ -144,46 +146,201 @@ describe("beg", () => {
   });
 });
 
-describe("resolveMarket payouts", () => {
-  test("the pool is conserved — winners are paid from seed + losing bets", async () => {
+describe("fixed odds", () => {
+  test("payout comes from the multiplier locked in at placement", async () => {
     const t = convexTest(schema, modules);
     const { as, marketId, bal } = await setup(t, 1000);
 
+    // Red is seeded at 40% -> 100/40 = 2.50x.
     await as.mutation(api.betting.placeBet, { marketId, optionId: "red", amount: 200 });
     expect(await bal()).toBe(800);
+
+    const bet = await t.run(async (ctx) =>
+      (await ctx.db.query("bets").withIndex("by_market", (q) => q.eq("marketId", marketId)).first())!,
+    );
+    expect(bet.multiplier).toBe(2.5);
 
     const res = await as.mutation(api.betting.resolveMarket, {
       marketId, resolvedOptionId: "red",
     });
+    // floor(200 * 2.5) = 500 credited on top of the already-deducted stake.
+    expect(res.totalPaid).toBe(500);
+    expect(await bal()).toBe(800 + 500);
+  });
 
-    // totalPool = seeds(200) + bets(200) = 400; winPool = seed_red(100) + 200 = 300
-    // payout = floor(200/300 * 400) = 266
-    expect(res.totalPool).toBe(400);
-    expect(await bal()).toBe(800 + 266);
+  test("the favourite pays less than the underdog on the same stake", async () => {
+    const t = convexTest(schema, modules);
+    const { as, marketId, bal } = await setup(t, 1000);
+
+    // Blue is seeded at 60% -> 100/60 = 1.67x.
+    await as.mutation(api.betting.placeBet, { marketId, optionId: "blue", amount: 300 });
+    await as.mutation(api.betting.resolveMarket, { marketId, resolvedOptionId: "blue" });
+    // floor(300 * 1.67) = 501
+    expect(await bal()).toBe(700 + 501);
+  });
+
+  test("a later bet cannot move an earlier bet's payout", async () => {
+    const t = convexTest(schema, modules);
+    const { as, marketId, bal } = await setup(t, 1000);
+
+    await as.mutation(api.betting.placeBet, { marketId, optionId: "red", amount: 100 });
+
+    // A second scout piles onto the same side. Under the old parimutuel payout
+    // this diluted the first bet; with fixed odds it must change nothing.
+    const other = await t.run(async (ctx) => {
+      const uid = await ctx.db.insert("users", { name: "Other" });
+      await ctx.db.insert("userBalances", {
+        userId: uid, eventKey: EVENT, balance: 5000,
+        totalWon: 0, totalLost: 0, totalBet: 0, totalBegs: 0,
+      });
+      return uid;
+    });
+    await t
+      // Team email so this second scout clears the approval check in adminAuth.
+      .withIdentity({ subject: other, issuer: "test", email: "scout@team4099.com" })
+      .mutation(api.betting.placeBet, { marketId, optionId: "red", amount: 4000 });
+
+    await as.mutation(api.betting.resolveMarket, { marketId, resolvedOptionId: "red" });
+    // Still floor(100 * 2.5) = 250.
+    expect(await bal()).toBe(900 + 250);
+  });
+
+  test("losing bets pay nothing and are not re-charged", async () => {
+    const t = convexTest(schema, modules);
+    const { as, marketId, bal } = await setup(t, 1000);
+
+    await as.mutation(api.betting.placeBet, { marketId, optionId: "red", amount: 250 });
+    await as.mutation(api.betting.resolveMarket, { marketId, resolvedOptionId: "blue" });
+    // The stake left the balance at placement; resolution must not deduct again.
+    expect(await bal()).toBe(750);
   });
 });
 
-describe("createMarket new FRC-outcome types", () => {
-  test("accepts team_top_rank, alliance_selection, and elimination_advance", async () => {
+describe("one bet per match", () => {
+  test("a second bet on the same market is rejected", async () => {
+    const t = convexTest(schema, modules);
+    const { as, marketId, bal } = await setup(t, 1000);
+
+    await as.mutation(api.betting.placeBet, { marketId, optionId: "red", amount: 100 });
+    await expect(
+      as.mutation(api.betting.placeBet, { marketId, optionId: "red", amount: 100 }),
+    ).rejects.toThrow(/already bet/i);
+    // Nothing extra left the balance.
+    expect(await bal()).toBe(900);
+  });
+
+  test("a scout cannot hedge by also betting the other alliance", async () => {
+    const t = convexTest(schema, modules);
+    const { as, marketId } = await setup(t, 1000);
+
+    await as.mutation(api.betting.placeBet, { marketId, optionId: "red", amount: 100 });
+    await expect(
+      as.mutation(api.betting.placeBet, { marketId, optionId: "blue", amount: 100 }),
+    ).rejects.toThrow(/already bet/i);
+
+    const count = await t.run(async (ctx) =>
+      (await ctx.db.query("bets").withIndex("by_market", (q) => q.eq("marketId", marketId)).collect()).length,
+    );
+    expect(count).toBe(1);
+  });
+
+  test("the limit is per market, not per event", async () => {
+    const t = convexTest(schema, modules);
+    const { as, marketId, userId } = await setup(t, 1000);
+
+    const secondMarket = await t.run((ctx) =>
+      ctx.db.insert("bettingMarkets", {
+        eventKey: EVENT, title: "Q2", type: "match_winner",
+        matchNumber: 2,
+        options: [
+          { id: "red", label: "Red", winProb: 50, seedPool: 50 },
+          { id: "blue", label: "Blue", winProb: 50, seedPool: 50 },
+        ],
+        status: "open", createdAt: Date.now(),
+      }),
+    );
+
+    await as.mutation(api.betting.placeBet, { marketId, optionId: "red", amount: 100 });
+    await as.mutation(api.betting.placeBet, { marketId: secondMarket, optionId: "blue", amount: 100 });
+
+    const mine = await t.run(async (ctx) =>
+      ctx.db.query("bets").withIndex("by_user_event", (q) =>
+        q.eq("userId", userId).eq("eventKey", EVENT)).collect(),
+    );
+    expect(mine).toHaveLength(2);
+  });
+});
+
+describe("batchCreateMatchWinnerMarkets", () => {
+  test("seeds win probabilities and skips matches that already have a market", async () => {
     const t = convexTest(schema, modules);
     const { as } = await setup(t);
 
-    for (const type of ["team_top_rank", "alliance_selection", "elimination_advance"] as const) {
-      const marketId = await as.mutation(api.betting.createMarket, {
-        eventKey: EVENT,
-        title: `Test ${type}`,
-        type,
-        teamNumber: 4099,
-        ...(type === "team_top_rank" ? { threshold: 8 } : {}),
-        ...(type === "elimination_advance" ? { targetValue: "semifinals" } : {}),
+    const matches = [
+      { matchNumber: 10, matchLabel: "Q10", winRed: 70, winBlue: 30 },
+      { matchNumber: 11, matchLabel: "Q11", winRed: 25, winBlue: 75 },
+    ];
+    expect((await as.mutation(api.betting.batchCreateMatchWinnerMarkets, {
+      eventKey: EVENT, matches,
+    })).created).toBe(2);
+
+    // Re-running must not duplicate them.
+    expect((await as.mutation(api.betting.batchCreateMatchWinnerMarkets, {
+      eventKey: EVENT, matches,
+    })).created).toBe(0);
+
+    const q10 = await t.run(async (ctx) =>
+      (await ctx.db.query("bettingMarkets")
+        .withIndex("by_event_match", (q) => q.eq("eventKey", EVENT).eq("matchNumber", 10))
+        .first())!,
+    );
+    expect(q10.options.map((o) => o.winProb)).toEqual([70, 30]);
+  });
+
+  test("an out-of-range probability is clamped, not written as 0%", async () => {
+    const t = convexTest(schema, modules);
+    const { as } = await setup(t);
+
+    await as.mutation(api.betting.batchCreateMatchWinnerMarkets, {
+      eventKey: EVENT,
+      matches: [{ matchNumber: 20, matchLabel: "Q20", winRed: 0, winBlue: 100 }],
+    });
+
+    const m = await t.run(async (ctx) =>
+      (await ctx.db.query("bettingMarkets")
+        .withIndex("by_event_match", (q) => q.eq("eventKey", EVENT).eq("matchNumber", 20))
+        .first())!,
+    );
+    expect(m.options.map((o) => o.winProb)).toEqual([1, 99]);
+
+    // 1% would pay 100x unclamped; the cap holds it at 10x.
+    await as.mutation(api.betting.placeBet, { marketId: m._id, optionId: "red", amount: 10 });
+    const bet = await t.run(async (ctx) =>
+      (await ctx.db.query("bets").withIndex("by_market", (q) => q.eq("marketId", m._id)).first())!,
+    );
+    expect(bet.multiplier).toBe(10);
+  });
+});
+
+describe("listMarkets", () => {
+  test("hides legacy markets of the removed types", async () => {
+    const t = convexTest(schema, modules);
+    const { as, marketId } = await setup(t);
+
+    await t.run((ctx) =>
+      ctx.db.insert("bettingMarkets", {
+        eventKey: EVENT, title: "Legacy O/U", type: "team_field_numeric",
+        threshold: 5,
         options: [
-          { id: "yes", label: "Yes", seedPool: 50 },
-          { id: "no", label: "No", seedPool: 50 },
+          { id: "over", label: "Over", seedPool: 50 },
+          { id: "under", label: "Under", seedPool: 50 },
         ],
-      });
-      const market = await t.run((ctx) => ctx.db.get(marketId));
-      expect(market?.type).toBe(type);
-    }
+        status: "open", createdAt: Date.now(),
+      }),
+    );
+
+    const listed = await as.query(api.betting.listMarkets, { eventKey: EVENT });
+    expect(listed.map((m) => m._id)).toEqual([marketId]);
   });
 });
 

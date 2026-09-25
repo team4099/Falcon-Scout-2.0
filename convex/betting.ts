@@ -35,6 +35,37 @@ function assertBet(betAmount: number): void {
   if (betAmount > MAX_BET) throw new Error("Bet is too large");
 }
 
+// ── Fixed odds ────────────────────────────────────────────────────────────────
+
+/**
+ * Payout multipliers are FIXED at placement, not computed from the pool at
+ * resolution. A market stores each option's Statbotics win probability, and the
+ * fair multiplier is its reciprocal: a 25%-likely alliance pays 4x, a 75%
+ * favourite pays 1.33x. Nobody else's bet can move what your bet pays.
+ *
+ * The clamp exists because win probabilities are seeded 1-99, and an
+ * unclamped 1% would pay 100x — one lucky coin flip would end the leaderboard.
+ */
+const MIN_MULTIPLIER = 1.05;
+const MAX_MULTIPLIER = 10;
+
+/** Multiplier for a win probability given in percent (1-99). Total return, stake included. */
+export function multiplierFor(winProbPct: number): number {
+  if (!Number.isFinite(winProbPct) || winProbPct <= 0) return MAX_MULTIPLIER;
+  const raw = 100 / winProbPct;
+  const clamped = Math.min(MAX_MULTIPLIER, Math.max(MIN_MULTIPLIER, raw));
+  return Math.round(clamped * 100) / 100;
+}
+
+/**
+ * The win probability an option was created with. `winProb` is the field that
+ * means this; `seedPool` is the pre-fixed-odds name that happened to hold the
+ * same percentage for match_winner markets.
+ */
+export function optionWinProb(option: { winProb?: number; seedPool: number }): number {
+  return option.winProb ?? option.seedPool;
+}
+
 // ── Transaction ledger ───────────────────────────────────────────────────────
 
 type TransactionType =
@@ -287,7 +318,13 @@ export const beg = mutation({
 
 // ── Markets ───────────────────────────────────────────────────────────────────
 
-/** List all markets for an event, optionally filtered by status. */
+/**
+ * Match-winner markets for an event, optionally filtered by status.
+ *
+ * Legacy markets of the ten removed types are filtered out rather than
+ * deleted: their rows and bets stay intact for the ledger, they just no longer
+ * appear anywhere a scout can bet on them.
+ */
 export const listMarkets = query({
   args: {
     eventKey: v.string(),
@@ -300,10 +337,11 @@ export const listMarkets = query({
   },
   handler: async (ctx, { eventKey, status }) => {
     if (!(await isSignedIn(ctx))) return [];
-    const all = await ctx.db
+    const all = (await ctx.db
       .query("bettingMarkets")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
-      .collect();
+      .collect()
+    ).filter((m) => m.type === "match_winner");
     if (status) return all.filter((m) => m.status === status);
     return all;
   },
@@ -337,73 +375,25 @@ export const getMarketPool = query({
   },
 });
 
-/** Create a new betting market. Any authenticated user can create one. */
-export const createMarket = mutation({
-  args: {
-    eventKey:     v.string(),
-    title:        v.string(),
-    description:  v.optional(v.string()),
-    type: v.union(
-      v.literal("match_winner"),
-      v.literal("alliance_score_ou"),
-      v.literal("point_differential"),
-      v.literal("team_field_bool"),
-      v.literal("team_field_numeric"),
-      v.literal("team_field_select"),
-      v.literal("multi_match_numeric"),
-      v.literal("multi_match_count"),
-      v.literal("team_top_rank"),
-      v.literal("alliance_selection"),
-      v.literal("elimination_advance"),
-    ),
-    matchNumber:  v.optional(v.number()),
-    matchNumbers: v.optional(v.array(v.number())),
-    teamNumber:   v.optional(v.number()),
-    alliance:     v.optional(v.union(v.literal("red"), v.literal("blue"))),
-    templateId:   v.optional(v.id("formTemplates")),
-    fieldId:      v.optional(v.string()),
-    fieldLabel:   v.optional(v.string()),
-    threshold:    v.optional(v.number()),
-    targetValue:  v.optional(v.string()),
-    minCount:     v.optional(v.number()),
-    targetScope:  v.optional(v.union(v.literal("team"), v.literal("alliance"), v.literal("match"))),
-    options: v.array(v.object({
-      id:       v.string(),
-      label:    v.string(),
-      seedPool: v.number(),
-    })),
-    adminKey: v.optional(v.string()),
-  },
-  handler: async (ctx, { adminKey, ...args }) => {
-    const userId = await requireAdmin(ctx, adminKey);
-
-    return await ctx.db.insert("bettingMarkets", {
-      ...args,
-      status:    "open",
-      createdAt: Date.now(),
-      createdBy: userId,
-    });
-  },
-});
-
 /**
- * Batch-create two EPA-calibrated markets per match:
- *   1. match_winner        — odds seeded by Statbotics win probability
- *   2. point_differential  — O/U line set at the EPA-predicted margin
+ * Batch-create one match_winner market per TBA match, seeded with Statbotics
+ * win probabilities. This is the only way markets are created: FalconBet was
+ * simplified to a single question — which alliance wins this match?
  *
- * Lines are set at the statistical median so they are genuinely 50/50.
- * Both markets are skipped if they already exist for that match.
+ * `winRed`/`winBlue` are percentages (1-99) that sum to 100, computed from EPA
+ * on the client and passed in by an admin. They fix the payout multipliers for
+ * every bet placed on the market, so they are written once and never updated.
+ * Matches that already have a market are skipped.
  */
-export const batchCreateRandomMarkets = mutation({
+export const batchCreateMatchWinnerMarkets = mutation({
   args: {
     eventKey: v.string(),
-    limit:    v.optional(v.number()), // max market documents to create (default: unlimited)
+    limit:    v.optional(v.number()), // max markets to create (default: unlimited)
     matches: v.array(v.object({
-      matchNumber:     v.number(),
-      matchLabel:      v.string(),
-      seedRed:         v.number(),
-      seedBlue:        v.number(),
-      predictedMargin: v.number(),
+      matchNumber: v.number(),
+      matchLabel:  v.string(),
+      winRed:      v.number(), // 1-99
+      winBlue:     v.number(), // 1-99, = 100 - winRed
     })),
     adminKey: v.optional(v.string()),
   },
@@ -414,106 +404,32 @@ export const batchCreateRandomMarkets = mutation({
       .query("bettingMarkets")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
       .collect();
-
-    const existingWinnerNums = new Set(
+    const alreadyHasMarket = new Set(
       existing.filter((m) => m.type === "match_winner").map((m) => m.matchNumber)
     );
-    const existingDiffNums = new Set(
-      existing.filter((m) => m.type === "point_differential").map((m) => m.matchNumber)
-    );
 
     let created = 0;
     for (const m of matches) {
       if (limit !== undefined && created >= limit) break;
+      if (alreadyHasMarket.has(m.matchNumber)) continue;
 
-      // ── 1. Match winner ───────────────────────────────────────────────────
-      if (!existingWinnerNums.has(m.matchNumber)) {
-        await ctx.db.insert("bettingMarkets", {
-          eventKey,
-          title:       `${m.matchLabel} — Match Winner`,
-          description: `Statbotics predicted win probability: Red ${m.seedRed}% · Blue ${m.seedBlue}%`,
-          type:        "match_winner",
-          matchNumber: m.matchNumber,
-          options: [
-            { id: "red",  label: "Red Alliance",  seedPool: m.seedRed  },
-            { id: "blue", label: "Blue Alliance", seedPool: m.seedBlue },
-          ],
-          status:    "open",
-          createdAt: Date.now(),
-          createdBy: userId,
-        });
-        created++;
-        if (limit !== undefined && created >= limit) break;
-      }
+      // Clamp here too: a bad EPA fetch upstream must not write a 0% option,
+      // which would hand out the maximum multiplier on a coin flip.
+      const winRed  = Math.max(1, Math.min(99, Math.round(m.winRed)));
+      const winBlue = 100 - winRed;
 
-      // ── 2. Point differential O/U at the EPA-predicted margin ─────────────
-      if (limit !== undefined && created >= limit) break;
-      if (!existingDiffNums.has(m.matchNumber)) {
-        const line = m.predictedMargin;
-        await ctx.db.insert("bettingMarkets", {
-          eventKey,
-          title:       `${m.matchLabel} — Margin Over/Under ${line}`,
-          description: `Statbotics EPA predicts a ~${line} pt margin. Will the final spread beat that?`,
-          type:        "point_differential",
-          matchNumber: m.matchNumber,
-          threshold:   line,
-          options: [
-            { id: "over",  label: `⬆ Over ${line} pts`,  seedPool: 50 },
-            { id: "under", label: `⬇ Under ${line} pts`, seedPool: 50 },
-          ],
-          status:    "open",
-          createdAt: Date.now(),
-          createdBy: userId,
-        });
-        created++;
-      }
-    }
-    return { created };
-  },
-});
-
-/**
- * Batch-create match winner markets for multiple TBA matches.
- * Skips any match that already has a match_winner market.
- * seedRed / seedBlue come from Statbotics win probability (0–1 each, sum to 1).
- */
-export const batchCreateMatchMarkets = mutation({
-  args: {
-    eventKey: v.string(),
-    matches: v.array(v.object({
-      matchNumber: v.number(),
-      matchLabel:  v.string(),
-      seedRed:     v.number(), // 0–100 (Statbotics win% × 100)
-      seedBlue:    v.number(), // 0–100
-    })),
-    adminKey: v.optional(v.string()),
-  },
-  handler: async (ctx, { eventKey, matches, adminKey }) => {
-    const userId = await requireAdmin(ctx, adminKey);
-
-    const existing = await ctx.db
-      .query("bettingMarkets")
-      .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
-      .collect();
-
-    const existingMatchWinnerNums = new Set(
-      existing
-        .filter((m) => m.type === "match_winner")
-        .map((m) => m.matchNumber)
-    );
-
-    let created = 0;
-    for (const m of matches) {
-      if (existingMatchWinnerNums.has(m.matchNumber)) continue;
       await ctx.db.insert("bettingMarkets", {
         eventKey,
         title:       `${m.matchLabel} — Match Winner`,
-        description: `Will Red or Blue win ${m.matchLabel}?`,
+        description:
+          `Statbotics predicts Red ${winRed}% · Blue ${winBlue}%. ` +
+          `Pays ${multiplierFor(winRed).toFixed(2)}x on Red, ` +
+          `${multiplierFor(winBlue).toFixed(2)}x on Blue.`,
         type:        "match_winner",
         matchNumber: m.matchNumber,
         options: [
-          { id: "red",  label: "Red Alliance",  seedPool: m.seedRed  },
-          { id: "blue", label: "Blue Alliance", seedPool: m.seedBlue },
+          { id: "red",  label: "Red Alliance",  winProb: winRed,  seedPool: winRed  },
+          { id: "blue", label: "Blue Alliance", winProb: winBlue, seedPool: winBlue },
         ],
         status:    "open",
         createdAt: Date.now(),
@@ -544,13 +460,12 @@ export const unlockMarket = mutation({
 });
 
 /**
- * Resolve a market with a winning outcome.
- * Computes payouts using the parimutuel + seed pool formula and settles all bets.
+ * Resolve a market with a winning outcome and settle every bet on it.
  *
- * Formula:
- *   totalPool   = Σ(all seedPools) + Σ(all real bets)
- *   winPool     = seedPool_winner + Σ(real bets on winner)
- *   payout_i    = (bet_i / winPool) × totalPool   [rounded down to integer]
+ * Fixed odds: each bet pays `floor(stake × multiplier)` using the multiplier
+ * frozen when it was placed, so resolution is pure bookkeeping. It does not
+ * look at the pool, and one scout's bet never changes another's payout. Losers
+ * get nothing; their stake already left the balance at placement.
  */
 export const resolveMarket = mutation({
   args: {
@@ -573,22 +488,22 @@ export const resolveMarket = mutation({
       .withIndex("by_market", (q) => q.eq("marketId", marketId))
       .collect();
 
-    // Compute pool sizes
-    const seedTotal = market.options.reduce((s, o) => s + o.seedPool, 0);
-    const betTotal  = allBets.reduce((s, b) => s + b.amount, 0);
-    const totalPool = seedTotal + betTotal;
-
     const winnerOption = market.options.find((o) => o.id === resolvedOptionId);
     if (!winnerOption) throw new Error("Unknown winning option");
 
-    const winBets = allBets.filter((b) => b.optionId === resolvedOptionId);
-    const winBetTotal = winBets.reduce((s, b) => s + b.amount, 0);
-    const winPool = winnerOption.seedPool + winBetTotal;
+    // Legacy bets placed before fixed odds carry no multiplier. Rather than keep
+    // the whole parimutuel code path alive for them, they settle at even money.
+    const fallbackMultiplier = 2;
+
+    let totalPaid = 0;
 
     // Settle each winning bet
     for (const bet of allBets) {
       const won = bet.optionId === resolvedOptionId;
-      const payout = won ? Math.floor((bet.amount / winPool) * totalPool) : 0;
+      const payout = won
+        ? Math.floor(bet.amount * (bet.multiplier ?? fallbackMultiplier))
+        : 0;
+      totalPaid += payout;
 
       await ctx.db.patch(bet._id, { payout, settled: true });
 
@@ -628,7 +543,7 @@ export const resolveMarket = mutation({
       resolvedAt:       Date.now(),
     });
 
-    return { settledBets: allBets.length, totalPool };
+    return { settledBets: allBets.length, totalPaid };
   },
 });
 
@@ -679,7 +594,12 @@ export const cancelMarket = mutation({
 
 /**
  * Place a bet on a market outcome.
- * Deducts from balance immediately.
+ *
+ * One bet per user per market, final. Because each match has exactly one
+ * match_winner market, that is one bet per match: it cannot be raised, reduced,
+ * switched to the other alliance, or retracted. The stake leaves the balance
+ * immediately and the payout multiplier is frozen here from the market's
+ * Statbotics win probability — never from anything the client sends.
  */
 export const placeBet = mutation({
   args: {
@@ -699,6 +619,20 @@ export const placeBet = mutation({
 
     const validOption = market.options.find((o) => o.id === optionId);
     if (!validOption) throw new Error("Invalid option");
+
+    // One bet per match, enforced here rather than by hiding the panel — a
+    // second submission from a stale client must be rejected by the server.
+    const existing = await ctx.db
+      .query("bets")
+      .withIndex("by_market_user", (q) => q.eq("marketId", marketId).eq("userId", userId))
+      .first();
+    if (existing) {
+      throw new Error("You already bet on this match — bets can't be changed or added to");
+    }
+
+    // Odds are read off the market, so they are whatever the admin's Statbotics
+    // seed said at creation. A client cannot propose its own multiplier.
+    const multiplier = multiplierFor(optionWinProb(validOption));
 
     // Get / create balance
     let bal = await ctx.db
@@ -738,6 +672,7 @@ export const placeBet = mutation({
       userId,
       optionId,
       amount,
+      multiplier,
       eventKey: market.eventKey,
       placedAt: Date.now(),
     });
