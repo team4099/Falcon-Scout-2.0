@@ -2,7 +2,6 @@ import { query, mutation, internalMutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 import {
-  approvedGuestEmails,
   getApprovedUserId,
   hasAccess,
   requireAdmin,
@@ -36,17 +35,26 @@ export const listUsers = query({
   args: {},
   handler: async (ctx) => {
     await requireUser(ctx);
-    const [allUsers, deactivated, approved] = await Promise.all([
+    const [allUsers, deactivated, guests] = await Promise.all([
       ctx.db.query("users").collect(),
       ctx.db.query("deactivatedUsers").collect(),
-      approvedGuestEmails(ctx),
+      ctx.db
+        .query("guestAccess")
+        .withIndex("by_status", (q) => q.eq("status", "approved"))
+        .collect(),
     ]);
-    // Pending/denied guests have a user row (they signed in) but no access,
-    // so they must not show up as schedulable scouts.
-    const users = allUsers.filter((u) => hasAccess(u, approved));
-    if (deactivated.length === 0) return users;
+    const guestTeam = new Map(guests.map((g) => [g.email, g.teamNumber]));
+    const approved = new Set(guestTeam.keys());
     const deactivatedSet = new Set(deactivated.map((d) => d.userId));
-    return users.filter((u) => !deactivatedSet.has(u._id));
+    // Pending/denied guests have a user row (they signed in) but no access,
+    // so they must not show up as schedulable scouts. Approved guests carry
+    // their FRC team (guestTeamNumber) so the UI can tag them.
+    return allUsers
+      .filter((u) => hasAccess(u, approved) && !deactivatedSet.has(u._id))
+      .map((u) => {
+        const team = u.email ? guestTeam.get(u.email.trim().toLowerCase()) : undefined;
+        return team === undefined ? u : { ...u, guestTeamNumber: team };
+      });
   },
 });
 

@@ -48,6 +48,8 @@ interface User {
   name?: string;
   email?: string;
   image?: string;
+  /** Set by users.listUsers for approved guests: the FRC team they're from. */
+  guestTeamNumber?: number;
 }
 
 interface ScoutPreference {
@@ -237,17 +239,37 @@ function ScoutRow({ user, count, selected, onClick, hasSubmissions, rank, hasPre
       </div>
 
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div
-          style={{
-            fontWeight: 600,
-            fontSize: 14,
-            color: "var(--foreground)",
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-        >
-          {displayName(user)}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+          <span
+            style={{
+              fontWeight: 600,
+              fontSize: 14,
+              color: "var(--foreground)",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {displayName(user)}
+          </span>
+          {user.guestTeamNumber !== undefined && (
+            <span
+              title="Guest from another team"
+              style={{
+                flexShrink: 0,
+                padding: "1px 6px",
+                borderRadius: 20,
+                fontSize: 10,
+                fontWeight: 700,
+                whiteSpace: "nowrap",
+                background: "oklch(0.7 0.15 200 / 18%)",
+                color: "oklch(0.78 0.13 200)",
+                border: "1px solid oklch(0.7 0.15 200 / 35%)",
+              }}
+            >
+              Team {user.guestTeamNumber}
+            </span>
+          )}
         </div>
         {user.email && user.name && (
           <div

@@ -25,6 +25,9 @@ export default defineSchema({
     email: v.string(),
     name: v.optional(v.string()),
     message: v.optional(v.string()),
+    // FRC team the guest is from. Optional: rows from before this field, and
+    // cached clients that don't send it, stay valid. Admins can fill it in.
+    teamNumber: v.optional(v.number()),
     status: v.union(v.literal("pending"), v.literal("approved"), v.literal("denied")),
     requestedAt: v.number(),
     decidedAt: v.optional(v.number()),

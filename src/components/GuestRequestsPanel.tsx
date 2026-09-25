@@ -22,6 +22,9 @@ type Decision = "approved" | "denied";
  * The list collapses behind the header so a long roster doesn't push the rest
  * of Manage Scouts off the screen. It opens by default only while something is
  * pending, so work that needs an admin is never hidden.
+ *
+ * Each row shows the guest's FRC team, editable in place — guests approved
+ * before the team field existed have none until an admin fills it in.
  */
 export default function GuestRequestsPanel() {
   const isAdmin = useQuery(api.admin.isCurrentUserAdmin);
@@ -94,9 +97,12 @@ export default function GuestRequestsPanel() {
               className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5"
             >
               <div className="min-w-0 flex-1 basis-48">
-                <p className="truncate text-sm font-medium">
-                  {r.name || r.email}
-                </p>
+                <div className="flex items-center gap-2">
+                  <p className="truncate text-sm font-medium">
+                    {r.name || r.email}
+                  </p>
+                  <TeamNumberInput id={r._id} teamNumber={r.teamNumber} />
+                </div>
                 <p className="truncate font-mono text-xs text-muted-foreground">
                   {r.email}
                 </p>
@@ -146,5 +152,57 @@ export default function GuestRequestsPanel() {
         </ul>
       )}
     </section>
+  );
+}
+
+/**
+ * Inline team # editor. Saves on blur or Enter; clearing the field removes the
+ * team. The server (guests.setTeamNumber) re-validates and requires admin.
+ */
+function TeamNumberInput({
+  id,
+  teamNumber,
+}: {
+  id: Id<"guestAccess">;
+  teamNumber?: number;
+}) {
+  const setTeamNumber = useMutation(api.guests.setTeamNumber);
+  const saved = teamNumber?.toString() ?? "";
+  const [draft, setDraft] = useState<string | null>(null);
+  const value = draft ?? saved;
+
+  async function commit() {
+    if (draft === null || draft === saved) return setDraft(null);
+    try {
+      await setTeamNumber({ id, teamNumber: draft ? Number(draft) : null });
+      toast.success(draft ? `Team set to ${draft}.` : "Team cleared.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't save team.");
+    } finally {
+      setDraft(null);
+    }
+  }
+
+  return (
+    <label
+      className={`flex shrink-0 items-center rounded-full border px-2 text-[11px] font-bold ${
+        value
+          ? "border-primary/40 bg-primary/15 text-primary"
+          : "border-dashed border-border text-muted-foreground"
+      }`}
+      title="Guest's FRC team"
+    >
+      Team
+      <input
+        value={value}
+        onChange={(e) => setDraft(e.target.value.replace(/\D/g, "").slice(0, 5))}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+        inputMode="numeric"
+        placeholder="#"
+        aria-label="Team number"
+        className="w-12 bg-transparent py-0.5 pl-1 outline-none placeholder:text-muted-foreground"
+      />
+    </label>
   );
 }

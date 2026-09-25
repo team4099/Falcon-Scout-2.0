@@ -21,12 +21,16 @@ export default function GuestAccessPage({
   const { signOut } = useAuthActions();
   const requestAccess = useMutation(api.guests.requestAccess);
   const [message, setMessage] = useState("");
+  const [team, setTeam] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const teamNumber = Number(team);
+  const teamValid = /^\d{1,5}$/.test(team) && teamNumber > 0;
 
   async function handleApply() {
+    if (!teamValid) return;
     setSubmitting(true);
     try {
-      await requestAccess({ message });
+      await requestAccess({ message, teamNumber });
       toast.success("Request sent. An admin will review it.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't send your request.");
@@ -49,6 +53,16 @@ export default function GuestAccessPage({
               FalconScout is for Team 4099. Ask a team admin for guest access and they'll review
               your request.
             </p>
+            <label className="block space-y-1">
+              <span className="text-xs font-medium">Your FRC team number</span>
+              <input
+                value={team}
+                onChange={(e) => setTeam(e.target.value.replace(/\D/g, "").slice(0, 5))}
+                inputMode="numeric"
+                placeholder="e.g. 254"
+                className="w-full h-11 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+              />
+            </label>
             <textarea
               value={message}
               onChange={(e) => setMessage(e.target.value)}
@@ -57,7 +71,7 @@ export default function GuestAccessPage({
               placeholder="Who are you and why do you need access? (optional)"
               className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
             />
-            <Button className="w-full h-11" onClick={handleApply} disabled={submitting}>
+            <Button className="w-full h-11" onClick={handleApply} disabled={submitting || !teamValid}>
               {submitting ? "Sending…" : "Request access"}
             </Button>
           </>

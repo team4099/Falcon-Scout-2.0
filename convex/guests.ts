@@ -4,6 +4,15 @@ import { mutation, query } from "./_generated/server";
 import { isCurrentUserAdminEligible, isTeamEmail, requireAdmin } from "./adminAuth";
 
 const MAX_MESSAGE_LENGTH = 500;
+const MAX_TEAM_NUMBER = 99999;
+
+/** FRC team numbers are positive integers; reject anything else. */
+function checkTeamNumber(teamNumber: number) {
+  if (!Number.isInteger(teamNumber) || teamNumber < 1 || teamNumber > MAX_TEAM_NUMBER) {
+    throw new Error("Enter a valid FRC team number.");
+  }
+  return teamNumber;
+}
 
 /**
  * The caller's access state, for the client gate in App.tsx. Deliberately
@@ -33,10 +42,15 @@ export const myAccess = query({
   },
 });
 
-/** A signed-in non-team user applies for guest access. Idempotent. */
+/**
+ * A signed-in non-team user applies for guest access. Idempotent.
+ * `teamNumber` is optional in the validator only so a cached older client can
+ * still apply; the current UI always sends it.
+ */
 export const requestAccess = mutation({
-  args: { message: v.optional(v.string()) },
-  handler: async (ctx, { message }) => {
+  args: { message: v.optional(v.string()), teamNumber: v.optional(v.number()) },
+  handler: async (ctx, { message, teamNumber }) => {
+    if (teamNumber !== undefined) checkTeamNumber(teamNumber);
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("You must be signed in to do that.");
     const user = await ctx.db.get(userId);
@@ -55,6 +69,7 @@ export const requestAccess = mutation({
       email,
       name: user?.name,
       message: message?.trim().slice(0, MAX_MESSAGE_LENGTH) || undefined,
+      teamNumber,
       status: "pending",
       requestedAt: Date.now(),
     });
@@ -87,5 +102,18 @@ export const decideRequest = mutation({
     const row = await ctx.db.get(id);
     if (!row) throw new Error("That request no longer exists.");
     await ctx.db.patch(id, { status: decision, decidedAt: Date.now(), decidedBy: adminId });
+  },
+});
+
+/** Set or clear (null) the FRC team a guest is from. Admin-only. */
+export const setTeamNumber = mutation({
+  args: { id: v.id("guestAccess"), teamNumber: v.union(v.number(), v.null()) },
+  handler: async (ctx, { id, teamNumber }) => {
+    await requireAdmin(ctx);
+    const row = await ctx.db.get(id);
+    if (!row) throw new Error("That request no longer exists.");
+    await ctx.db.patch(id, {
+      teamNumber: teamNumber === null ? undefined : checkTeamNumber(teamNumber),
+    });
   },
 });
