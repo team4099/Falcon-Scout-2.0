@@ -869,13 +869,13 @@ function PreferencesPanel({
         <Toggle
           on={wantsPit}
           onToggle={() => { setWantsPit(v => !v); setSaved(false); }}
-          label="Include me in pit rotations"
+          label="Pit rotations"
           sub="Opt in to pit scouting duty between matches during the event"
         />
         <Toggle
           on={wantsPitScouting}
           onToggle={() => { setWantsPitScouting(v => !v); setSaved(false); }}
-          label="Include me in pre-competition pit scouting"
+          label="Pre-competition pit scouting"
           sub="Visit teams' pits before quals start to collect data"
         />
       </div>

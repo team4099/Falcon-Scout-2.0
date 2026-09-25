@@ -193,22 +193,15 @@ interface ScoutSelectorProps {
   readOnly?: boolean;
 }
 
-/** Small inline icons marking a scout's "wants more matches" / "wants pit scouting" preferences. */
-function PrefBadges({ prefs, dim }: { prefs?: { wantsMoreMatches?: boolean; wantsPitScouting?: boolean }; dim?: string }) {
-  if (!prefs || (!prefs.wantsMoreMatches && !prefs.wantsPitScouting)) return null;
-  const color = dim ?? G;
+/** Small inline icon marking a scout's preference relevant to the current tab:
+ *  "wants more matches" on the match tab, "wants pit scouting" on the pit-scouting tab. */
+function PrefBadges({ prefs, kind, dim }: { prefs?: { wantsMoreMatches?: boolean; wantsPitScouting?: boolean }; kind: "matches" | "pit"; dim?: string }) {
+  const on = kind === "matches" ? prefs?.wantsMoreMatches : prefs?.wantsPitScouting;
+  if (!on) return null;
+  const Icon = kind === "matches" ? Zap : Wrench;
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
-      {prefs.wantsMoreMatches && (
-        <span title="Wants more matches" style={{ display: "inline-flex" }}>
-          <Zap size={10} style={{ color }} />
-        </span>
-      )}
-      {prefs.wantsPitScouting && (
-        <span title="Wants pit scouting" style={{ display: "inline-flex" }}>
-          <Wrench size={10} style={{ color }} />
-        </span>
-      )}
+    <span title={kind === "matches" ? "Wants more matches" : "Wants pit scouting"} style={{ display: "inline-flex", flexShrink: 0 }}>
+      <Icon size={10} style={{ color: dim ?? G }} />
     </span>
   );
 }
@@ -285,7 +278,6 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
         {!stackLayout && !isLandscapePhone && (
           <p style={{ fontSize: 10, color: MUTED, margin: "5px 0 0", display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><Zap size={10} style={{ color: G }} />wants more matches</span>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><Wrench size={10} style={{ color: G }} />wants pit scouting</span>
           </p>
         )}
       </div>
@@ -315,7 +307,7 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
                     <span style={{ fontSize: 11, fontWeight: 700, color: active ? G : FG, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left" }}>
                       {displayName(u)}
                     </span>
-                    <PrefBadges prefs={prefsByScout?.get(u._id)} />
+                    <PrefBadges prefs={prefsByScout?.get(u._id)} kind="matches" />
                     {cnt > 0 && (
                       <span style={{ background: active ? G : G_MED, color: active ? G_TXT : G, borderRadius: 20, padding: "0 5px", fontSize: 9, fontWeight: 800, flexShrink: 0 }}>
                         {cnt}
@@ -350,7 +342,7 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
                   <span style={{ fontSize: 10, fontWeight: 700, color: active ? G : FG, whiteSpace: "nowrap", maxWidth: 92, overflow: "hidden", textOverflow: "ellipsis" }}>
                     {displayName(u)}
                   </span>
-                  <PrefBadges prefs={prefsByScout?.get(u._id)} />
+                  <PrefBadges prefs={prefsByScout?.get(u._id)} kind="matches" />
                   {cnt > 0 && (
                     <span style={{ background: active ? G : SURF_BORD, color: active ? G_TXT : MUTED, borderRadius: 20, padding: "0px 5px", fontSize: 10, fontWeight: 800 }}>
                       {cnt}
@@ -388,7 +380,7 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, fontWeight: 600, color: FG, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: 6 }}>
                         {displayName(u)}
-                        <PrefBadges prefs={prefsByScout?.get(u._id)} />
+                        <PrefBadges prefs={prefsByScout?.get(u._id)} kind="matches" />
                       </div>
                     </div>
                     {cnt > 0 && (
@@ -2286,7 +2278,7 @@ function PitScoutingTab({
                     : <span style={{ width: 14, height: 14, borderRadius: "50%", background: pinned ? G_TXT+"30" : G_MED, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 800, color: pinned ? G_TXT : G, flexShrink: 0 }}>{avatarLetter(u)}</span>
                   }
                   {displayName(u)}
-                  <PrefBadges prefs={prefsByScout?.get(u._id)} />
+                  <PrefBadges prefs={prefsByScout?.get(u._id)} kind="pit" />
                   {count > 0 && (
                     <span style={{ background: pinned ? "oklch(0 0 0 / 20%)" : G_MED, borderRadius: 20, padding: "0 5px", fontSize: 10, fontWeight: 800, color: pinned ? G_TXT : G }}>
                       {count}
