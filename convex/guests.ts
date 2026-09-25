@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { mutation, query } from "./_generated/server";
 import { isCurrentUserAdminEligible, isTeamEmail, requireAdmin } from "./adminAuth";
+import { currentRosterIds } from "./roster";
 
 const MAX_MESSAGE_LENGTH = 500;
 const MAX_TEAM_NUMBER = 99999;
@@ -81,13 +82,59 @@ export const requestAccess = mutation({
  * Every guest application, newest first. Admin-eligible callers only — the
  * list contains applicants' emails. Returns [] rather than throwing so an
  * offline-cached UI degrades quietly (same convention as listAdminStatuses).
+ *
+ * Each row carries the guest's `userId` (for Add to event / Deactivate) and
+ * `onRoster` for the current event. Deactivated guests are left out entirely
+ * so old guests stop cluttering the panel; they reappear if they sign back in.
  */
 export const listRequests = query({
   args: {},
   handler: async (ctx) => {
     if (!(await isCurrentUserAdminEligible(ctx))) return [];
-    const rows = await ctx.db.query("guestAccess").collect();
-    return rows.sort((a, b) => b.requestedAt - a.requestedAt);
+    const [rows, deactivated, roster] = await Promise.all([
+      ctx.db.query("guestAccess").collect(),
+      ctx.db.query("deactivatedUsers").collect(),
+      currentRosterIds(ctx),
+    ]);
+    const hidden = new Set(deactivated.map((d) => d.userId));
+    const withUsers = await Promise.all(
+      rows.map(async (r) => {
+        const user = await ctx.db
+          .query("users")
+          .withIndex("email", (q) => q.eq("email", r.email))
+          .first();
+        return { ...r, userId: user?._id ?? null, onRoster: !!user && roster.has(user._id) };
+      }),
+    );
+    return withUsers
+      .filter((r) => !(r.userId && hidden.has(r.userId)))
+      .sort((a, b) => b.requestedAt - a.requestedAt);
+  },
+});
+
+/**
+ * Number of guests waiting on an admin, for the red dot on the Manage Scouts
+ * nav item. 0 for anyone not admin-eligible. Deactivated applicants don't
+ * count — they're hidden from the panel, so a dot for them couldn't be cleared.
+ */
+export const pendingCount = query({
+  args: {},
+  handler: async (ctx) => {
+    if (!(await isCurrentUserAdminEligible(ctx))) return 0;
+    const pending = await ctx.db
+      .query("guestAccess")
+      .withIndex("by_status", (q) => q.eq("status", "pending"))
+      .collect();
+    const deactivated = new Set((await ctx.db.query("deactivatedUsers").collect()).map((d) => d.userId));
+    let count = 0;
+    for (const r of pending) {
+      const user = await ctx.db
+        .query("users")
+        .withIndex("email", (q) => q.eq("email", r.email))
+        .first();
+      if (!user || !deactivated.has(user._id)) count++;
+    }
+    return count;
   },
 });
 

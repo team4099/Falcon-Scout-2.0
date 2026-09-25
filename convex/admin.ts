@@ -12,6 +12,7 @@ import {
   requireAdmin,
   requireInherentAdmin,
 } from "./adminAuth";
+import { currentEventKey, rosterRow } from "./roster";
 
 /**
  * Whether the signed-in caller is currently eligible for admin mode — either
@@ -208,7 +209,9 @@ export const listDeactivatedUsers = query({
  * Soft-delete a user: hides them from Manage Scouts and every scout pool
  * (schedule generation, pit assignment, ...) without touching their account
  * or past submissions. Automatically reversed the next time they sign back
- * in (see users.reactivateSelf). Can't be used on an inherent admin.
+ * in (see users.reactivateSelf). Can't be used on an inherent admin. Also
+ * takes them off the current event's roster, so signing back in lands them
+ * in "Not on roster" rather than straight back onto the schedule.
  */
 export const deactivateUser = mutation({
   args: { userId: v.id("users") },
@@ -226,6 +229,9 @@ export const deactivateUser = mutation({
     if (!existing) {
       await ctx.db.insert("deactivatedUsers", { userId, deactivatedAt: Date.now(), deactivatedBy: callerId });
     }
+    const eventKey = await currentEventKey(ctx);
+    const onRoster = eventKey && (await rosterRow(ctx, eventKey, userId));
+    if (onRoster) await ctx.db.delete(onRoster._id);
   },
 });
 

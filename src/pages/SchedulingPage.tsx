@@ -36,6 +36,8 @@ interface User {
   name?: string;
   email?: string;
   image?: string;
+  /** Set by users.listUsers: on the current event's roster (convex/roster.ts). */
+  onRoster?: boolean;
 }
 
 interface MatchAssignment {
@@ -2483,10 +2485,16 @@ export default function SchedulingPage() {
   const currentEvent = useCached(useQuery(api.events.getCurrentEvent), "current_event");
   const eventKey = currentEvent?.eventKey ?? "";
 
-  const allUsers = useCached(
+  const everyUser = useCached(
     useQuery(api.users.listUsers) as User[] | undefined,
     "all_users"
   ) as User[] | undefined;
+  // Only the current event's roster (Manage Scouts) is schedulable. A cached
+  // list from a pre-roster server has no flag, so it keeps everyone.
+  const allUsers = useMemo(
+    () => everyUser?.filter(u => u.onRoster !== false),
+    [everyUser]
+  );
 
   const allAssignments = useCached(
     useQuery(
@@ -2692,7 +2700,9 @@ export default function SchedulingPage() {
     [allAssignments, tbaQualCount]
   );
 
-  const userMap = useMemo(() => Object.fromEntries((allUsers ?? []).map(u => [u._id, u])), [allUsers]);
+  // Names resolve for everyone, so an assignment for someone since taken off
+  // the roster still shows who it was.
+  const userMap = useMemo(() => Object.fromEntries((everyUser ?? []).map(u => [u._id, u])), [everyUser]);
 
   // Alphabetized copy of allUsers — used everywhere scouts are listed for
   // admin selection (order-preserving filters downstream stay alphabetized too).

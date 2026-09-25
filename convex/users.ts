@@ -7,6 +7,7 @@ import {
   requireAdmin,
   requireUser,
 } from "./adminAuth";
+import { currentRosterIds } from "./roster";
 
 export const viewer = query({
   args: {},
@@ -26,22 +27,25 @@ export const getUser = query({
 });
 
 /**
- * All users, minus anyone an admin has soft-deleted (see
- * convex/admin.ts's deactivateUser). This is the single pool every
- * scout-picking process (Manage Scouts, scheduling, pit assignment, ...)
- * draws from, so filtering here is what makes deactivation apply everywhere.
+ * All users with access, minus anyone an admin has soft-deleted (see
+ * convex/admin.ts's deactivateUser), so deactivation applies everywhere.
+ * Each is stamped `onRoster` for the current event (convex/roster.ts):
+ * scout-picking (scheduling, Manage Scouts' roster, partner picker) filters
+ * on it, while name lookups use the whole list. Cached clients from before
+ * the roster ignore the flag and keep seeing everyone.
  */
 export const listUsers = query({
   args: {},
   handler: async (ctx) => {
     await requireUser(ctx);
-    const [allUsers, deactivated, guests] = await Promise.all([
+    const [allUsers, deactivated, guests, roster] = await Promise.all([
       ctx.db.query("users").collect(),
       ctx.db.query("deactivatedUsers").collect(),
       ctx.db
         .query("guestAccess")
         .withIndex("by_status", (q) => q.eq("status", "approved"))
         .collect(),
+      currentRosterIds(ctx),
     ]);
     const guestTeam = new Map(guests.map((g) => [g.email, g.teamNumber]));
     const approved = new Set(guestTeam.keys());
@@ -53,7 +57,8 @@ export const listUsers = query({
       .filter((u) => hasAccess(u, approved) && !deactivatedSet.has(u._id))
       .map((u) => {
         const team = u.email ? guestTeam.get(u.email.trim().toLowerCase()) : undefined;
-        return team === undefined ? u : { ...u, guestTeamNumber: team };
+        const onRoster = roster.has(u._id);
+        return team === undefined ? { ...u, onRoster } : { ...u, onRoster, guestTeamNumber: team };
       });
   },
 });
@@ -108,12 +113,15 @@ export const addScoutByEmail = mutation({
  * Called once per session by the client right after a successful sign-in
  * (see App.tsx). Clears a soft-delete so a deactivated user who signs back
  * in is immediately restored everywhere, per the "until they sign in again"
- * rule — a no-op for everyone else.
+ * rule — a no-op for everyone else. Deliberately not requireUser: a
+ * deactivated pending/denied guest signing back in should reappear in the
+ * admin's guest panel too. It only ever touches the caller's own row.
  */
 export const reactivateSelf = mutation({
   args: {},
   handler: async (ctx) => {
-    const userId = await requireUser(ctx);
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return;
     const existing = await ctx.db
       .query("deactivatedUsers")
       .withIndex("by_user", (q) => q.eq("userId", userId))

@@ -50,6 +50,8 @@ interface User {
   image?: string;
   /** Set by users.listUsers for approved guests: the FRC team they're from. */
   guestTeamNumber?: number;
+  /** Set by users.listUsers: on the current event's roster (convex/roster.ts). */
+  onRoster?: boolean;
 }
 
 interface ScoutPreference {
@@ -935,7 +937,9 @@ export default function ManageScoutsPage() {
   const [nameDraft, setNameDraft] = useState("");
   const [savingName, setSavingName] = useState(false);
   const [deactivating, setDeactivating] = useState<string | null>(null);
-  const [showDeactivated, setShowDeactivated] = useState(false);
+  // null = automatic: the pool starts open only while the roster is empty.
+  const [showPool, setShowPool] = useState<boolean | null>(null);
+  const [rosterBusy, setRosterBusy] = useState<string | null>(null);
   const [addingScout, setAddingScout] = useState(false);
   const [addScoutEmail, setAddScoutEmail] = useState("");
   const [savingScout, setSavingScout] = useState(false);
@@ -943,7 +947,13 @@ export default function ManageScoutsPage() {
 
   const currentEvent = useCached(useQuery(api.events.getCurrentEvent), "current_event");
   const eventKey = currentEvent?.eventKey ?? "";
-  const allUsers = useQuery(api.users.listUsers) as User[] | undefined;
+  // Everyone with access; the page is split by the current event's roster
+  // (convex/roster.ts). A pre-roster cached list has no flag → all on roster.
+  const everyUser = useQuery(api.users.listUsers) as User[] | undefined;
+  const allUsers = everyUser?.filter((u) => u.onRoster !== false);
+  const offRoster = (everyUser ?? [])
+    .filter((u) => u.onRoster === false)
+    .sort((a, b) => displayName(a).localeCompare(displayName(b)));
   const submissions = useQuery(
     api.forms.listSubmissions,
     currentEvent ? { eventKey } : "skip"
@@ -989,12 +999,11 @@ export default function ManageScoutsPage() {
   const setDriveTeamMember  = useAdminMutation(api.admin.setDriveTeamMember);
   const setAdminLabel       = useAdminMutation(api.admin.setAdminLabel);
   const setUserName         = useAdminMutation(api.users.setUserName);
-  const addScoutByEmail     = useAdminMutation(api.users.addScoutByEmail);
+  const addToRosterByEmail  = useAdminMutation(api.roster.addToRosterByEmail);
+  const addToRoster         = useAdminMutation(api.roster.addToRoster);
+  const removeFromRoster    = useAdminMutation(api.roster.removeFromRoster);
   const deactivateUser      = useAdminMutation(api.admin.deactivateUser);
   const reactivateUser      = useAdminMutation(api.admin.reactivateUser);
-  const deactivatedUsers = useQuery(api.admin.listDeactivatedUsers) as
-    | { userId: string; deactivatedAt: number; user: User | null }[]
-    | undefined;
 
   // Saving state
   const [clearingSlot, setClearingSlot]   = useState<string | null>(null);
@@ -1048,7 +1057,9 @@ export default function ManageScoutsPage() {
     scoutsWithoutSubs.sort((a, b) => displayName(a).localeCompare(displayName(b)));
   }
 
-  const selectedUser = (allUsers ?? []).find((u) => u._id === selectedUserId) ?? null;
+  // From everyone, so the panel stays open (showing "Add to event") right
+  // after someone is taken off the roster.
+  const selectedUser = (everyUser ?? []).find((u) => u._id === selectedUserId) ?? null;
   const selectedSubmissions = selectedUserId
     ? (submissionsByScout[selectedUserId] ?? []).sort(
         (a, b) => (a.matchNumber ?? 0) - (b.matchNumber ?? 0)
@@ -1209,13 +1220,17 @@ export default function ManageScoutsPage() {
   }
 
   async function handleDeactivateUser(userId: string, name: string) {
-    if (!window.confirm(`Deactivate ${name}? They'll be hidden from Manage Scouts and excluded from schedule generation until they sign in again.`)) return;
+    if (!window.confirm(`Deactivate ${name}? They'll be hidden from the app until they sign in again.`)) return;
     setDeactivating(userId);
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await deactivateUser({ userId: userId as any });
-      toast.success(`${name} deactivated.`);
-      setSelectedUserId(null);
+      // Deactivated users aren't listed anywhere, so Undo is the only way
+      // back short of them signing in.
+      toast.success(`${name} deactivated.`, {
+        action: { label: "Undo", onClick: () => handleReactivateUser(userId, name) },
+      });
+      if (selectedUserId === userId) setSelectedUserId(null);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't deactivate user.");
     } finally {
@@ -1236,21 +1251,33 @@ export default function ManageScoutsPage() {
     }
   }
 
+  /** Add or remove people from the current event's roster. */
+  async function handleRoster(userIds: string[], add: boolean, label: string) {
+    setRosterBusy(userIds.length === 1 ? userIds[0] : "__all");
+    try {
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      if (add) await addToRoster({ userIds: userIds as any });
+      else await removeFromRoster({ userId: userIds[0] as any });
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+      toast.success(add ? `${label} added to the roster.` : `${label} removed from the roster.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't update the roster.");
+    } finally {
+      setRosterBusy(null);
+    }
+  }
+
   async function handleAddScout() {
     const trimmed = addScoutEmail.trim().toLowerCase();
     if (!trimmed) return;
-    if (!trimmed.endsWith("@team4099.com")) {
-      toast.error("Only team4099.com emails can be added.");
-      return;
-    }
     setSavingScout(true);
     try {
-      await addScoutByEmail({ email: trimmed });
-      toast.success(`${trimmed} added.`);
+      await addToRosterByEmail({ email: trimmed });
+      toast.success(`${trimmed} added to the roster.`);
       setAddScoutEmail("");
       setAddingScout(false);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't add scout.");
+      toast.error(err instanceof Error ? err.message : "Couldn't add them.");
     } finally {
       setSavingScout(false);
     }
@@ -1475,7 +1502,7 @@ export default function ManageScoutsPage() {
                     color: "oklch(0.85 0.18 95)",
                   }}
                 >
-                  All Scouts
+                  Event Roster
                 </span>
                 <span
                   style={{
@@ -1511,7 +1538,7 @@ export default function ManageScoutsPage() {
                 </button>
                 <button
                   onClick={() => setAddingScout((v) => !v)}
-                  title="Add a scout by email"
+                  title="Add someone to this event by email — works before they've signed in"
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -1550,7 +1577,7 @@ export default function ManageScoutsPage() {
                       if (e.key === "Enter") handleAddScout();
                       if (e.key === "Escape") setAddingScout(false);
                     }}
-                    placeholder="scout@team4099.com"
+                    placeholder="Email (team or guest)"
                     disabled={savingScout}
                     style={{
                       flex: 1,
@@ -1704,78 +1731,118 @@ export default function ManageScoutsPage() {
                     </>
                   )}
 
-                  {/* Deactivated (soft-deleted) users — restorable */}
-                  {(deactivatedUsers ?? []).length > 0 && (
-                    <>
-                      <Separator style={{ margin: "10px 4px" }} />
-                      <button
-                        onClick={() => setShowDeactivated(s => !s)}
-                        style={{
-                          display: "flex", alignItems: "center", gap: 6, width: "100%",
-                          padding: "6px 4px 4px", marginBottom: 2, border: "none", background: "transparent", cursor: "pointer",
-                        }}
-                      >
-                        <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted-foreground)" }}>
-                          Deactivated
-                        </span>
-                        <div style={{ flex: 1, height: 1, background: "oklch(1 0 0 / 8%)", borderRadius: 999 }} />
-                        <span style={{ fontSize: 10, fontWeight: 700, color: "var(--muted-foreground)" }}>{deactivatedUsers!.length}</span>
-                        <ChevronRight size={12} style={{ color: "var(--muted-foreground)", transform: showDeactivated ? "rotate(90deg)" : "none" }} />
-                      </button>
-                      {showDeactivated && [...deactivatedUsers!]
-                        .sort((a, b) =>
-                          sortAlpha
-                            ? displayName(a.user ?? { _id: a.userId }).localeCompare(displayName(b.user ?? { _id: b.userId }))
-                            : b.deactivatedAt - a.deactivatedAt
-                        )
-                        .map(({ userId, user }) => (
-                        <div key={userId} style={{
-                          display: "flex", alignItems: "center", gap: 8,
-                          padding: "6px 8px", borderRadius: 9, opacity: 0.7,
-                        }}>
-                          <Avatar user={user ?? { _id: userId }} size={24} />
-                          <div style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, color: "var(--muted-foreground)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                            {user ? displayName(user) : "Unknown"}
-                          </div>
-                          <button
-                            onClick={() => handleReactivateUser(userId, user ? displayName(user) : "Scout")}
-                            disabled={deactivating === userId}
-                            style={{
-                              border: "none", background: "transparent", cursor: "pointer",
-                              padding: "3px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700,
-                              color: "oklch(0.6 0.18 180)",
-                            }}
-                          >
-                            Restore
-                          </button>
-                        </div>
-                      ))}
-                    </>
-                  )}
-
-                  {/* No users at all */}
-                  {(allUsers ?? []).length === 0 && (
+                  {/* Nobody on this event's roster yet */}
+                  {everyUser !== undefined && (allUsers ?? []).length === 0 && (
                     <div
                       style={{
                         display: "flex",
                         flexDirection: "column",
                         alignItems: "center",
                         gap: 12,
-                        padding: "48px 16px",
+                        padding: offRoster.length > 0 ? "24px 16px" : "48px 16px",
                         textAlign: "center",
                       }}
                     >
                       <Users size={32} style={{ color: "var(--muted-foreground)", opacity: 0.4 }} />
                       <div>
                         <div style={{ fontWeight: 600, color: "var(--foreground)", marginBottom: 4 }}>
-                          No scouts yet
+                          No one on the roster yet
                         </div>
                         <div style={{ fontSize: 13, color: "var(--muted-foreground)" }}>
-                          Scouts will appear here once they sign in.
+                          {offRoster.length > 0
+                            ? "Add who's attending from Not on roster, or by email with the + button."
+                            : "Add who's attending by email with the + button."}
                         </div>
                       </div>
                     </div>
                   )}
+                  {/* Signed-in users not attending this event — add or deactivate */}
+                  {offRoster.length > 0 && (() => {
+                    const poolOpen = showPool ?? (allUsers ?? []).length === 0;
+                    return (
+                    <>
+                      <Separator style={{ margin: "10px 4px" }} />
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 4px 4px", marginBottom: 2 }}>
+                        <button
+                          onClick={() => setShowPool(!poolOpen)}
+                          aria-expanded={poolOpen}
+                          style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, minWidth: 0, border: "none", background: "transparent", cursor: "pointer", padding: 0 }}
+                        >
+                          <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted-foreground)" }}>
+                            Not on roster
+                          </span>
+                          <div style={{ flex: 1, height: 1, background: "oklch(1 0 0 / 8%)", borderRadius: 999 }} />
+                          <span style={{ fontSize: 10, fontWeight: 700, color: "var(--muted-foreground)" }}>{offRoster.length}</span>
+                          <ChevronRight size={12} style={{ color: "var(--muted-foreground)", transform: poolOpen ? "rotate(90deg)" : "none" }} />
+                        </button>
+                        {poolOpen && offRoster.length > 1 && (
+                          <button
+                            onClick={() => {
+                              if (window.confirm(`Add all ${offRoster.length} people to the ${currentEvent.eventKey} roster?`)) {
+                                handleRoster(offRoster.map((u) => u._id), true, `${offRoster.length} people`);
+                              }
+                            }}
+                            disabled={rosterBusy !== null}
+                            style={{ border: "none", background: "transparent", cursor: "pointer", padding: "2px 4px", fontSize: 10, fontWeight: 700, color: "oklch(0.85 0.18 95)" }}
+                          >
+                            Add all
+                          </button>
+                        )}
+                      </div>
+                      {poolOpen && offRoster.map((user) => {
+                        const name = displayName(user);
+                        const busy = rosterBusy === user._id || rosterBusy === "__all" || deactivating === user._id;
+                        return (
+                        <div key={user._id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 9 }}>
+                          <Avatar user={user} size={24} />
+                          <div style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, color: "var(--muted-foreground)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {name}
+                            {user.guestTeamNumber !== undefined && (
+                              <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: "oklch(0.85 0.18 95 / 80%)" }}>
+                                Team {user.guestTeamNumber}
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => {
+                              setShowPool((v) => v ?? true); // keep open while adding one by one
+                              handleRoster([user._id], true, name);
+                            }}
+                            disabled={busy}
+                            title={`Add ${name} to this event`}
+                            style={{
+                              display: "flex", alignItems: "center", gap: 4, flexShrink: 0,
+                              border: "1px solid oklch(0.85 0.18 95 / 40%)", background: "oklch(0.85 0.18 95 / 12%)",
+                              cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1,
+                              padding: "5px 9px", borderRadius: 7, fontSize: 11, fontWeight: 700,
+                              color: "oklch(0.85 0.18 95)",
+                            }}
+                          >
+                            <UserPlus size={11} /> Add
+                          </button>
+                          {!adminStatusByUser[user._id]?.isInherentAdmin && (
+                            <button
+                              onClick={() => handleDeactivateUser(user._id, name)}
+                              disabled={busy}
+                              title={`Deactivate ${name} (hidden until they sign in again)`}
+                              aria-label={`Deactivate ${name}`}
+                              style={{
+                                display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                                width: 28, height: 26, border: "1px solid oklch(1 0 0 / 10%)", background: "transparent",
+                                cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1,
+                                borderRadius: 7, color: "var(--muted-foreground)",
+                              }}
+                            >
+                              <Ban size={12} />
+                            </button>
+                          )}
+                        </div>
+                        );
+                      })}
+                    </>
+                    );
+                  })()}
+
                 </div>
               </ScrollArea>
             </div>
@@ -2647,6 +2714,28 @@ export default function ManageScoutsPage() {
                           : `Delete all ${selectedSubmissions.length} report${selectedSubmissions.length !== 1 ? "s" : ""}`}
                       </button>
                     )}
+
+                    {/* ── Roster membership for the current event ── */}
+                    <button
+                      onClick={() => handleRoster([selectedUser._id], selectedUser.onRoster === false, displayName(selectedUser))}
+                      disabled={rosterBusy !== null}
+                      style={{
+                        display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                        padding: "9px 12px",
+                        borderRadius: 11,
+                        background: "oklch(1 0 0 / 4%)",
+                        border: "1px solid oklch(1 0 0 / 12%)",
+                        color: "var(--foreground)",
+                        fontSize: 12.5, fontWeight: 700,
+                        cursor: rosterBusy !== null ? "default" : "pointer",
+                        opacity: rosterBusy !== null ? 0.6 : 1,
+                        marginTop: 8,
+                      }}
+                    >
+                      {selectedUser.onRoster === false
+                        ? <><UserPlus size={13} /> Add to {currentEvent.eventKey}</>
+                        : <><UserMinus size={13} /> Remove from {currentEvent.eventKey}</>}
+                    </button>
 
                     {/* ── Deactivate user (soft delete) — most destructive action, always last ── */}
                     {!adminStatusByUser[selectedUser._id]?.isInherentAdmin && (

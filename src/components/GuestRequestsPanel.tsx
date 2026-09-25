@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { toast } from "sonner";
-import { Check, ChevronDown, X, UserPlus } from "lucide-react";
+import { Ban, Check, ChevronDown, X, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
@@ -25,11 +25,18 @@ type Decision = "approved" | "denied";
  *
  * Each row shows the guest's FRC team, editable in place — guests approved
  * before the team field existed have none until an admin fills it in.
+ *
+ * Approved guests can be put on the current event's roster from here (so they
+ * get scheduled), and any guest can be deactivated to clear them out of this
+ * list; they come back only if they sign in again (guests.listRequests).
  */
 export default function GuestRequestsPanel() {
   const isAdmin = useQuery(api.admin.isCurrentUserAdmin);
   const requests = useQuery(api.guests.listRequests);
   const decide = useMutation(api.guests.decideRequest);
+  const addToRoster = useMutation(api.roster.addToRoster);
+  const deactivate = useMutation(api.admin.deactivateUser);
+  const reactivate = useMutation(api.admin.reactivateUser);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [openOverride, setOpenOverride] = useState<boolean | null>(null);
 
@@ -53,6 +60,18 @@ export default function GuestRequestsPanel() {
       toast.error(
         err instanceof Error ? err.message : "Couldn't update that request.",
       );
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function run(id: string, fn: () => Promise<unknown>, ok: string, undo?: () => Promise<unknown>) {
+    setBusyId(id);
+    try {
+      await fn();
+      toast.success(ok, undo && { action: { label: "Undo", onClick: () => void undo().catch(() => {}) } });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
       setBusyId(null);
     }
@@ -121,8 +140,21 @@ export default function GuestRequestsPanel() {
                         : "text-muted-foreground"
                     }`}
                   >
-                    {r.status === "approved" ? "Approved" : "Denied"}
+                    {r.status === "denied" ? "Denied" : r.onRoster ? "On roster" : "Approved"}
                   </span>
+                )}
+                {r.status === "approved" && r.userId && !r.onRoster && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 gap-1"
+                    disabled={busyId === r._id}
+                    onClick={() =>
+                      run(r._id, () => addToRoster({ userIds: [r.userId!] }), `${r.name || r.email} added to the roster.`)
+                    }
+                  >
+                    <UserPlus className="h-3.5 w-3.5" /> Add to event
+                  </Button>
                 )}
                 {r.status !== "approved" && (
                   <Button
@@ -144,6 +176,28 @@ export default function GuestRequestsPanel() {
                   >
                     <X className="h-3.5 w-3.5" />{" "}
                     {r.status === "approved" ? "Revoke" : "Deny"}
+                  </Button>
+                )}
+                {r.userId && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 w-8 p-0 text-muted-foreground"
+                    title="Deactivate: hide this guest until they sign in again"
+                    aria-label={`Deactivate ${r.name || r.email}`}
+                    disabled={busyId === r._id}
+                    onClick={() => {
+                      const userId = r.userId!;
+                      if (!window.confirm(`Deactivate ${r.name || r.email}? They'll be hidden until they sign in again.`)) return;
+                      run(
+                        r._id,
+                        () => deactivate({ userId }),
+                        `${r.name || r.email} deactivated.`,
+                        () => reactivate({ userId }),
+                      );
+                    }}
+                  >
+                    <Ban className="h-3.5 w-3.5" />
                   </Button>
                 )}
               </div>

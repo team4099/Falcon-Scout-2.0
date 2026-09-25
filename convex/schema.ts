@@ -458,4 +458,16 @@ export default defineSchema({
     deactivatedBy: v.id("users"),
   })
     .index("by_user", ["userId"]),
+
+  // Who is attending each event (see convex/roster.ts). Scheduling and the
+  // Manage Scouts "Event Roster" draw only from this; everyone else with
+  // access sits in "Not on roster". users.listUsers stamps `onRoster`.
+  eventRoster: defineTable({
+    eventKey: v.string(),
+    userId:   v.id("users"),
+    addedAt:  v.number(),
+    addedBy:  v.id("users"),
+  })
+    .index("by_event", ["eventKey"])
+    .index("by_event_user", ["eventKey", "userId"]),
 });

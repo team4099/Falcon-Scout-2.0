@@ -75,7 +75,17 @@ const BASE_NAV = [
   { to: "/data",      label: "Data Viewer",     icon: BarChart2       },
 ];
 
-function NavItem({ to, label, icon: Icon }: { to: string; label: string; icon: React.ElementType }) {
+/** Red "needs attention" dot, e.g. pending guest requests on Manage Scouts. */
+function AlertDot({ className = "" }: { className?: string }) {
+  return (
+    <span
+      aria-label="Needs attention"
+      className={`h-2 w-2 rounded-full bg-red-500 ring-2 ring-card ${className}`}
+    />
+  );
+}
+
+function NavItem({ to, label, icon: Icon, alert }: NavEntry) {
   return (
     <NavLink
       to={to}
@@ -90,11 +100,12 @@ function NavItem({ to, label, icon: Icon }: { to: string; label: string; icon: R
     >
       <Icon className="h-4 w-4 shrink-0" />
       {label}
+      {alert && <AlertDot className="ml-auto" />}
     </NavLink>
   );
 }
 
-type NavEntry = { to: string; label: string; icon: React.ElementType };
+type NavEntry = { to: string; label: string; icon: React.ElementType; alert?: boolean };
 
 function MobileBottomNav({ primary, more }: { primary: NavEntry[]; more: NavEntry[] }) {
   const [moreOpen, setMoreOpen] = useState(false);
@@ -131,7 +142,7 @@ function MobileBottomNav({ primary, more }: { primary: NavEntry[]; more: NavEntr
           </button>
         </div>
         <div className="grid grid-cols-4 gap-1 p-3">
-          {more.map(({ to, label, icon: Icon }) => (
+          {more.map(({ to, label, icon: Icon, alert }) => (
             <NavLink
               key={to}
               to={to}
@@ -147,8 +158,9 @@ function MobileBottomNav({ primary, more }: { primary: NavEntry[]; more: NavEntr
             >
               {({ isActive }) => (
                 <>
-                  <div className={`p-2 rounded-xl transition-colors ${isActive ? "bg-primary/10" : "bg-muted/60"}`}>
+                  <div className={`relative p-2 rounded-xl transition-colors ${isActive ? "bg-primary/10" : "bg-muted/60"}`}>
                     <Icon className="h-5 w-5" />
+                    {alert && <AlertDot className="absolute right-1 top-1" />}
                   </div>
                   <span className="truncate w-full text-center">{label}</span>
                 </>
@@ -191,8 +203,9 @@ function MobileBottomNav({ primary, more }: { primary: NavEntry[]; more: NavEntr
             moreOpen ? "text-primary" : "text-muted-foreground"
           }`}
         >
-          <div className={`p-1.5 rounded-xl transition-colors ${moreOpen ? "bg-primary/10" : ""}`}>
+          <div className={`relative p-1.5 rounded-xl transition-colors ${moreOpen ? "bg-primary/10" : ""}`}>
             <MoreHorizontal className="h-5 w-5" />
+            {more.some((m) => m.alert) && <AlertDot className="absolute right-0.5 top-0.5" />}
           </div>
           <span>More</span>
         </button>
@@ -214,6 +227,8 @@ function AuthenticatedApp() {
   const { status: backendStatus, backendConnected } = useBackendReachable();
   const isOnline = backendConnected;
   const { isAdminMode, setAdminMode } = useUIStore();
+  // Guests waiting on approval → red dot on Manage Scouts (0 for non-admins).
+  const guestsPending = (useQuery(api.guests.pendingCount, isAdminMode ? {} : "skip") ?? 0) > 0;
 
   // Build nav dynamically — admin-only items shown/hidden based on isAdminMode
   const NAV = [
@@ -221,7 +236,7 @@ function AuthenticatedApp() {
     ...(isAdminMode
       ? [
           { to: "/builder",     label: "Form Builder",  icon: WrenchIcon  },
-          { to: "/scouts",      label: "Manage Scouts", icon: Users       },
+          { to: "/scouts",      label: "Manage Scouts", icon: Users, alert: guestsPending },
         ]
       : []),
     { to: "/settings", label: "Settings", icon: Settings },
@@ -244,7 +259,7 @@ function AuthenticatedApp() {
     { to: "/scheduling", label: "Scheduling", icon: CalendarDays },
     ...(isAdminMode
       ? [
-          { to: "/scouts",      label: "Scouts",       icon: Users       },
+          { to: "/scouts",      label: "Scouts",       icon: Users, alert: guestsPending },
           { to: "/builder",     label: "Form Builder", icon: WrenchIcon  },
         ]
       : []),
@@ -571,10 +586,12 @@ export default function App() {
 
   // If an admin soft-deleted this account while they were away, signing
   // back in restores them everywhere — fire once per fresh authenticated
-  // session. A no-op for everyone who was never deactivated.
+  // session. A no-op for everyone who was never deactivated. Not gated on
+  // access: a deactivated pending guest signing back in should reappear in
+  // the admin's guest panel.
   useEffect(() => {
-    if (isAuthenticated && hasAccess) reactivateSelf({}).catch(() => {});
-  }, [isAuthenticated, hasAccess, reactivateSelf]);
+    if (isAuthenticated) reactivateSelf({}).catch(() => {});
+  }, [isAuthenticated, reactivateSelf]);
 
   // Read the cached session once per mount rather than on every render.
   const offlineReady = useMemo(

@@ -619,7 +619,7 @@ function QualPitCard({ rotation, done, onToggle }: { rotation: PitRotation; done
 
 // ── Preferences Panel ────────────────────────────────────────────────────────
 
-interface UserRecord { _id: string; name?: string; email?: string; image?: string; }
+interface UserRecord { _id: string; name?: string; email?: string; image?: string; onRoster?: boolean; }
 interface ScoutPrefs { preferredPartners: string[]; wantsMoreMatches: boolean; wantsPitRotation: boolean; wantsPitScouting?: boolean; }
 
 function displayName(u: UserRecord) { return u.name ?? u.email ?? "Scout"; }
@@ -685,8 +685,10 @@ function PartnerPicker({
   selected: string[];
   onChange: (ids: string[]) => void;
 }) {
+  // Only people at this event (plus anyone already picked, so they can be
+  // un-picked). Pre-roster cached lists have no flag and keep everyone.
   const scouts = allUsers
-    .filter(u => u._id !== selfId)
+    .filter(u => u._id !== selfId && (u.onRoster !== false || selected.includes(u._id)))
     .sort((a, b) => displayName(a).localeCompare(displayName(b)));
 
   function toggle(id: string) {
