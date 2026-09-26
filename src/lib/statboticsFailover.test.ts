@@ -1,4 +1,4 @@
-// Statbotics host failover: official API first, community mirror as standby.
+// Statbotics host failover: community mirror first, official API as standby.
 //
 // These assert on which host each call actually hits, because a silent failover
 // is indistinguishable from normal operation until the mirror dies too — the
@@ -44,72 +44,72 @@ afterEach(() => {
 });
 
 describe("statbotics host failover", () => {
-  it("uses the official API when it is healthy, never touching the mirror", async () => {
-    const calls = mockHosts({ primary: ok({ team: 4099, epa: {} }) });
+  it("uses the mirror first, never touching the official API while it is healthy", async () => {
+    const calls = mockHosts({ mirror: ok({ team: 4099, epa: {} }) });
 
     const data = await fetchStatboticsTeamYear(4099, 2026);
 
     expect(data).toEqual({ team: 4099, epa: {} });
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toContain(PRIMARY);
-    expect(getStatboticsHealth().active).toBe("primary");
+    expect(calls[0]).toContain(MIRROR);
+    expect(getStatboticsHealth().active).toBe("mirror");
   });
 
-  it("falls back to the mirror when the official API errors", async () => {
-    const calls = mockHosts({ primary: fail(503), mirror: ok({ team: 4099, epa: {} }) });
+  it("falls back to the official API when the mirror errors", async () => {
+    const calls = mockHosts({ mirror: fail(503), primary: ok({ team: 4099, epa: {} }) });
 
     const data = await fetchStatboticsTeamYear(4099, 2026);
 
     expect(data).toEqual({ team: 4099, epa: {} });
-    expect(calls[0]).toContain(PRIMARY);
-    expect(calls[1]).toContain(MIRROR);
+    expect(calls[0]).toContain(MIRROR);
+    expect(calls[1]).toContain(PRIMARY);
 
     const health = getStatboticsHealth();
-    expect(health.active).toBe("mirror");
-    expect(health.lastError).toMatchObject({ source: "primary", status: 503 });
+    expect(health.active).toBe("primary");
+    expect(health.lastError).toMatchObject({ source: "mirror", status: 503 });
   });
 
-  it("falls back when the official API is unreachable entirely", async () => {
-    const calls = mockHosts({ primary: unreachable, mirror: ok({ team: 4099, epa: {} }) });
+  it("falls back when the mirror is unreachable entirely", async () => {
+    const calls = mockHosts({ mirror: unreachable, primary: ok({ team: 4099, epa: {} }) });
 
     await fetchStatboticsTeamYear(4099, 2026);
 
-    expect(calls[1]).toContain(MIRROR);
+    expect(calls[1]).toContain(PRIMARY);
     // status 0 distinguishes a network/CORS failure from an HTTP error.
-    expect(getStatboticsHealth().lastError).toMatchObject({ source: "primary", status: 0 });
+    expect(getStatboticsHealth().lastError).toMatchObject({ source: "mirror", status: 0 });
   });
 
-  it("sticks to the mirror for follow-up calls instead of retrying a dead host", async () => {
-    mockHosts({ primary: fail(503), mirror: ok({ team: 4099, epa: {} }) });
+  it("stays on the official API for follow-up calls instead of retrying a dead mirror", async () => {
+    mockHosts({ mirror: fail(503), primary: ok({ team: 4099, epa: {} }) });
     await fetchStatboticsTeamYear(4099, 2026);
 
     // Different team → different cache key, so this is a real second request.
-    const calls = mockHosts({ primary: fail(503), mirror: ok({ team: 254, epa: {} }) });
+    const calls = mockHosts({ mirror: fail(503), primary: ok({ team: 254, epa: {} }) });
     await fetchStatboticsTeamYear(254, 2026);
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toContain(MIRROR);
+    expect(calls[0]).toContain(PRIMARY);
   });
 
-  it("retries the official API once the stickiness window lapses", async () => {
-    mockHosts({ primary: fail(503), mirror: ok({ team: 4099, epa: {} }) });
+  it("retries the mirror once the stickiness window lapses", async () => {
+    mockHosts({ mirror: fail(503), primary: ok({ team: 4099, epa: {} }) });
     await fetchStatboticsTeamYear(4099, 2026);
-    expect(getStatboticsHealth().active).toBe("mirror");
+    expect(getStatboticsHealth().active).toBe("primary");
 
     // Six minutes later — past the 5-minute window.
     vi.spyOn(Date, "now").mockReturnValue(Date.now() + 6 * 60 * 1000);
 
-    const calls = mockHosts({ primary: ok({ team: 254, epa: {} }), mirror: ok({}) });
+    const calls = mockHosts({ mirror: ok({ team: 254, epa: {} }), primary: ok({}) });
     await fetchStatboticsTeamYear(254, 2026);
 
-    expect(calls[0]).toContain(PRIMARY);
-    expect(getStatboticsHealth().active).toBe("primary");
+    expect(calls[0]).toContain(MIRROR);
+    expect(getStatboticsHealth().active).toBe("mirror");
   });
 
   it("does not write an error-backoff entry until every host has failed", async () => {
     // A backoff written on the first failure would return stale data and the
-    // mirror would never be reached at all.
-    mockHosts({ primary: fail(500), mirror: ok({ team: 4099, epa: {} }) });
+    // second host would never be reached at all.
+    mockHosts({ mirror: fail(500), primary: ok({ team: 4099, epa: {} }) });
     await fetchStatboticsTeamYear(4099, 2026);
 
     const backoff = Object.keys(localStorage).filter((k) => k.endsWith("__err"));
@@ -130,25 +130,26 @@ describe("statbotics host failover", () => {
     const seen: string[] = [];
     const unsubscribe = subscribeStatboticsHealth((h) => seen.push(h.active));
 
-    mockHosts({ primary: fail(503), mirror: ok({ team: 4099, epa: {} }) });
+    mockHosts({ mirror: fail(503), primary: ok({ team: 4099, epa: {} }) });
     await fetchStatboticsTeamYear(4099, 2026);
 
-    expect(seen).toContain("mirror");
+    expect(seen).toContain("primary");
     unsubscribe();
   });
 });
 
 describe("checkStatboticsHosts", () => {
-  it("switches back to the official API when it has recovered", async () => {
-    mockHosts({ primary: fail(503), mirror: ok({}) });
+  it("switches back to the mirror when it has recovered", async () => {
+    mockHosts({ mirror: fail(503), primary: ok({}) });
     await fetchStatboticsTeamYear(4099, 2026);
-    expect(getStatboticsHealth().active).toBe("mirror");
+    expect(getStatboticsHealth().active).toBe("primary");
 
     mockHosts({ primary: ok({}), mirror: ok({}) });
     const result = await checkStatboticsHosts();
 
     expect(result).toEqual({ primary: true, mirror: true });
-    expect(getStatboticsHealth().active).toBe("primary");
+    expect(getStatboticsHealth().active).toBe("mirror");
+    expect(getStatboticsHealth().lastError).toBeNull();
   });
 
   it("reports both hosts down without claiming a healthy source", async () => {

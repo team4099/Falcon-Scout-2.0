@@ -212,7 +212,7 @@ export async function fetchTBATeamAvatar(teamNumber: number, year: number): Prom
 
 // ── Statbotics (no key required) ──────────────────────────────────────────────
 //
-// Official host first, community mirror as a standby. Which one is serving data
+// Community mirror first (the official API has been down), official host as the standby. Which one is serving data
 // is exposed via getStatboticsHealth() so admins can see it in Settings rather
 // than having to guess from missing EPA numbers.
 
@@ -230,13 +230,18 @@ export interface StatboticsHealth {
 
 const SB_HEALTH_KEY = "falconscout_statbotics_health";
 
-/** How long to keep using the mirror after the official host fails, before
- *  paying the cost of probing it again. Matches fetchWithCache's error backoff
- *  so a degraded official host doesn't add a failed round-trip to every call. */
+/** How long to keep the official host in front after the mirror fails, before
+ *  probing the mirror again. Matches fetchWithCache's error backoff. */
 const SB_MIRROR_STICKY_MS = 5 * 60 * 1000;
 
+/** A host that hangs must not stall EPA forever; give up and try the other. */
+const SB_TIMEOUT_MS = 10_000;
+
+/** How long to suppress retries after every host has failed. */
+const SB_ERROR_BACKOFF_MS = 60 * 1000;
+
 const SB_DEFAULT_HEALTH: StatboticsHealth = {
-  active: "primary", since: 0, lastError: null, lastSuccessAt: null,
+  active: "mirror", since: 0, lastError: null, lastSuccessAt: null,
 };
 
 export const STATBOTICS_HOSTS: Record<StatboticsSource, string> = {
@@ -276,12 +281,13 @@ function writeStatboticsHealth(patch: Partial<StatboticsHealth>): void {
   sbHealthListeners.forEach((fn) => fn(next));
 }
 
-/** The order to try hosts in. The mirror only goes first while it's holding a
- *  recent official-host failure, so recovery is automatic once that expires. */
+/** The order to try hosts in. The official API has been down, and the mirror
+ *  is where the data is kept live, so the mirror goes first. The official host
+ *  only leads while the mirror is holding a recent failure of its own. */
 function statboticsOrder(): StatboticsSource[] {
-  const h = getStatboticsHealth();
-  const stickyMirror = h.active === "mirror" && Date.now() - h.since < SB_MIRROR_STICKY_MS;
-  return stickyMirror ? ["mirror", "primary"] : ["primary", "mirror"];
+  const e = getStatboticsHealth().lastError;
+  const mirrorDown = e?.source === "mirror" && Date.now() - e.at < SB_MIRROR_STICKY_MS;
+  return mirrorDown ? ["primary", "mirror"] : ["mirror", "primary"];
 }
 
 function recordStatboticsSuccess(source: StatboticsSource): void {
@@ -320,7 +326,7 @@ async function fetchStatboticsWithCache<T>(
 
   for (const source of statboticsOrder()) {
     try {
-      const res = await fetch(`${STATBOTICS_HOSTS[source]}${path}`);
+      const res = await fetch(`${STATBOTICS_HOSTS[source]}${path}`, { signal: AbortSignal.timeout(SB_TIMEOUT_MS) });
       if (!res.ok) {
         console.warn(`[Statbotics:${source}] ${res.status} — ${path}`);
         lastStatus = res.status;
@@ -340,7 +346,9 @@ async function fetchStatboticsWithCache<T>(
 
   // Every host failed — only now is the backoff legitimate. Each failure
   // already recorded itself in health on the way through.
-  lsSet(errKey, { status: lastStatus }, 5 * 60 * 1000, false);
+  // Short backoff: the mirror stalls intermittently, and a 5-minute blackout
+  // for a blip leaves EPA blank long after the host has recovered.
+  lsSet(errKey, { status: lastStatus }, SB_ERROR_BACKOFF_MS, false);
   return lsGetStale<T>(cacheKey);
 }
 
@@ -355,7 +363,7 @@ export async function checkStatboticsHosts(): Promise<Record<StatboticsSource, b
     try {
       // Year-independent endpoint: a /team_year probe would 404 for a season
       // Statbotics hasn't populated yet and report a healthy host as down.
-      const res = await fetch(`${STATBOTICS_HOSTS[source]}/team/4099`);
+      const res = await fetch(`${STATBOTICS_HOSTS[source]}/team/4099`, { signal: AbortSignal.timeout(SB_TIMEOUT_MS) });
       result[source] = res.ok;
       if (!res.ok) {
         writeStatboticsHealth({ lastError: { source, status: res.status, at: Date.now() } });
@@ -365,9 +373,12 @@ export async function checkStatboticsHosts(): Promise<Record<StatboticsSource, b
       writeStatboticsHealth({ lastError: { source, status: 0, at: Date.now() } });
     }
   }
-  // Prefer the official host the moment it's healthy again.
-  if (result.primary) recordStatboticsSuccess("primary");
-  else if (result.mirror) recordStatboticsSuccess("mirror");
+  // Prefer the mirror the moment it's healthy; clearing its failure puts it
+  // back in front of the official host.
+  if (result.mirror) {
+    recordStatboticsSuccess("mirror");
+    if (getStatboticsHealth().lastError?.source === "mirror") writeStatboticsHealth({ lastError: null });
+  } else if (result.primary) recordStatboticsSuccess("primary");
   return result;
 }
 

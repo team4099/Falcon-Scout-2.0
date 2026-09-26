@@ -156,24 +156,24 @@ function StatboticsSourceCard() {
       <div
         className={`flex items-start gap-3 rounded-lg border p-3 ${
           onMirror
-            ? "border-amber-500/40 bg-amber-500/10"
-            : "border-emerald-500/40 bg-emerald-500/10"
+            ? "border-emerald-500/40 bg-emerald-500/10"
+            : "border-amber-500/40 bg-amber-500/10"
         }`}
       >
         {onMirror
-          ? <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-500" />
-          : <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5 text-emerald-500" />}
+          ? <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5 text-emerald-500" />
+          : <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-500" />}
         <div className="min-w-0 space-y-1">
           <p className="text-sm font-semibold">
-            {onMirror ? "Using backup mirror" : "Using official API"}
+            {onMirror ? "Using live mirror" : "Using official API (mirror failed)"}
           </p>
           <p className="text-xs text-muted-foreground break-all">
             {statboticsHostLabel(health.active)}
           </p>
           <p className="text-xs text-muted-foreground">
             {onMirror
-              ? "The official API failed, so EPA data is coming from the community mirror. It retries the official host automatically every 5 minutes."
-              : "EPA and match prediction data is coming from the official Statbotics API."}
+              ? "EPA data is coming from the community mirror, which is kept live. The official API is the standby if the mirror fails."
+              : "The mirror failed recently, so EPA data is coming from the official Statbotics API. It retries the mirror automatically every 5 minutes."}
           </p>
         </div>
       </div>
