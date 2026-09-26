@@ -26,6 +26,7 @@ import {
   LogOut,
   User,
   Users,
+  Inbox,
   Wifi,
   WifiOff,
   CloudOff,
@@ -53,6 +54,7 @@ import QRCodesPage from "@/pages/QRCodesPage";
 import ScannerPage from "@/pages/ScannerPage";
 import LoginPage from "@/pages/LoginPage";
 import ManageScoutsPage from "@/pages/ManageScoutsPage";
+import SubmissionsPage from "@/pages/SubmissionsPage";
 import SchedulingPage from "@/pages/SchedulingPage";
 import MySchedulePage from "@/pages/MySchedulePage";
 import BettingPage from "@/pages/BettingPage";
@@ -237,6 +239,7 @@ function AuthenticatedApp() {
       ? [
           { to: "/builder",     label: "Form Builder",  icon: WrenchIcon  },
           { to: "/scouts",      label: "Manage Scouts", icon: Users, alert: guestsPending },
+          { to: "/submissions", label: "Submissions",   icon: Inbox },
         ]
       : []),
     { to: "/settings", label: "Settings", icon: Settings },
@@ -260,6 +263,7 @@ function AuthenticatedApp() {
     ...(isAdminMode
       ? [
           { to: "/scouts",      label: "Scouts",       icon: Users, alert: guestsPending },
+          { to: "/submissions", label: "Submissions",  icon: Inbox },
           { to: "/builder",     label: "Form Builder", icon: WrenchIcon  },
         ]
       : []),
@@ -463,6 +467,7 @@ function AuthenticatedApp() {
             <Route path="/kanban"     element={<KanbanPage />} />
             <Route path="/builder"    element={<FormBuilderPage />} />
             <Route path="/scouts"     element={<ManageScoutsPage />} />
+            <Route path="/submissions" element={<SubmissionsPage />} />
             <Route path="/scheduling" element={<SchedulingPage />} />
             <Route path="/settings"   element={<SettingsPage />} />
             <Route path="/login"      element={<LoginPage />} />

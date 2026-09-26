@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 import {
   fetchStatboticsTeamYear,
   fetchStatboticsEventTeams,
+  fetchStatboticsEventMatches,
   getStatboticsHealth,
   checkStatboticsHosts,
   subscribeStatboticsHealth,
@@ -169,6 +170,19 @@ describe("popcornpenguins fallback", () => {
 
     expect(data).toEqual([]);
     expect(Object.keys(localStorage).filter((k) => k.endsWith("__err"))).toEqual([]);
+  });
+});
+
+describe("statbotics match predictions", () => {
+  it("falls through an empty mirror to a host that has the event's predictions", async () => {
+    const rows = [{ key: "2026vaale1_qm11", pred: { red_win_prob: 0.9951 } }];
+    const calls = mockHosts({ mirror: ok([]), primary: fail(500), popcorn: ok(rows) });
+
+    const data = await fetchStatboticsEventMatches("2026vaale1");
+
+    expect(data).toEqual(rows);
+    expect(calls[0]).toContain("/matches?event=2026vaale1");
+    expect(calls[2]).toContain(POPCORN);
   });
 });
 

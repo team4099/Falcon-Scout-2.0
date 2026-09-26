@@ -404,40 +404,59 @@ export const batchCreateMatchWinnerMarkets = mutation({
       .query("bettingMarkets")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
       .collect();
-    const alreadyHasMarket = new Set(
-      existing.filter((m) => m.type === "match_winner").map((m) => m.matchNumber)
+    const existingByMatch = new Map(
+      existing.filter((m) => m.type === "match_winner").map((m) => [m.matchNumber, m])
     );
 
     let created = 0;
+    let refreshed = 0;
     for (const m of matches) {
-      if (limit !== undefined && created >= limit) break;
-      if (alreadyHasMarket.has(m.matchNumber)) continue;
-
       // Clamp here too: a bad EPA fetch upstream must not write a 0% option,
       // which would hand out the maximum multiplier on a coin flip.
       const winRed  = Math.max(1, Math.min(99, Math.round(m.winRed)));
       const winBlue = 100 - winRed;
+      const description =
+        `Statbotics predicts Red ${winRed}% · Blue ${winBlue}%. ` +
+        `Pays ${multiplierFor(winRed).toFixed(2)}x on Red, ` +
+        `${multiplierFor(winBlue).toFixed(2)}x on Blue.`;
+      const options = [
+        { id: "red",  label: "Red Alliance",  winProb: winRed,  seedPool: winRed  },
+        { id: "blue", label: "Blue Alliance", winProb: winBlue, seedPool: winBlue },
+      ];
 
+      const prior = existingByMatch.get(m.matchNumber);
+      if (prior) {
+        // Re-derive odds only for a market nobody has bet on yet: a placed bet
+        // has its multiplier locked already, and the market must not shift
+        // under the players who read the old odds. This is what lets a market
+        // seeded from a bad/missing EPA fetch (all 50/50) be fixed in place
+        // instead of wiping the event's bets and balances.
+        if (prior.status !== "open" || prior.options[0]?.winProb === winRed) continue;
+        const hasBet = await ctx.db
+          .query("bets")
+          .withIndex("by_market", (q) => q.eq("marketId", prior._id))
+          .first();
+        if (hasBet) continue;
+        await ctx.db.patch(prior._id, { description, options });
+        refreshed++;
+        continue;
+      }
+
+      if (limit !== undefined && created >= limit) continue;
       await ctx.db.insert("bettingMarkets", {
         eventKey,
         title:       `${m.matchLabel} — Match Winner`,
-        description:
-          `Statbotics predicts Red ${winRed}% · Blue ${winBlue}%. ` +
-          `Pays ${multiplierFor(winRed).toFixed(2)}x on Red, ` +
-          `${multiplierFor(winBlue).toFixed(2)}x on Blue.`,
+        description,
         type:        "match_winner",
         matchNumber: m.matchNumber,
-        options: [
-          { id: "red",  label: "Red Alliance",  winProb: winRed,  seedPool: winRed  },
-          { id: "blue", label: "Blue Alliance", winProb: winBlue, seedPool: winBlue },
-        ],
+        options,
         status:    "open",
         createdAt: Date.now(),
         createdBy: userId,
       });
       created++;
     }
-    return { created };
+    return { created, refreshed };
   },
 });
 

@@ -297,6 +297,35 @@ describe("batchCreateMatchWinnerMarkets", () => {
     expect(q10.options.map((o) => o.winProb)).toEqual([70, 30]);
   });
 
+  test("re-running fixes 50/50 odds on markets with no bets, but never touches one with a bet", async () => {
+    const t = convexTest(schema, modules);
+    const { as } = await setup(t);
+    const flat = [
+      { matchNumber: 30, matchLabel: "Q30", winRed: 50, winBlue: 50 },
+      { matchNumber: 31, matchLabel: "Q31", winRed: 50, winBlue: 50 },
+    ];
+    await as.mutation(api.betting.batchCreateMatchWinnerMarkets, { eventKey: EVENT, matches: flat });
+
+    const q31 = await t.run(async (ctx) =>
+      (await ctx.db.query("bettingMarkets")
+        .withIndex("by_event_match", (q) => q.eq("eventKey", EVENT).eq("matchNumber", 31)).first())!);
+    await as.mutation(api.betting.placeBet, { marketId: q31._id, optionId: "red", amount: 10 });
+
+    const real = [
+      { matchNumber: 30, matchLabel: "Q30", winRed: 80, winBlue: 20 },
+      { matchNumber: 31, matchLabel: "Q31", winRed: 80, winBlue: 20 },
+    ];
+    expect(await as.mutation(api.betting.batchCreateMatchWinnerMarkets, { eventKey: EVENT, matches: real }))
+      .toEqual({ created: 0, refreshed: 1 });
+
+    const probs = async (n: number) => t.run(async (ctx) =>
+      (await ctx.db.query("bettingMarkets")
+        .withIndex("by_event_match", (q) => q.eq("eventKey", EVENT).eq("matchNumber", n)).first())!
+        .options.map((o) => o.winProb));
+    expect(await probs(30)).toEqual([80, 20]);
+    expect(await probs(31)).toEqual([50, 50]);
+  });
+
   test("an out-of-range probability is clamped, not written as 0%", async () => {
     const t = convexTest(schema, modules);
     const { as } = await setup(t);

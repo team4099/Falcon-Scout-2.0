@@ -5,10 +5,13 @@ import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
+import { totalEpa } from "@/lib/epa";
 import { useUIStore } from "@/store/uiStore";
 import {
   fetchTBAEventMatches,
   fetchStatboticsEventTeams,
+  fetchStatboticsEventMatches,
+  type StatboticsMatch,
 } from "@/lib/api";
 import type { TBAMatch } from "@/lib/api";
 import { toast } from "sonner";
@@ -602,36 +605,49 @@ function MarketsTab({
   }, [eventKey]);
 
   /**
-   * Turn TBA matches into market seeds with Statbotics win probabilities.
-   *
-   * Summed EPA per alliance is the prediction: red's share of the total EPA is
-   * its win probability, which is what fixes the payout multipliers. A team
-   * missing from Statbotics falls back to 30 (roughly a rookie's EPA) so one
-   * unknown team can't skew a match to a false certainty.
+   * Turn TBA matches into market seeds using Statbotics' own match predictions
+   * (`pred.red_win_prob`), which is what fixes the payout multipliers. A match
+   * Statbotics has no prediction for falls back to red's share of the summed
+   * team EPA, and a team missing from Statbotics counts as 30 (roughly a
+   * rookie's EPA) so one unknown team can't skew a match to a false certainty.
+   * Returns null when Statbotics gave us nothing at all: writing 50/50 markets
+   * from that would look fine and stay wrong.
    */
   async function buildMatchSeeds(matches: TBAMatch[]) {
-    type SBTeamEvent = { team: number; epa?: { mean?: number; total?: { mean?: number } } };
+    type SBTeamEvent = { team: number; epa?: unknown };
     let sbTeams: SBTeamEvent[] = [];
-    try {
-      const raw = await fetchStatboticsEventTeams(eventKey);
-      if (Array.isArray(raw)) sbTeams = raw as SBTeamEvent[];
-    } catch { /* offline or Statbotics down — every team falls back below */ }
+    let sbMatches: StatboticsMatch[] = [];
+    // Offline or Statbotics down: every value falls back below.
+    const [teamsRaw, matchesRaw] = await Promise.all([
+      fetchStatboticsEventTeams(eventKey).catch(() => null),
+      fetchStatboticsEventMatches(eventKey).catch(() => null),
+    ]);
+    if (Array.isArray(teamsRaw)) sbTeams = teamsRaw as SBTeamEvent[];
+    if (Array.isArray(matchesRaw)) sbMatches = matchesRaw;
+
+    const predByKey = new Map<string, number>();
+    for (const sm of sbMatches) {
+      const p = sm.pred?.red_win_prob;
+      if (typeof p === "number" && Number.isFinite(p)) predByKey.set(sm.key, p);
+    }
 
     const epaMap: Record<number, number> = {};
     for (const t of sbTeams) {
-      const mean =
-        typeof t.epa?.mean === "number" ? t.epa.mean :
-        typeof t.epa?.total?.mean === "number" ? t.epa.total.mean : null;
-      if (mean !== null && mean !== undefined) epaMap[t.team] = mean;
+      // Same parser the Dashboard uses; the payload's total is `total_points`.
+      const mean = totalEpa(t.epa);
+      if (mean !== null) epaMap[t.team] = mean;
     }
+    if (predByKey.size === 0 && Object.keys(epaMap).length === 0) return null;
 
     return matches.map((m) => {
-      const redTeams  = m.alliances.red.team_keys.map((k) => parseInt(k.replace("frc", ""), 10));
-      const blueTeams = m.alliances.blue.team_keys.map((k) => parseInt(k.replace("frc", ""), 10));
-      const redEpa  = redTeams.reduce((s, t) => s + (epaMap[t] ?? 30), 0);
-      const blueEpa = blueTeams.reduce((s, t) => s + (epaMap[t] ?? 30), 0);
-      const total   = redEpa + blueEpa || 1;
-      const winRed  = Math.max(1, Math.min(99, Math.round((redEpa / total) * 100)));
+      let redShare = predByKey.get(m.key);
+      if (redShare === undefined) {
+        const nums = (keys: string[]) => keys.map((k) => parseInt(k.replace("frc", ""), 10));
+        const redEpa  = nums(m.alliances.red.team_keys).reduce((s, t) => s + (epaMap[t] ?? 30), 0);
+        const blueEpa = nums(m.alliances.blue.team_keys).reduce((s, t) => s + (epaMap[t] ?? 30), 0);
+        redShare = redEpa / (redEpa + blueEpa || 1);
+      }
+      const winRed = Math.max(1, Math.min(99, Math.round(redShare * 100)));
       return {
         matchNumber: m.match_number,
         matchLabel:  matchLabel(m),
@@ -649,9 +665,17 @@ function MarketsTab({
         return;
       }
       const seeds = await buildMatchSeeds(matches);
-      const { created } = await createMarkets({ eventKey, matches: seeds }) as { created: number };
-      if (created > 0) toast.success(`Created ${created} ${label}.`);
-      else toast.info("Every match already has a market.");
+      if (!seeds) {
+        toast.error("Couldn't get predictions from Statbotics, so no odds were set. Try again in a minute.");
+        return;
+      }
+      const { created, refreshed } = await createMarkets({ eventKey, matches: seeds }) as { created: number; refreshed: number };
+      if (created > 0 || refreshed > 0) {
+        toast.success(
+          [created > 0 && `Created ${created} ${label}`, refreshed > 0 && `updated odds on ${refreshed} with no bets`]
+            .filter(Boolean).join("; ") + ".",
+        );
+      } else toast.info("Every match already has a market.");
     } catch (e: unknown) {
       toast.error((e as Error).message ?? "Market generation failed");
     } finally {

@@ -316,7 +316,8 @@ function recordStatboticsSuccess(source: StatboticsSource): void {
 async function fetchStatboticsWithCache<T>(
   path: string,
   cacheKey: string,
-  ttl: number
+  ttl: number,
+  timeoutMs: number = SB_TIMEOUT_MS
 ): Promise<T | null> {
   if (!navigator.onLine) return lsGetStale<T>(cacheKey);
 
@@ -331,7 +332,7 @@ async function fetchStatboticsWithCache<T>(
 
   for (const source of statboticsOrder()) {
     try {
-      const res = await fetch(`${STATBOTICS_HOSTS[source]}${path}`, { signal: AbortSignal.timeout(SB_TIMEOUT_MS) });
+      const res = await fetch(`${STATBOTICS_HOSTS[source]}${path}`, { signal: AbortSignal.timeout(timeoutMs) });
       if (!res.ok) {
         console.warn(`[Statbotics:${source}] ${res.status} — ${path}`);
         lastStatus = res.status;
@@ -422,6 +423,23 @@ export async function fetchStatboticsEventTeams(eventKey: string) {
     `/team_events?event=${eventKey}&limit=1000`,
     statboticsEventTeamsCacheKey(eventKey),
     TTL.SHORT  // EPA updates after every match
+  );
+}
+
+/** Statbotics' own per-match predictions (`pred.red_win_prob`, 0–1), keyed the
+ *  same way as TBA (`2026vaale1_qm11`). The full list is big and the hosts can
+ *  take 20–70 s to answer it, so this call waits longer than the others. */
+export interface StatboticsMatch {
+  key: string;
+  pred?: { red_win_prob?: number | null } | null;
+}
+
+export async function fetchStatboticsEventMatches(eventKey: string) {
+  return fetchStatboticsWithCache<StatboticsMatch[]>(
+    `/matches?event=${eventKey}&limit=1000`,
+    `sb_event_matches_${eventKey}`,
+    TTL.SHORT,
+    90_000
   );
 }
 
