@@ -118,9 +118,11 @@ function warnAssignRefused(e: unknown) {
   else throw e;
 }
 
-/** First name only, everywhere in scheduling (emails fall back to the full string). */
+/** First name only below 1024px (same breakpoint as `isMobile`), full name on desktop. */
 function displayName(u: User) {
-  return u.name?.trim().split(/\s+/)[0] || u.email || "?";
+  const full = u.name?.trim();
+  if (!full) return u.email ?? "?";
+  return window.innerWidth < 1024 ? full.split(/\s+/)[0] : full;
 }
 function avatarLetter(u: User) { return displayName(u).charAt(0).toUpperCase(); }
 
@@ -2805,7 +2807,7 @@ export default function SchedulingPage() {
       map[a.matchNumber][a.position] = { scoutId: a.scoutId, name: u ? displayName(u) : "?", guest: u?.isGuest };
     }
     return map;
-  }, [allAssignments, userMap]);
+  }, [allAssignments, userMap, isMobile]); // isMobile: displayName depends on viewport
 
   const matchCounts = useMemo(() => {
     const cnt: Record<string, number> = {};
