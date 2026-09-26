@@ -8,13 +8,17 @@
 //   npx convex env set TBA_API_KEY <key>          (dev)
 //   npx convex env set TBA_API_KEY <key> --prod   (production)
 //
+// An admin can also enter the key in Settings (tba.setKey). It lands in the
+// tbaConfig table, which no client query can read back — the UI only learns
+// whether one is set. The stored key wins over the env var.
+//
 // Only approved users may call it, and only for a fixed allowlist of read paths,
 // so it can't be turned into a general-purpose proxy for the key.
 
 import { v } from "convex/values";
-import { action, internalQuery } from "./_generated/server";
+import { action, internalQuery, mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { getApprovedUserId } from "./adminAuth";
+import { getApprovedUserId, isCurrentUserAdminEligible, requireAdmin } from "./adminAuth";
 
 const TBA_BASE = "https://www.thebluealliance.com/api/v3";
 
@@ -28,6 +32,49 @@ const ALLOWED_PATHS = [
 export const isApproved = internalQuery({
   args: {},
   handler: async (ctx) => (await getApprovedUserId(ctx)) !== null,
+});
+
+/** Server-only: the key the proxy should use (Settings-entered, else env var). */
+export const getKey = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<string | null> =>
+    (await ctx.db.query("tbaConfig").first())?.key ?? process.env.TBA_API_KEY ?? null,
+});
+
+/** Whether a key is configured. Only admin-eligible callers get an answer, and
+ *  the key itself is never returned. */
+export const hasKey = query({
+  args: {},
+  handler: async (ctx): Promise<boolean | null> => {
+    if (!(await isCurrentUserAdminEligible(ctx))) return null;
+    return (await ctx.db.query("tbaConfig").first()) !== null || !!process.env.TBA_API_KEY;
+  },
+});
+
+export const setKey = mutation({
+  args: { key: v.string() },
+  handler: async (ctx, { key }) => {
+    await requireAdmin(ctx);
+    const trimmed = key.trim();
+    // TBA read keys are 64 chars of [A-Za-z0-9]; be lenient on length.
+    if (!/^[A-Za-z0-9]{20,128}$/.test(trimmed)) {
+      throw new Error("That doesn't look like a TBA API key.");
+    }
+    const rows = await ctx.db.query("tbaConfig").collect();
+    const [keep, ...extra] = rows;
+    for (const r of extra) await ctx.db.delete(r._id);
+    if (keep) await ctx.db.patch(keep._id, { key: trimmed, updatedAt: Date.now() });
+    else await ctx.db.insert("tbaConfig", { key: trimmed, updatedAt: Date.now() });
+  },
+});
+
+/** Removes the Settings-entered key (an env-var key, if any, still applies). */
+export const clearKey = mutation({
+  args: {},
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
+    for (const r of await ctx.db.query("tbaConfig").collect()) await ctx.db.delete(r._id);
+  },
 });
 
 /**
@@ -44,7 +91,7 @@ export const fetchTba = action({
     if (!ALLOWED_PATHS.some((re) => re.test(path))) {
       return { status: 400, data: null };
     }
-    const key = process.env.TBA_API_KEY;
+    const key = await ctx.runQuery(internal.tba.getKey);
     if (!key) return { status: 503, data: null };
 
     try {

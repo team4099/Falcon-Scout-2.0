@@ -21,6 +21,14 @@ export default defineSchema({
   // until an admin flips their row to "approved" (see convex/guests.ts and
   // adminAuth.ts's isCallerApproved). Keyed by lowercased email so approval
   // survives the user row being recreated.
+  // The TBA read key, entered by an admin in Settings. Write-only from the
+  // client's point of view: no query returns `key` (tba.hasKey returns a
+  // boolean); only the tba.fetchTba action reads it, server-side. Single row.
+  tbaConfig: defineTable({
+    key: v.string(),
+    updatedAt: v.number(),
+  }),
+
   guestAccess: defineTable({
     email: v.string(),
     name: v.optional(v.string()),

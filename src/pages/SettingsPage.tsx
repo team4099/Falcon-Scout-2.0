@@ -20,6 +20,7 @@ import {
   ShieldX,
   Activity,
   AlertTriangle,
+  KeyRound,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -32,14 +33,88 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  clearApiCache,
+  clearApiCache, clearTBAErrCache,
   getStatboticsHealth, subscribeStatboticsHealth, checkStatboticsHosts,
   statboticsHostLabel,
   type StatboticsHealth,
 } from "@/lib/api";
 import { useUIStore } from "@/store/uiStore";
 
-// ── API Key field ─────────────────────────────────────────────────────────────
+// ── TBA API key card ──────────────────────────────────────────────────────────
+// Write-only: the server never sends the key back (tba.hasKey is a boolean), so
+// once saved it's gone from the screen for everyone, including the admin who
+// typed it. The input is a password field and is cleared right after saving.
+
+function TbaKeyCard({ eventKey }: { eventKey?: string }) {
+  const hasKey = useQuery(api.tba.hasKey);
+  const setKey = useAdminMutation(api.tba.setKey);
+  const clearKey = useAdminMutation(api.tba.clearKey);
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function handleSave() {
+    if (!value.trim()) return;
+    setBusy(true);
+    try {
+      await setKey({ key: value });
+      setValue("");
+      if (eventKey) clearTBAErrCache(eventKey);
+      toast.success("TBA key saved.", { description: "Reload data (Clear Cache) to pull schedules." });
+    } catch (e) {
+      toast.error(e instanceof Error && e.message.includes("look like") ? "That doesn't look like a TBA API key." : "Failed to save key.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRemove() {
+    setBusy(true);
+    try {
+      await clearKey({});
+      toast.success("Stored TBA key removed.");
+    } catch {
+      toast.error("Failed to remove key.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-5 space-y-4">
+      <div className="flex items-center gap-2">
+        <KeyRound className="h-4 w-4 text-primary" />
+        <h3 className="font-semibold">TBA API Key</h3>
+      </div>
+      <div className="flex items-center gap-2 text-sm">
+        {hasKey
+          ? <><CheckCircle2 className="h-4 w-4 text-emerald-500" /> A key is configured.</>
+          : <><AlertTriangle className="h-4 w-4 text-amber-500" /> No key set — schedules, teams and rankings can't load.</>}
+      </div>
+      <div className="space-y-1.5">
+        <Label>{hasKey ? "Replace key" : "Enter key"}</Label>
+        <Input
+          type="password"
+          autoComplete="off"
+          placeholder="Paste TBA read key"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleSave()}
+        />
+        <p className="text-xs text-muted-foreground">
+          Get one at thebluealliance.com/account. Once saved it is hidden and can't be viewed again.
+        </p>
+      </div>
+      <div className="flex gap-2">
+        <Button onClick={handleSave} disabled={busy || !value.trim()} className="flex-1">
+          {busy ? "Saving…" : "Save key"}
+        </Button>
+        {hasKey && (
+          <Button variant="outline" onClick={handleRemove} disabled={busy}>Remove</Button>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // ── Statbotics source card ────────────────────────────────────────────────────
 // EPA data comes from the official Statbotics API, with a community mirror as
@@ -369,6 +444,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Statbotics source — admin-facing diagnostics */}
+      {isAdminMode && <TbaKeyCard eventKey={currentEvent?.eventKey} />}
       {isAdminMode && <StatboticsSourceCard />}
 
       {/* Data cache */}

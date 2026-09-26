@@ -128,3 +128,48 @@ describe("legacy per-user TBA key", () => {
     expect(rows.every((r) => r.tbaApiKey === undefined)).toBe(true);
   });
 });
+
+describe("admin-entered TBA key", () => {
+  const KEY = "a".repeat(64);
+  beforeEach(() => {
+    delete process.env.TBA_API_KEY;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  test("non-admins cannot set or clear it", async () => {
+    const { scout } = await setup();
+    await expect(scout.mutation(api.tba.setKey, { key: KEY })).rejects.toThrow(/Admin/);
+    await expect(scout.mutation(api.tba.clearKey, {})).rejects.toThrow(/Admin/);
+  });
+
+  test("admin-set key is used upstream, never returned, and rejects junk", async () => {
+    const t = convexTest(schema, modules);
+    const id = await t.run((ctx) => ctx.db.insert("users", { name: "A", email: "devadmin@team4099.com" }));
+    const asAdmin = t.withIdentity({ subject: id, issuer: "test", email: "devadmin@team4099.com" });
+    const prev = process.env.ALLOW_DEV_LOGIN;
+    process.env.ALLOW_DEV_LOGIN = "true";
+    try {
+      await expect(asAdmin.mutation(api.tba.setKey, { key: "short" })).rejects.toThrow(/TBA API key/);
+      expect(await asAdmin.query(api.tba.hasKey, {})).toBe(false);
+      await asAdmin.mutation(api.tba.setKey, { key: ` ${KEY} ` });
+      expect(await asAdmin.query(api.tba.hasKey, {})).toBe(true);
+      expect(JSON.stringify(await asAdmin.query(api.tba.hasKey, {}))).not.toContain(KEY);
+
+      const res = await asAdmin.action(api.tba.fetchTba, { path: "/team/frc4099" });
+      expect(res.status).toBe(200);
+      const init = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1];
+      expect(init.headers["X-TBA-Auth-Key"]).toBe(KEY);
+
+      await asAdmin.mutation(api.tba.clearKey, {});
+      expect(await asAdmin.query(api.tba.hasKey, {})).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env.ALLOW_DEV_LOGIN; else process.env.ALLOW_DEV_LOGIN = prev;
+    }
+  });
+
+  test("hasKey answers null for non-admins", async () => {
+    const { scout } = await setup();
+    expect(await scout.query(api.tba.hasKey, {})).toBeNull();
+  });
+});
