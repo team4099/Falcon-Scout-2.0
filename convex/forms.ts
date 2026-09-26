@@ -81,34 +81,6 @@ async function alreadyScoutedMatch(
   return false;
 }
 
-/**
- * Has this scout already logged this exact match+team at this event?
- *
- * `exclude` is the row just inserted, which is skipped so a submission never
- * counts itself. compLevel is part of the identity: qual 5 and elim 5 are
- * different matches, and an undefined compLevel (rows predating the column)
- * only matches another undefined one.
- */
-async function alreadyScouted(
-  ctx: MutationCtx,
-  scoutId: Id<"users">,
-  args: { eventKey: string; matchNumber: number; teamNumber: number; compLevel?: "qm" | "elim" },
-  exclude: Id<"formSubmissions">,
-): Promise<boolean> {
-  const prior = await ctx.db
-    .query("formSubmissions")
-    .withIndex("by_scout_event_match", (q) =>
-      q.eq("scoutId", scoutId).eq("eventKey", args.eventKey).eq("matchNumber", args.matchNumber)
-    )
-    .collect();
-  return prior.some(
-    (r) =>
-      r._id !== exclude &&
-      r.teamNumber === args.teamNumber &&
-      r.compLevel === args.compLevel
-  );
-}
-
 // Shared field-type validator (keep in sync with schema.ts)
 const fieldTypeValidator = v.union(
   v.literal("text"),
@@ -323,17 +295,47 @@ export const submitForm = mutation({
     // it just doesn't pay twice.
     const template = userId ? await ctx.db.get(args.templateId) : null;
     const formType = template?.formType ?? "default";
-    if (userId && (formType === "default" || formType === "pit")) {
-      const repeat =
-        formType === "default"
-          ? await alreadyScoutedMatch(ctx, userId, args, submissionId)
-          : await alreadyScouted(ctx, userId, args, submissionId);
-      const reward = template?.coinReward ?? DEFAULT_SCOUT_REWARD;
-      if (!repeat && reward > 0 && (await isAssignedForReward(ctx, userId, formType, args))) {
-        await awardCoins(
-          ctx, userId, args.eventKey, reward, "scouting_reward",
-          template?.name, submissionId,
-        );
+    const reward = template?.coinReward ?? DEFAULT_SCOUT_REWARD;
+    if (userId && formType === "default") {
+      if (
+        !(await alreadyScoutedMatch(ctx, userId, args, submissionId)) &&
+        reward > 0 &&
+        (await isAssignedForReward(ctx, userId, formType, args))
+      ) {
+        await awardCoins(ctx, userId, args.eventKey, reward, "scouting_reward", template?.name, submissionId);
+      }
+    } else if (userId && formType === "pit" && reward > 0) {
+      // Pit scouting is done in groups and one form covers the team, so the
+      // submitter's form pays and completes it for everyone rostered on that
+      // team. Only the first roster submission per team pays, so a resubmit
+      // (or a second teammate filling it in again) doesn't pay the group twice.
+      const team = await ctx.db
+        .query("pitScoutingTeams")
+        .withIndex("by_event_team", (q) =>
+          q.eq("eventKey", args.eventKey).eq("teamNumber", args.teamNumber)
+        )
+        .first();
+      if (team?.scoutIds.includes(userId)) {
+        const roster = new Set<string>(team.scoutIds);
+        const prior = await ctx.db
+          .query("formSubmissions")
+          .withIndex("by_event_team", (q) =>
+            q.eq("eventKey", args.eventKey).eq("teamNumber", args.teamNumber)
+          )
+          .collect();
+        let alreadyPaid = false;
+        for (const r of prior) {
+          if (r._id === submissionId || !r.scoutId || !roster.has(r.scoutId)) continue;
+          if (((await ctx.db.get(r.templateId))?.formType ?? "default") === "pit") {
+            alreadyPaid = true;
+            break;
+          }
+        }
+        if (!alreadyPaid) {
+          for (const id of team.scoutIds) {
+            await awardCoins(ctx, id, args.eventKey, reward, "scouting_reward", template?.name, submissionId);
+          }
+        }
       }
     }
 
@@ -370,7 +372,7 @@ export const getMySubmissions = query({
       if (tpl) formTypeById.set(templateId, tpl.formType ?? "default");
     }
 
-    return rows.map((r) => ({
+    const mine = rows.map((r) => ({
       _id: r._id,
       templateId: r.templateId,
       formType: formTypeById.get(r.templateId) ?? "default",
@@ -378,6 +380,33 @@ export const getMySubmissions = query({
       compLevel: r.compLevel,
       teamNumber: r.teamNumber,
     }));
+
+    // Pit scouting is a group job: a teammate's pit form completes the team for
+    // everyone rostered on it, so include those alongside this scout's own.
+    const teams = await ctx.db
+      .query("pitScoutingTeams")
+      .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
+      .collect();
+    for (const t of teams.filter((t) => t.scoutIds.includes(userId))) {
+      const subs = await ctx.db
+        .query("formSubmissions")
+        .withIndex("by_event_team", (q) => q.eq("eventKey", eventKey).eq("teamNumber", t.teamNumber))
+        .collect();
+      for (const r of subs) {
+        if (r.scoutId === userId) continue;
+        let type = formTypeById.get(r.templateId);
+        if (type === undefined) {
+          type = (await ctx.db.get(r.templateId))?.formType ?? "default";
+          formTypeById.set(r.templateId, type);
+        }
+        if (type !== "pit") continue;
+        mine.push({
+          _id: r._id, templateId: r.templateId, formType: "pit",
+          matchNumber: r.matchNumber, compLevel: r.compLevel, teamNumber: r.teamNumber,
+        });
+      }
+    }
+    return mine;
   },
 });
 

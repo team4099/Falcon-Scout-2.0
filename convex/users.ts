@@ -56,9 +56,11 @@ export const listUsers = query({
     return allUsers
       .filter((u) => hasAccess(u, approved) && !deactivatedSet.has(u._id))
       .map((u) => {
-        const team = u.email ? guestTeam.get(u.email.trim().toLowerCase()) : undefined;
+        const email = u.email?.trim().toLowerCase();
         const onRoster = roster.has(u._id);
-        return team === undefined ? { ...u, onRoster } : { ...u, onRoster, guestTeamNumber: team };
+        if (!email || !guestTeam.has(email)) return { ...u, onRoster };
+        const team = guestTeam.get(email);
+        return team === undefined ? { ...u, onRoster, isGuest: true } : { ...u, onRoster, isGuest: true, guestTeamNumber: team };
       });
   },
 });

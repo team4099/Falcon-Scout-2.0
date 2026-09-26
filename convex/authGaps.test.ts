@@ -454,6 +454,34 @@ describe("scouting pays once per match", () => {
     expect(await bal()).toBe(1050);
   });
 
+  test("one pit form pays and completes the team for everyone rostered on it", async () => {
+    const t = convexTest(schema, modules);
+    const a = await scout(t);
+    const b = await scout(t);
+    const outsider = await scout(t);
+    const pitTemplateId = await t.run(async (ctx) => ctx.db.insert("formTemplates", {
+      name: "Pit", formType: "pit", fields: [], isActive: true, coinReward: 50,
+    }));
+    await t.run(async (ctx) => ctx.db.insert("pitScoutingTeams", {
+      eventKey: EVENT, teamNumber: 254, scoutIds: [a.userId, b.userId],
+    }));
+    const args = { templateId: pitTemplateId, eventKey: EVENT, matchNumber: 0, teamNumber: 254, data: "{}" };
+    await a.as.mutation(api.forms.submitForm, args);
+    expect(await a.bal()).toBe(1050);
+    expect(await b.bal()).toBe(1050);
+    expect(await outsider.bal()).toBe(0);
+
+    // The teammate never submitted, but the team shows as done for them.
+    const mine = await b.as.query(api.forms.getMySubmissions, { eventKey: EVENT });
+    expect(mine.filter((s) => s.formType === "pit").map((s) => s.teamNumber)).toEqual([254]);
+    expect(await outsider.as.query(api.forms.getMySubmissions, { eventKey: EVENT })).toHaveLength(0);
+
+    // A second teammate filling it in again doesn't pay the group twice.
+    await b.as.mutation(api.forms.submitForm, args);
+    expect(await a.bal()).toBe(1050);
+    expect(await b.bal()).toBe(1050);
+  });
+
   test("checklists never pay, even on a covering pit rotation", async () => {
     const t = convexTest(schema, modules);
     const { as, bal, userId } = await scout(t);

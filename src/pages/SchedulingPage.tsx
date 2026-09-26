@@ -38,6 +38,8 @@ interface User {
   image?: string;
   /** Set by users.listUsers: on the current event's roster (convex/roster.ts). */
   onRoster?: boolean;
+  /** Set by users.listUsers for approved guests from other teams. */
+  isGuest?: boolean;
 }
 
 interface MatchAssignment {
@@ -111,6 +113,17 @@ const FG        = "var(--foreground)";
 
 function displayName(u: User) { return u.name ?? u.email ?? "?"; }
 function avatarLetter(u: User) { return displayName(u).charAt(0).toUpperCase(); }
+
+/** Tiny "G" marker shown next to a guest's name. */
+function GuestTag() {
+  return (
+    <span title="Guest" style={{
+      flexShrink: 0, marginLeft: 3, padding: "0 3px", borderRadius: 4, fontSize: 8, lineHeight: "12px",
+      fontWeight: 800, verticalAlign: "middle", background: "oklch(0.7 0.15 200 / 18%)",
+      color: "oklch(0.78 0.13 200)", border: "1px solid oklch(0.7 0.15 200 / 35%)",
+    }}>G</span>
+  );
+}
 
 function tbaMatchLabel(m: TBAMatch): string {
   const lvl: Record<string, string> = { qm: "Q", ef: "EF", qf: "QF", sf: "SF", f: "F" };
@@ -307,7 +320,7 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
                   >
                     <Avatar user={u} size={22} />
                     <span style={{ fontSize: 11, fontWeight: 700, color: active ? G : FG, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left" }}>
-                      {displayName(u)}
+                      {displayName(u)}{u.isGuest && <GuestTag />}
                     </span>
                     <PrefBadges prefs={prefsByScout?.get(u._id)} kind="matches" />
                     {cnt > 0 && (
@@ -342,7 +355,7 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
                 >
                   <Avatar user={u} size={32} />
                   <span style={{ fontSize: 10, fontWeight: 700, color: active ? G : FG, whiteSpace: "nowrap", maxWidth: 92, overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {displayName(u)}
+                    {displayName(u)}{u.isGuest && <GuestTag />}
                   </span>
                   <PrefBadges prefs={prefsByScout?.get(u._id)} kind="matches" />
                   {cnt > 0 && (
@@ -381,7 +394,7 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
                     <Avatar user={u} size={30} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, fontWeight: 600, color: FG, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: 6 }}>
-                        {displayName(u)}
+                        {displayName(u)}{u.isGuest && <GuestTag />}
                         <PrefBadges prefs={prefsByScout?.get(u._id)} kind="matches" />
                       </div>
                     </div>
@@ -501,7 +514,7 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
 
 interface MatchGridProps {
   matches: TBAMatch[];
-  assignMap: Record<number, Partial<Record<Position, { scoutId: string; name: string }>>>;
+  assignMap: Record<number, Partial<Record<Position, { scoutId: string; name: string; guest?: boolean }>>>;
   pinnedId: string | null;
   onCellClick: (matchNum: number, matchLbl: string, pos: Position) => void;
   onCycleClick: (cycleMatches: TBAMatch[], pos: Position) => void;
@@ -824,7 +837,7 @@ function OrphanWarning({
 interface SingleMatchRowProps {
   m: TBAMatch;
   lbl: string;
-  row: Partial<Record<Position, { scoutId: string; name: string }>>;
+  row: Partial<Record<Position, { scoutId: string; name: string; guest?: boolean }>>;
   pinnedId: string | null;
   onCellClick: (matchNum: number, matchLbl: string, pos: Position) => void;
   saving: Set<string>;
@@ -963,7 +976,7 @@ function SingleMatchRow({
                             : !assigned
                               ? (pinnedId && !readOnly ? <span style={{ opacity: 0.25, fontSize: 14, fontWeight: 300 }}>+</span> : null)
                               : <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%", padding: "0 2px" }}>
-                                  {assigned.name}
+                                  {assigned.name}{assigned.guest && <GuestTag />}
                                 </span>
                           }
                         </button>
@@ -1014,7 +1027,7 @@ function SingleMatchRow({
                                 {POS_META[p].short}
                               </span>
                               <span style={{ fontSize: 13, fontWeight: isPinned ? 800 : 500, color: isPinned ? G : a ? FG : MUTED, lineHeight: 1.3 }}>
-                                {a ? a.name : <span style={{ opacity: 0.35, fontSize: 11 }}>Unassigned</span>}
+                                {a ? <>{a.name}{a.guest && <GuestTag />}</> : <span style={{ opacity: 0.35, fontSize: 11 }}>Unassigned</span>}
                               </span>
                             </div>
                           );
@@ -1033,7 +1046,7 @@ function SingleMatchRow({
                                 {POS_META[p].short}
                               </span>
                               <span style={{ fontSize: 13, fontWeight: isPinned ? 800 : 500, color: isPinned ? G : a ? FG : MUTED, lineHeight: 1.3 }}>
-                                {a ? a.name : <span style={{ opacity: 0.35, fontSize: 11 }}>Unassigned</span>}
+                                {a ? <>{a.name}{a.guest && <GuestTag />}</> : <span style={{ opacity: 0.35, fontSize: 11 }}>Unassigned</span>}
                               </span>
                             </div>
                           );
@@ -1058,7 +1071,7 @@ function SingleMatchRow({
 interface CycleRowProps {
   cycleMatches: TBAMatch[];
   cycleNumber: number;
-  assignMap: Record<number, Partial<Record<Position, { scoutId: string; name: string }>>>;
+  assignMap: Record<number, Partial<Record<Position, { scoutId: string; name: string; guest?: boolean }>>>;
   pinnedId: string | null;
   onCycleClick: (cycleMatches: TBAMatch[], pos: Position) => void;
   saving: Set<string>;
@@ -1163,7 +1176,7 @@ function CycleRow({
                   ? <Loader2 size={10} style={{ animation: "spin 1s linear infinite" }} />
                   : uniformScoutId
                     ? <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%", padding: "0 2px" }}>
-                        {slots[0]!.name}
+                        {slots[0]!.name}{slots[0]!.guest && <GuestTag />}
                       </span>
                     : isMixed
                       ? <span style={{ fontSize: cellFontSize - 1, opacity: 0.6 }}>···</span>
@@ -1199,7 +1212,7 @@ function PitScoutChip({ user, selected, onToggle }: {
       }}
     >
       {selected && <Check size={11} />}
-      {displayName(user)}
+      {displayName(user)}{user.isGuest && <GuestTag />}
     </button>
   );
 }
@@ -1248,7 +1261,7 @@ function RosterChip({ user, driveTeam, onToggleDriveTeam, onRemove }: {
         padding: "5px 4px", fontSize: 12, fontWeight: 700,
         color: driveTeam ? R_TXT : G_TXT, whiteSpace: "nowrap",
       }}>
-        {displayName(user)}
+        {displayName(user)}{user.isGuest && <GuestTag />}
       </span>
 
       <button onClick={onToggleDriveTeam}
@@ -1463,7 +1476,7 @@ function RotationCard({ rotation, users, onEdit, onDelete, readOnly }: {
                 border: `1px solid ${isDrive ? R_MED : G_MED}`,
               }}>
               {isDrive && <Car size={11} style={{ flexShrink: 0 }} />}
-              {u ? displayName(u) : "?"}
+              {u ? displayName(u) : "?"}{u?.isGuest && <GuestTag />}
             </span>
           );
         })}
@@ -1656,7 +1669,7 @@ function ElimsRotationPanel({ rotation, users, optedOut, noResponse, allUsers: a
                       boxShadow: `0 1px 6px ${isDrive ? R : G} / 25%`,
                     }}>
                     {isDrive && <Car size={11} />}
-                    {u ? displayName(u) : "?"}
+                    {u ? displayName(u) : "?"}{u?.isGuest && <GuestTag />}
                   </span>
                 );
               })}
@@ -2170,7 +2183,7 @@ function ExcludePanel({
                 textDecoration: (dbExcluded || excluded) ? "line-through" : "none",
                 opacity: (dbExcluded || excluded) ? 0.75 : 1,
               }}>
-                {displayName(u)}
+                {displayName(u)}{u.isGuest && <GuestTag />}
               </span>
               {dbExcluded && (
                 <span style={{
@@ -2279,7 +2292,7 @@ function PitScoutingTab({
                     ? <img src={u.image} alt="" referrerPolicy="no-referrer" style={{ width: 14, height: 14, borderRadius: "50%", objectFit: "cover" }} />
                     : <span style={{ width: 14, height: 14, borderRadius: "50%", background: pinned ? G_TXT+"30" : G_MED, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 800, color: pinned ? G_TXT : G, flexShrink: 0 }}>{avatarLetter(u)}</span>
                   }
-                  {displayName(u)}
+                  {displayName(u)}{u.isGuest && <GuestTag />}
                   <PrefBadges prefs={prefsByScout?.get(u._id)} kind="pit" />
                   {count > 0 && (
                     <span style={{ background: pinned ? "oklch(0 0 0 / 20%)" : G_MED, borderRadius: 20, padding: "0 5px", fontSize: 10, fontWeight: 800, color: pinned ? G_TXT : G }}>
@@ -2410,7 +2423,7 @@ function PitScoutingTab({
                             background: hasPinned ? "oklch(0 0 0 / 20%)" : G_MED,
                             color: hasPinned ? G_TXT : G,
                           }}>
-                            {u ? displayName(u) : "?"}
+                            {u ? displayName(u) : "?"}{u?.isGuest && <GuestTag />}
                           </span>
                         );
                       })}
@@ -2744,11 +2757,11 @@ export default function SchedulingPage() {
   const pitHiddenCount = pitOptedOut.length + pitNoResponse.length;
 
   const assignMap = useMemo(() => {
-    const map: Record<number, Partial<Record<Position, { scoutId: string; name: string }>>> = {};
+    const map: Record<number, Partial<Record<Position, { scoutId: string; name: string; guest?: boolean }>>> = {};
     for (const a of allAssignments ?? []) {
       if (!map[a.matchNumber]) map[a.matchNumber] = {};
       const u = userMap[a.scoutId];
-      map[a.matchNumber][a.position] = { scoutId: a.scoutId, name: u ? displayName(u) : "?" };
+      map[a.matchNumber][a.position] = { scoutId: a.scoutId, name: u ? displayName(u) : "?", guest: u?.isGuest };
     }
     return map;
   }, [allAssignments, userMap]);
