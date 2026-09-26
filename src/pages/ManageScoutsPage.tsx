@@ -652,7 +652,7 @@ function SubmissionDetailModal({
         </div>
 
         {/* Modal body */}
-        <ScrollArea style={{ flex: 1 }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain" }}>
           <div style={{ padding: "16px 20px 20px" }}>
             {!template ? (
               <div style={{ textAlign: "center", padding: "32px 16px", color: "var(--muted-foreground)", fontSize: 13 }}>
@@ -685,7 +685,7 @@ function SubmissionDetailModal({
               </>
             )}
           </div>
-        </ScrollArea>
+        </div>
 
         {/* Modal footer — delete */}
         <div style={{
@@ -896,7 +896,7 @@ function ReportRankingModal({
             <X size={16} />
           </button>
         </div>
-        <ScrollArea style={{ flex: 1 }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain" }}>
           <div style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: 4 }}>
             {ranking.length === 0 && (
               <div style={{ padding: "24px 12px", textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>No reports yet.</div>
@@ -917,7 +917,7 @@ function ReportRankingModal({
               </div>
             ))}
           </div>
-        </ScrollArea>
+        </div>
       </div>
     </div>
   );
@@ -1612,7 +1612,7 @@ export default function ManageScoutsPage() {
                 </div>
               )}
 
-              <ScrollArea style={{ flex: 1 }}>
+              <ScrollArea className="[&>[data-slot=scroll-area-viewport]]:overscroll-contain" style={{ flex: 1, minHeight: 0 }}>
                 <div style={{ padding: "10px 10px 16px" }}>
 
                   {/* Active scouts */}
@@ -2034,7 +2034,7 @@ export default function ManageScoutsPage() {
                 </div>
 
                 {/* Submissions list */}
-                <ScrollArea style={{ flex: 1, minHeight: 0, overscrollBehavior: "contain" }}>
+                <ScrollArea className="[&>[data-slot=scroll-area-viewport]]:overscroll-contain" style={{ flex: 1, minHeight: 0 }}>
                   <div style={{ padding: "14px 18px 20px", display: "flex", flexDirection: "column", gap: 8 }}>
 
                     {/* ── Exclude from Schedule toggle ── */}
