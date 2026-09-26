@@ -1393,35 +1393,60 @@ function RotationCard({ rotation, users, onEdit, onDelete, readOnly }: {
   const span = rotation.startMatch != null && rotation.endMatch != null
     ? rotation.endMatch - rotation.startMatch + 1 : null;
 
+  const iconBtn: React.CSSProperties = {
+    width: 28, height: 28, borderRadius: 7, cursor: "pointer",
+    display: "flex", alignItems: "center", justifyContent: "center",
+  };
+
+  // Two rows so the chips get the full card width on a phone: header (range,
+  // match count, actions) on top, one-line name chips wrapping below. The
+  // optional label is only a tooltip — Q-range + count is what scouts scan for.
   return (
     <div style={{
-      display: "flex", alignItems: "center", gap: 12, padding: "12px 16px",
+      display: "flex", flexDirection: "column", gap: 8, padding: "10px 12px",
       borderRadius: 12, border: `1px solid ${SURF_BORD}`, background: SURFACE,
     }}>
-      {/* Range badge */}
-      <div style={{
-        display: "flex", alignItems: "center", gap: 5,
-        padding: "6px 12px", borderRadius: 10, flexShrink: 0,
-        background: G_DIM, border: `1px solid ${G_MED}`,
-      }}>
-        <Wrench size={11} style={{ color: G }} />
-        <span style={{ fontSize: 13, fontWeight: 800, color: G, fontFamily: "monospace" }}>
-          Q{rotation.startMatch}–Q{rotation.endMatch}
-        </span>
-      </div>
-
-      {/* Label + span */}
-      <div style={{ minWidth: 0 }}>
-        {rotation.label && (
-          <div style={{ fontSize: 13, fontWeight: 600, color: FG, marginBottom: 1 }}>{rotation.label}</div>
-        )}
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div title={rotation.label || undefined} style={{
+          display: "flex", alignItems: "center", gap: 5,
+          padding: "4px 10px", borderRadius: 8, flexShrink: 0,
+          background: G_DIM, border: `1px solid ${G_MED}`,
+        }}>
+          <Wrench size={11} style={{ color: G }} />
+          <span style={{ fontSize: 13, fontWeight: 800, color: G, fontFamily: "monospace" }}>
+            Q{rotation.startMatch}–Q{rotation.endMatch}
+          </span>
+        </div>
         {span != null && (
-          <div style={{ fontSize: 11, color: MUTED }}>{span} match{span !== 1 ? "es" : ""}</div>
+          <span style={{ fontSize: 11, color: MUTED, whiteSpace: "nowrap" }}>{span} match{span !== 1 ? "es" : ""}</span>
+        )}
+        <span style={{ fontSize: 11, color: MUTED, whiteSpace: "nowrap" }}>· {rotation.scoutIds.length} scout{rotation.scoutIds.length !== 1 ? "s" : ""}</span>
+
+        {!readOnly && (
+          <div style={{ display: "flex", gap: 5, flexShrink: 0, marginLeft: "auto" }}>
+            <button onClick={onEdit} aria-label="Edit rotation" style={{
+              ...iconBtn, border: `1.5px solid ${SURF_BORD}`, background: SURF_HVR, color: MUTED,
+            }}>
+              <Pencil size={13} />
+            </button>
+            <button
+              onClick={async () => { setDeleting(true); try { await onDelete(); } finally { setDeleting(false); } }}
+              disabled={deleting}
+              aria-label="Delete rotation"
+              style={{
+                ...iconBtn,
+                border: "1.5px solid oklch(0.577 0.245 27 / 30%)",
+                background: "oklch(0.577 0.245 27 / 8%)",
+                color: "var(--destructive)",
+              }}
+            >
+              {deleting ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={13} />}
+            </button>
+          </div>
         )}
       </div>
 
-      {/* Scout chips */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 5, flex: 1, minWidth: 0 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
         {/* Stored order, not alphabetical — the admin arranged this deliberately. */}
         {rotation.scoutIds.map(id => {
           const u = userMap[id];
@@ -1430,13 +1455,14 @@ function RotationCard({ rotation, users, onEdit, onDelete, readOnly }: {
             <span key={id}
               title={isDrive ? "Drive team for this rotation" : undefined}
               style={{
-                display: "inline-flex", alignItems: "center", gap: 4,
-                padding: "2px 9px", borderRadius: 20, fontSize: 12, fontWeight: 600,
+                display: "inline-flex", alignItems: "center", gap: 3,
+                padding: "1px 8px", borderRadius: 20, fontSize: 12, fontWeight: 600,
+                whiteSpace: "nowrap", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis",
                 background: isDrive ? R_DIM : G_DIM,
                 color: isDrive ? R : G,
                 border: `1px solid ${isDrive ? R_MED : G_MED}`,
               }}>
-              {isDrive && <Car size={11} />}
+              {isDrive && <Car size={11} style={{ flexShrink: 0 }} />}
               {u ? displayName(u) : "?"}
             </span>
           );
@@ -1445,32 +1471,6 @@ function RotationCard({ rotation, users, onEdit, onDelete, readOnly }: {
           <span style={{ fontSize: 12, color: MUTED }}>No scouts assigned</span>
         )}
       </div>
-
-      {/* Actions */}
-      {!readOnly && (
-        <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
-          <button onClick={onEdit} style={{
-            width: 30, height: 30, borderRadius: 8, border: `1.5px solid ${SURF_BORD}`,
-            background: SURF_HVR, color: MUTED, cursor: "pointer",
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}>
-            <Pencil size={13} />
-          </button>
-          <button
-            onClick={async () => { setDeleting(true); try { await onDelete(); } finally { setDeleting(false); } }}
-            disabled={deleting}
-            style={{
-              width: 30, height: 30, borderRadius: 8,
-              border: "1.5px solid oklch(0.577 0.245 27 / 30%)",
-              background: "oklch(0.577 0.245 27 / 8%)",
-              color: "var(--destructive)", cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}
-          >
-            {deleting ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={13} />}
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -1650,7 +1650,7 @@ function ElimsRotationPanel({ rotation, users, optedOut, noResponse, allUsers: a
                     title={isDrive ? "Drive team for this rotation" : undefined}
                     style={{
                       display: "inline-flex", alignItems: "center", gap: 4,
-                      padding: "3px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600,
+                      padding: "2px 9px", borderRadius: 20, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap",
                       background: isDrive ? R : G,
                       color: isDrive ? R_TXT : G_TXT,
                       boxShadow: `0 1px 6px ${isDrive ? R : G} / 25%`,
@@ -2454,6 +2454,9 @@ export default function SchedulingPage() {
   const [matchesError, setMatchesError] = useState(false);
   const [savingCells, setSavingCells] = useState<Set<string>>(new Set());
   const [editingRotation, setEditingRotation] = useState<PitRotation | null>(null);
+  // Collapsed by default so the rotation list is visible on a phone; stays
+  // open after each save so several rotations can be added in a row.
+  const [showNewRotation, setShowNewRotation] = useState(false);
   const [autoGenResult, setAutoGenResult] = useState<SchedulerOutput | null>(null);
   const [autoGenApplying, setAutoGenApplying] = useState(false);
   const [autoGenRunning, setAutoGenRunning] = useState(false);
@@ -3431,13 +3434,24 @@ export default function SchedulingPage() {
                 )}
 
                 {/* Qual rotation form (only when not editing, admin editing only) */}
-                {!readOnly && !editingRotation && (
+                {!readOnly && !editingRotation && (showNewRotation ? (
                   <RotationForm
                     users={pitUsers} optedOut={pitOptedOut} noResponse={pitNoResponse}
                     allUsers={sortedAllUsers}
                     onSave={form => handleSaveRotation(form)}
+                    onCancel={() => setShowNewRotation(false)}
                   />
-                )}
+                ) : (
+                  <button onClick={() => setShowNewRotation(true)}
+                    style={{
+                      display: "flex", alignItems: "center", justifyContent: "center", gap: 6, flexShrink: 0,
+                      padding: "9px 0", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer",
+                      background: "transparent", color: G, border: `1.5px dashed ${G_MED}`,
+                    }}
+                  >
+                    <Plus size={13} />New Pit Rotation
+                  </button>
+                ))}
 
                 {/* Qual rotation list */}
                 <ScrollArea style={{ flex: 1 }}>
@@ -3445,7 +3459,7 @@ export default function SchedulingPage() {
                     {qualRots.length === 0 && !editingRotation && (
                       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, padding: "24px 16px", textAlign: "center", color: MUTED }}>
                         <Wrench size={24} style={{ opacity: 0.3 }} />
-                        <span style={{ fontSize: 13 }}>No qual rotations yet. Add one above.</span>
+                        <span style={{ fontSize: 13 }}>No qual rotations yet.</span>
                       </div>
                     )}
                     {editingRotation && (
