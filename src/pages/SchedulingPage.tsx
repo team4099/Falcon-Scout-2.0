@@ -609,20 +609,30 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, onCycleClick, sa
   // Label column must fit the widest range label a cycle row can show
   // ("Q76–Q80", 8 chars) at this font size — 36/44px was too narrow and let
   // the label spill into the first scout-name cell instead of wrapping.
-  const COL = isLandscapePhone
-    ? "54px 1fr 1fr 1fr 2px 1fr 1fr 1fr"
-    : isMobile
-    ? "50px 1fr 1fr 1fr 2px 1fr 1fr 1fr"
-    : "58px 1fr 1fr 1fr 3px 1fr 1fr 1fr";
+  const labelW = isLandscapePhone ? 54 : isMobile ? 50 : 58;
+  const divW = isLandscapePhone || isMobile ? 2 : 3;
+  // Scout cells get a floor wide enough to show a real name instead of
+  // collapsing to an ellipsis. Once six of them no longer fit, the grid
+  // overflows and scrolls sideways rather than squeezing the names away.
+  const cellMinW = isLandscapePhone ? 72 : isMobile ? 76 : 112;
+  const COL = `${labelW}px repeat(3, minmax(${cellMinW}px, 1fr)) ${divW}px repeat(3, minmax(${cellMinW}px, 1fr))`;
 
   const cellPad = isLandscapePhone ? "3px 2px" : "4px 3px";
   const cellMinH = isLandscapePhone ? 24 : 28;
   const cellFontSize = isLandscapePhone ? 10 : 11;
-  const rowPad = isLandscapePhone ? "2px 6px 8px" : "4px 10px 12px";
-  const headerPad = isLandscapePhone ? "0 6px" : "0 10px";
+  const padX = isLandscapePhone ? 6 : 10;
+  const rowPad = isLandscapePhone ? `2px ${padX}px 8px` : `4px ${padX}px 12px`;
+  const headerPad = `0 ${padX}px`;
+  // Header and rows must resolve to the same width for their columns to line
+  // up, so the shared scroller is held open to the grid's own minimum.
+  const gridMinW = labelW + divW + cellMinW * 6 + padX * 2;
 
   return (
-    <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", borderRadius: 14, border: `1px solid ${SURF_BORD}`, background: SURFACE, overflow: isMobile ? "auto" : "hidden" }}>
+    <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", borderRadius: 14, border: `1px solid ${SURF_BORD}`, background: SURFACE, overflow: "hidden" }}>
+      {/* Horizontal scroller — the header and the rows live inside the same one
+          so the columns stay aligned as it scrolls. */}
+      <div style={{ flex: 1, minHeight: 0, overflowX: "auto", overflowY: "hidden", WebkitOverflowScrolling: "touch" }}>
+      <div style={{ minWidth: gridMinW, height: "100%", display: "flex", flexDirection: "column" }}>
       {/* Sticky header */}
       <div style={{
         display: "grid", gridTemplateColumns: COL,
@@ -690,6 +700,8 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, onCycleClick, sa
           ))}
         </div>
       </ScrollArea>
+      </div>
+      </div>
 
       {/* Footer legend — hidden in landscape phone to save vertical space */}
       {!isLandscapePhone && (
@@ -3445,30 +3457,6 @@ export default function SchedulingPage() {
             return (
               <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 12, minHeight: 0 }}>
 
-                {/* Elims rotation — fixed single block at the top */}
-                <ElimsRotationPanel
-                  rotation={elimsRot}
-                  users={pitUsers}
-                  optedOut={pitOptedOut}
-                  noResponse={pitNoResponse}
-                  allUsers={sortedAllUsers}
-                  onSave={async (scoutIds, driveTeamIds) => {
-                    if (!currentEvent) return;
-                    await upsertRotation({
-                      id: elimsRot?._id as Id<"pitRotations"> | undefined,
-                      eventKey: currentEvent.eventKey,
-                      label: "Elims Pit Rotation",
-                      isElims: true,
-                      scoutIds: scoutIds as Id<"users">[],
-                      driveTeamScoutIds: Array.from(driveTeamIds) as Id<"users">[],
-                    });
-                  }}
-                  onDelete={async () => {
-                    if (elimsRot) await deleteRotation({ id: elimsRot._id as Id<"pitRotations"> });
-                  }}
-                  readOnly={readOnly}
-                />
-
                 {/* Divider */}
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <div style={{ flex: 1, height: 1, background: SURF_BORD }} />
@@ -3556,6 +3544,34 @@ export default function SchedulingPage() {
                           readOnly={readOnly}
                         />
                       ))}
+
+                    {/* Elims rotation — one block covering all playoffs, kept
+                        below the quals since it's set up last. The panel
+                        carries its own heading, so this is just a separator. */}
+                    <div style={{ height: 1, background: SURF_BORD, margin: "8px 0 4px", flexShrink: 0 }} />
+
+                    <ElimsRotationPanel
+                      rotation={elimsRot}
+                      users={pitUsers}
+                      optedOut={pitOptedOut}
+                      noResponse={pitNoResponse}
+                      allUsers={sortedAllUsers}
+                      onSave={async (scoutIds, driveTeamIds) => {
+                        if (!currentEvent) return;
+                        await upsertRotation({
+                          id: elimsRot?._id as Id<"pitRotations"> | undefined,
+                          eventKey: currentEvent.eventKey,
+                          label: "Elims Pit Rotation",
+                          isElims: true,
+                          scoutIds: scoutIds as Id<"users">[],
+                          driveTeamScoutIds: Array.from(driveTeamIds) as Id<"users">[],
+                        });
+                      }}
+                      onDelete={async () => {
+                        if (elimsRot) await deleteRotation({ id: elimsRot._id as Id<"pitRotations"> });
+                      }}
+                      readOnly={readOnly}
+                    />
                   </div>
                 </ScrollArea>
               </div>
