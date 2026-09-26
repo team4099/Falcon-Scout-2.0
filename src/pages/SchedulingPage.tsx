@@ -118,7 +118,10 @@ function warnAssignRefused(e: unknown) {
   else throw e;
 }
 
-function displayName(u: User) { return u.name ?? u.email ?? "?"; }
+/** First name only, everywhere in scheduling (emails fall back to the full string). */
+function displayName(u: User) {
+  return u.name?.trim().split(/\s+/)[0] || u.email || "?";
+}
 function avatarLetter(u: User) { return displayName(u).charAt(0).toUpperCase(); }
 
 /** Tiny "G" marker shown next to a guest's name. */
@@ -1493,7 +1496,7 @@ function RotationCard({ rotation, users, onEdit, onDelete, readOnly }: {
         )}
       </div>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+      <div style={{ display: "flex", flexWrap: "nowrap", gap: 4, overflowX: "auto", paddingBottom: 2, WebkitOverflowScrolling: "touch" }}>
         {/* Stored order, not alphabetical — the admin arranged this deliberately. */}
         {rotation.scoutIds.map(id => {
           const u = userMap[id];
@@ -1504,7 +1507,7 @@ function RotationCard({ rotation, users, onEdit, onDelete, readOnly }: {
               style={{
                 display: "inline-flex", alignItems: "center", gap: 3,
                 padding: "1px 8px", borderRadius: 20, fontSize: 12, fontWeight: 600,
-                whiteSpace: "nowrap", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis",
+                whiteSpace: "nowrap", flexShrink: 0,
                 background: isDrive ? R_DIM : G_DIM,
                 color: isDrive ? R : G,
                 border: `1px solid ${isDrive ? R_MED : G_MED}`,
