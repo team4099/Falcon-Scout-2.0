@@ -2312,7 +2312,9 @@ function PitScoutingTab({
             {readOnly ? "Pin a scout to highlight their teams" : "Pin a scout then click teams"}
             {pinnedScoutId && partners.size > 0 && <span style={{ color: PARTNER_BORD, marginLeft: 8, textTransform: "none", letterSpacing: 0 }}>♥ = their preferred partners</span>}
           </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+          <div style={isMobile
+            ? { display: "flex", flexWrap: "nowrap", gap: 5, overflowX: "auto", overflowY: "hidden", paddingBottom: 4 }
+            : { display: "flex", flexWrap: "wrap", gap: 5 }}>
             {allUsers.map(u => {
               const pinned = u._id === pinnedScoutId;
               const pref   = !pinned && partners.has(u._id);
@@ -2323,7 +2325,7 @@ function PitScoutingTab({
                   style={{
                     display: "inline-flex", alignItems: "center", gap: 5,
                     padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600,
-                    cursor: "pointer", transition: "all 0.12s",
+                    cursor: "pointer", transition: "all 0.12s", flexShrink: 0, whiteSpace: "nowrap",
                     background: pinned ? G : pref ? PARTNER_BG : SURF_HVR,
                     color:      pinned ? G_TXT : MUTED,
                     border:     `1.5px solid ${pinned ? G_STR : pref ? PARTNER_BORD : SURF_BORD}`,

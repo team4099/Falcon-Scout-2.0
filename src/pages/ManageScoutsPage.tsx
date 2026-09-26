@@ -2034,7 +2034,7 @@ export default function ManageScoutsPage() {
                 </div>
 
                 {/* Submissions list */}
-                <ScrollArea style={{ flex: 1 }}>
+                <ScrollArea style={{ flex: 1, minHeight: 0, overscrollBehavior: "contain" }}>
                   <div style={{ padding: "14px 18px 20px", display: "flex", flexDirection: "column", gap: 8 }}>
 
                     {/* ── Exclude from Schedule toggle ── */}
