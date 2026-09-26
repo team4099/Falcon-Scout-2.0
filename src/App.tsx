@@ -216,10 +216,30 @@ function MobileBottomNav({ primary, more }: { primary: NavEntry[]; more: NavEntr
   );
 }
 
+// Routes whose page manages its own scrolling (list/detail panes). Their
+// wrapper is sized to the space left in <main>, so the page's inner
+// overflow-y:auto boxes actually scroll. Without this, height:100% never
+// resolved, the inner boxes grew to full content height, and their
+// overscroll-behavior:contain swallowed wheel/touch scrolls meant for <main>.
+// Manage Scouts only splits into panes from md up — on a phone its header and
+// stat cards would leave the list a sliver, so there the whole page scrolls.
+// Only these routes turn <main> into a flex column; every other page keeps
+// the original block layout untouched (a flex parent would make their own
+// height:100% roots start resolving and clip them). Literal class strings —
+// Tailwind can't see runtime-built names.
+const FILL_ROUTES: Record<string, { main: string; page: string }> = {
+  "/submissions": { main: "flex flex-col", page: "flex-1 min-h-[520px] flex flex-col" },
+  "/scouts": { main: "md:flex md:flex-col", page: "min-h-full md:flex-1 md:min-h-[520px] md:flex md:flex-col" },
+};
+const DEFAULT_LAYOUT = { main: "", page: "min-h-full" };
+
 function AuthenticatedApp() {
   const { theme, setTheme } = useTheme();
   const { signOut } = useAuthActions();
   const navigate = useNavigate();
+  // Pages with their own inner scroll panes need a definite height; everything
+  // else grows and scrolls <main>. See FILL_ROUTES.
+  const layout = FILL_ROUTES[useLocation().pathname] ?? DEFAULT_LAYOUT;
   const currentEventLive = useQuery(api.events.getCurrentEvent);
   const currentEvent = useCached(currentEventLive, "current_event");
   const { totalPending, lastSyncedAt, markSynced } = useOfflineSync();
@@ -389,9 +409,9 @@ function AuthenticatedApp() {
       </aside>
 
       {/* ── Main content ────────────────────────────────────────────────── */}
-      <main className="flex-1 overflow-y-auto min-w-0">
+      <main className={`flex-1 overflow-y-auto min-w-0 ${layout.main}`}>
         {/* Mobile top bar */}
-        <div className="md:hidden sticky top-0 z-30 flex items-center justify-between px-4 py-2.5 bg-card border-b border-border">
+        <div className="md:hidden sticky top-0 z-30 shrink-0 flex items-center justify-between px-4 py-2.5 bg-card border-b border-border">
           <div className="flex items-center gap-2">
             <div className="h-6 w-6 rounded bg-primary flex items-center justify-center">
               <span className="text-primary-foreground font-black text-[10px]">FS</span>
@@ -427,7 +447,7 @@ function AuthenticatedApp() {
 
         {/* Offline banner — shown below top bar when disconnected */}
         {!isOnline && (
-          <div className="sticky top-[49px] md:top-0 z-20 flex items-center gap-2 px-4 py-1.5 bg-amber-500/10 border-b border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs font-medium">
+          <div className="sticky top-[49px] md:top-0 z-20 shrink-0 flex items-center gap-2 px-4 py-1.5 bg-amber-500/10 border-b border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs font-medium">
             <CloudOff className="h-3.5 w-3.5 shrink-0" />
             <span>
               {backendStatus === "offline"
@@ -442,14 +462,14 @@ function AuthenticatedApp() {
 
         {/* Pending sync banner when there are queued ops (online but not yet flushed) */}
         {isOnline && totalPending > 0 && (
-          <div className="sticky top-[49px] md:top-0 z-20 flex items-center gap-2 px-4 py-1.5 bg-primary/5 border-b border-primary/20 text-primary text-xs font-medium">
+          <div className="sticky top-[49px] md:top-0 z-20 shrink-0 flex items-center gap-2 px-4 py-1.5 bg-primary/5 border-b border-primary/20 text-primary text-xs font-medium">
             <RefreshCw className="h-3.5 w-3.5 shrink-0 animate-spin" />
             <span>Syncing {totalPending} pending change{totalPending !== 1 ? "s" : ""}…</span>
           </div>
         )}
 
         {/* Page content */}
-        <div className="p-4 md:p-6 pb-24 md:pb-6 min-h-full">
+        <div className={`p-4 md:p-6 pb-24 md:pb-6 ${layout.page}`}>
           <Routes>
             <Route path="/"           element={<DashboardPage />} />
             <Route path="/matches"    element={<MatchesPage />} />

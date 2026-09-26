@@ -426,6 +426,30 @@ export const listSubmissions = query({
   },
 });
 
+// listSubmissions minus `data` — for list screens (Manage Scouts, Submissions
+// feed) that only show who/what/when. `data` can hold base64 photos, and a
+// Convex subscription re-sends the whole result on every new submission, so
+// omitting it keeps those pages light. Open one with getSubmission.
+export const listSubmissionSummaries = query({
+  args: { eventKey: v.string() },
+  handler: async (ctx, { eventKey }) => {
+    if (!(await isSignedIn(ctx))) return [];
+    const rows = await ctx.db
+      .query("formSubmissions")
+      .withIndex("by_event_team", (q) => q.eq("eventKey", eventKey))
+      .collect();
+    return rows.map(({ data: _data, ...summary }) => summary);
+  },
+});
+
+export const getSubmission = query({
+  args: { id: v.id("formSubmissions") },
+  handler: async (ctx, { id }) => {
+    if (!(await isSignedIn(ctx))) return null;
+    return await ctx.db.get(id);
+  },
+});
+
 export const getTeamSubmissions = query({
   args: {
     eventKey: v.string(),

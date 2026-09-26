@@ -2,6 +2,7 @@
 // the read-only submission viewer (admin delete in the footer — the mutation
 // itself is gated by requireAdmin server-side), and the admin lock screen.
 import { useState } from "react";
+import { useQuery } from "convex/react";
 import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { api } from "../../convex/_generated/api";
 import { Button } from "@/components/ui/button";
@@ -15,7 +16,8 @@ export interface Submission {
   matchNumber?: number;
   teamNumber?: number;
   scoutId?: string;
-  data: string;
+  /** Absent on list summaries (forms.listSubmissionSummaries); the modal fetches it. */
+  data?: string;
   syncedAt: number;
 }
 
@@ -64,9 +66,19 @@ export function SubmissionDetailModal({
 
   const template = (templates ?? []).find((t) => t._id === submission.templateId);
 
+  // List pages pass a data-less summary; pull the answers only for the one
+  // submission actually opened.
+  const full = useQuery(
+    api.forms.getSubmission,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    submission.data === undefined ? { id: submission._id as any } : "skip",
+  );
+  const data = submission.data ?? full?.data;
+  const loading = data === undefined && full === undefined;
+
   let parsedData: Record<string, unknown> = {};
   try {
-    parsedData = JSON.parse(submission.data);
+    if (data) parsedData = JSON.parse(data);
   } catch {
     /* leave empty */
   }
@@ -89,6 +101,16 @@ export function SubmissionDetailModal({
     const raw = parsedData[field.id];
     if (raw === undefined || raw === null || raw === "") {
       return <span style={{ color: "var(--muted-foreground)", fontStyle: "italic", fontSize: 12 }}>—</span>;
+    }
+    if (field.type === "photo" && typeof raw === "string" && raw.startsWith("data:image/")) {
+      return (
+        <img
+          src={raw}
+          alt={field.label}
+          loading="lazy"
+          style={{ maxWidth: "100%", maxHeight: 320, borderRadius: 8, border: "1px solid oklch(1 0 0 / 10%)" }}
+        />
+      );
     }
     if (field.type === "checkbox") {
       return (
@@ -248,7 +270,11 @@ export function SubmissionDetailModal({
         {/* Modal body */}
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain" }}>
           <div style={{ padding: "16px 20px 20px" }}>
-            {!template ? (
+            {loading ? (
+              <div style={{ textAlign: "center", padding: "32px 16px", color: "var(--muted-foreground)", fontSize: 13 }}>
+                Loading…
+              </div>
+            ) : !template ? (
               <div style={{ textAlign: "center", padding: "32px 16px", color: "var(--muted-foreground)", fontSize: 13 }}>
                 <ClipboardList size={28} style={{ margin: "0 auto 10px", opacity: 0.4 }} />
                 Template not found. Raw data below:

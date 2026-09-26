@@ -585,7 +585,7 @@ function MarketsTab({
   myBalance: number;
   isAdmin: boolean;
 }) {
-  const [statusFilter, setStatusFilter] = useState<"all" | MarketStatus>("all");
+  const [tab, setTab] = useState<"upcoming" | "locked">("upcoming");
   const [tbaMatches, setTbaMatches] = useState<TBAMatch[]>([]);
   const [generating, setGenerating] = useState(false);
   // A ref, not state: this only latches the auto-generate effect so it fires
@@ -747,16 +747,16 @@ function MarketsTab({
     return map;
   }, [myBetsLive]);
 
-  // Upcoming = still open for bets, soonest first. Played = locked/resolved,
-  // most recent first, kept apart so scouts aren't scrolling past them.
-  const { upcoming, played } = useMemo(() => {
-    const shown = markets.filter((m) => statusFilter === "all" || m.status === statusFilter);
+  // Two tabs, no overlap. Upcoming = still open for bets, soonest first.
+  // Locked = closed (about to start, playing, or done), most recent first.
+  const { upcoming, locked } = useMemo(() => {
     const num = (m: Market) => m.matchNumber ?? 9999;
     return {
-      upcoming: shown.filter((m) => m.status === "open").sort((a, b) => num(a) - num(b)),
-      played: shown.filter((m) => m.status !== "open").sort((a, b) => num(b) - num(a)),
+      upcoming: markets.filter((m) => m.status === "open").sort((a, b) => num(a) - num(b)),
+      locked: markets.filter((m) => m.status !== "open").sort((a, b) => num(b) - num(a)),
     };
-  }, [markets, statusFilter]);
+  }, [markets]);
+  const shown = tab === "upcoming" ? upcoming : locked;
 
   const unplayed = tbaMatches.filter((m) => !isPlayed(m));
 
@@ -819,17 +819,17 @@ function MarketsTab({
       </div>
 
       <div className="flex gap-1.5">
-        {(["all", "open", "locked", "resolved"] as const).map((st) => (
+        {([["upcoming", "Upcoming", upcoming.length], ["locked", "Locked", locked.length]] as const).map(([id, label, n]) => (
           <button
-            key={st}
-            onClick={() => setStatusFilter(st)}
-            className={`px-2.5 py-0.5 rounded-full text-[11px] font-medium transition-colors border ${
-              statusFilter === st
+            key={id}
+            onClick={() => setTab(id)}
+            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors border ${
+              tab === id
                 ? "bg-primary/20 text-primary border-primary/40"
                 : "border-border/50 text-muted-foreground hover:border-primary/30"
             }`}
           >
-            {st === "all" ? "All Status" : STATUS_CONFIG[st].label}
+            {label} · {n}
           </button>
         ))}
       </div>
@@ -850,26 +850,19 @@ function MarketsTab({
       )}
 
       <div className="space-y-3">
-        {([["Upcoming", upcoming], ["Played", played]] as const).map(([title, list]) =>
-          list.length === 0 ? null : (
-            <div key={title} className="space-y-3">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground pt-1">
-                {title} · {list.length}
-              </h3>
-              {list.map((m) => (
-                <MarketCard
-                  key={m._id}
-                  market={m}
-                  myBalance={myBalance}
-                  myBet={myBetByMarket.get(m._id)}
-                  isAdmin={isAdmin}
-                />
-              ))}
-            </div>
-          ),
-        )}
-        {upcoming.length + played.length === 0 && markets.length > 0 && (
-          <p className="text-center text-sm text-muted-foreground py-8">No markets match filters</p>
+        {shown.map((m) => (
+          <MarketCard
+            key={m._id}
+            market={m}
+            myBalance={myBalance}
+            myBet={myBetByMarket.get(m._id)}
+            isAdmin={isAdmin}
+          />
+        ))}
+        {shown.length === 0 && markets.length > 0 && (
+          <p className="text-center text-sm text-muted-foreground py-8">
+            {tab === "upcoming" ? "No upcoming matches are open for betting." : "No locked matches yet."}
+          </p>
         )}
       </div>
     </div>

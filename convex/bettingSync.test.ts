@@ -6,7 +6,7 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
-import { hasStarted, tbaMatchLabel } from "./bettingSync";
+import { shouldLock, tbaMatchLabel } from "./bettingSync";
 
 const modules = import.meta.glob("./**/*.ts");
 const EVENT = "2026vaale1";
@@ -40,16 +40,48 @@ async function setup() {
 const status = (t: ReturnType<typeof convexTest>, id: string) =>
   t.run(async (ctx) => (await ctx.db.get(id as never) as { status: string }).status);
 
-describe("hasStarted / tbaMatchLabel", () => {
+describe("shouldLock / tbaMatchLabel", () => {
   test("scores or a past actual_time mean started; -1 scores and no time do not", () => {
-    expect(hasStarted(match("qm", 1, 1, 30, 20), Date.now())).toBe(true);
-    expect(hasStarted(match("qm", 1, 2, -1, -1), Date.now())).toBe(false);
-    expect(hasStarted(match("qm", 1, 3, -1, -1, 1000), Date.now())).toBe(true);
-    expect(hasStarted(match("qm", 1, 4, -1, -1, Math.floor(Date.now() / 1000) + 3600), Date.now())).toBe(false);
+    expect(shouldLock(match("qm", 1, 1, 30, 20), Date.now())).toBe(true);
+    expect(shouldLock(match("qm", 1, 2, -1, -1), Date.now())).toBe(false);
+    expect(shouldLock(match("qm", 1, 3, -1, -1, 1000), Date.now())).toBe(true);
+    expect(shouldLock(match("qm", 1, 4, -1, -1, Math.floor(Date.now() / 1000) + 3600), Date.now())).toBe(false);
   });
+  test("locks 5 minutes before the start, using the predicted time over the scheduled one", () => {
+    const now = Date.now();
+    const at = (min: number) => Math.floor(now / 1000) + min * 60;
+    const m = (time: number | null, predicted: number | null) => ({ ...match("qm", 1, 5, -1, -1), time, predicted_time: predicted });
+    expect(shouldLock(m(at(6), null), now)).toBe(false);
+    expect(shouldLock(m(at(4), null), now)).toBe(true);
+    // Scheduled soon but running 20 minutes late: still open.
+    expect(shouldLock(m(at(2), at(20)), now)).toBe(false);
+    expect(shouldLock(m(at(30), at(3)), now)).toBe(true);
+  });
+
   test("labels match what the client writes into market titles", () => {
     expect(tbaMatchLabel(match("qm", 1, 11, 0, 0))).toBe("Q11");
     expect(tbaMatchLabel(match("f", 1, 2, 0, 0))).toBe("F1M2");
+  });
+});
+
+describe("applyOdds", () => {
+  test("updates open no-bet markets by match label, never one that has a bet", async () => {
+    const { t, as, ids } = await setup();
+    await t.run(async (ctx) => {
+      const u = (await ctx.db.query("users").first())!;
+      await ctx.db.insert("userBalances", { userId: u._id, eventKey: EVENT, balance: 1000, totalWon: 0, totalLost: 0, totalBet: 0, totalBegs: 0 });
+    });
+    await as.mutation(api.betting.placeBet, { marketId: ids.Q2 as never, optionId: "red", amount: 10 });
+
+    const n = await t.mutation(internal.bettingSync.applyOdds, {
+      eventKey: EVENT,
+      odds: [{ label: "Q1", winRed: 87.4 }, { label: "Q2", winRed: 12 }, { label: "Q99", winRed: 60 }],
+    });
+    expect(n).toBe(1);
+    const probs = (id: string) => t.run(async (ctx) =>
+      (await ctx.db.get(id as never) as { options: { winProb: number }[] }).options.map((o) => o.winProb));
+    expect(await probs(ids.Q1)).toEqual([87, 13]);
+    expect(await probs(ids.Q2)).toEqual([50, 50]);
   });
 });
 

@@ -576,7 +576,7 @@ export default function ManageScoutsPage() {
     .filter((u) => u.onRoster === false)
     .sort((a, b) => displayName(a).localeCompare(displayName(b)));
   const submissions = useQuery(
-    api.forms.listSubmissions,
+    api.forms.listSubmissionSummaries,
     currentEvent ? { eventKey } : "skip"
   ) as Submission[] | undefined;
   const allPreferences = useQuery(
@@ -953,7 +953,7 @@ export default function ManageScoutsPage() {
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", gap: 20 }}>
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden", gap: 20 }}>
 
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <div style={{ flexShrink: 0 }}>
@@ -1233,7 +1233,9 @@ export default function ManageScoutsPage() {
                 </div>
               )}
 
-              <ScrollArea className="[&>[data-slot=scroll-area-viewport]]:overscroll-contain" style={{ flex: 1, minHeight: 0 }}>
+              {/* contain only from md up: on phones this box isn't height-limited, and
+                  contain on a non-scrolling box swallows the page scroll. */}
+              <ScrollArea className="md:[&>[data-slot=scroll-area-viewport]]:overscroll-contain" style={{ flex: 1, minHeight: 0 }}>
                 <div style={{ padding: "10px 10px 16px" }}>
 
                   {/* Active scouts */}

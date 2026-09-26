@@ -1,5 +1,5 @@
 // Admin-only feed of every form submitted at the current event, newest first.
-// Reads the same forms.listSubmissions query Data Viewer / Manage Scouts use
+// Reads forms.listSubmissionSummaries (no answer data; same rows Data Viewer uses)
 // (no new data exposure); deleting from the detail modal is requireAdmin.
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "convex/react";
@@ -39,7 +39,7 @@ export default function SubmissionsPage() {
   const { isAdminMode } = useUIStore();
   const currentEvent = useCached(useQuery(api.events.getCurrentEvent), "current_event");
   const eventKey = currentEvent?.eventKey ?? "";
-  const submissions = useQuery(api.forms.listSubmissions, eventKey ? { eventKey } : "skip") as
+  const submissions = useQuery(api.forms.listSubmissionSummaries, eventKey ? { eventKey } : "skip") as
     | Submission[]
     | undefined;
   const templates = useQuery(api.forms.listTemplates) as FormTemplate[] | undefined;
@@ -101,7 +101,7 @@ export default function SubmissionsPage() {
   const pick = (id: string | null) => { setTemplateId(id); setLimit(PAGE); };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", gap: 14 }}>
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden", gap: 14 }}>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
         <div

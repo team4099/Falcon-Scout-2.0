@@ -264,6 +264,28 @@ describe("read queries are gated", () => {
     expect(await as.query(api.forms.listSubmissions, { eventKey: EVENT })).toHaveLength(1);
     expect(await as.query(api.forms.listTemplates, {})).toHaveLength(1);
   });
+
+  test("submission summaries omit data; getSubmission is gated", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, subId } = await t.run(async (ctx) => {
+      const templateId = await ctx.db.insert("formTemplates", { name: "Match", fields: [], isActive: true });
+      const subId = await ctx.db.insert("formSubmissions", {
+        templateId, eventKey: EVENT, matchNumber: 1, teamNumber: 4099,
+        data: '{"photo":"data:image/jpeg;base64,AAAA"}', syncedAt: Date.now(),
+      });
+      const userId = await ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" });
+      return { userId, subId };
+    });
+    expect(await t.query(api.forms.listSubmissionSummaries, { eventKey: EVENT })).toEqual([]);
+    expect(await t.query(api.forms.getSubmission, { id: subId })).toBeNull();
+
+    const as = t.withIdentity({ subject: userId, issuer: "test" });
+    const summaries = await as.query(api.forms.listSubmissionSummaries, { eventKey: EVENT });
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).not.toHaveProperty("data");
+    expect(summaries[0].teamNumber).toBe(4099);
+    expect((await as.query(api.forms.getSubmission, { id: subId }))?.data).toContain("base64");
+  });
 });
 
 describe("personal kanban boards are private", () => {
