@@ -7,6 +7,7 @@
 import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 import {
   fetchStatboticsTeamYear,
+  fetchStatboticsEventTeams,
   getStatboticsHealth,
   checkStatboticsHosts,
   subscribeStatboticsHealth,
@@ -14,13 +15,15 @@ import {
 
 const PRIMARY = "https://api.statbotics.io/v3";
 const MIRROR = "https://statbotics-production.up.railway.app/v3";
+const POPCORN = "https://api-statbotics.popcornpenguins.com/v3";
 
 /** Records every URL fetched, replying per a host→handler map. */
-function mockHosts(handlers: { primary?: () => Response; mirror?: () => Response }) {
+function mockHosts(handlers: { primary?: () => Response; mirror?: () => Response; popcorn?: () => Response }) {
   const calls: string[] = [];
   const fn = vi.fn(async (url: string) => {
     calls.push(url);
-    const handler = url.startsWith(PRIMARY) ? handlers.primary : handlers.mirror;
+    const handler = url.startsWith(PRIMARY) ? handlers.primary
+      : url.startsWith(POPCORN) ? handlers.popcorn : handlers.mirror;
     if (!handler) throw new TypeError("Failed to fetch");
     return handler();
   });
@@ -138,16 +141,47 @@ describe("statbotics host failover", () => {
   });
 });
 
+describe("popcornpenguins fallback", () => {
+  it("is used when the mirror and the official API are both down", async () => {
+    const calls = mockHosts({ mirror: fail(502), primary: fail(503), popcorn: ok({ team: 4099, epa: {} }) });
+
+    const data = await fetchStatboticsTeamYear(4099, 2026);
+
+    expect(data).toEqual({ team: 4099, epa: {} });
+    expect(calls.map((c) => c.split("/v3")[0])).toEqual([
+      MIRROR.split("/v3")[0], PRIMARY.split("/v3")[0], POPCORN.split("/v3")[0],
+    ]);
+    expect(getStatboticsHealth().active).toBe("popcorn");
+  });
+
+  it("is asked when the mirror answers with an empty list (event not synced)", async () => {
+    mockHosts({ mirror: ok([]), primary: fail(500), popcorn: ok([{ team: 4099 }]) });
+
+    const data = await fetchStatboticsEventTeams("2026vaale1");
+
+    expect(data).toEqual([{ team: 4099 }]);
+  });
+
+  it("returns [] without an error-backoff when every host that answers is empty", async () => {
+    mockHosts({ mirror: ok([]), primary: fail(500), popcorn: ok([]) });
+
+    const data = await fetchStatboticsEventTeams("2026vaale1");
+
+    expect(data).toEqual([]);
+    expect(Object.keys(localStorage).filter((k) => k.endsWith("__err"))).toEqual([]);
+  });
+});
+
 describe("checkStatboticsHosts", () => {
   it("switches back to the mirror when it has recovered", async () => {
     mockHosts({ mirror: fail(503), primary: ok({}) });
     await fetchStatboticsTeamYear(4099, 2026);
     expect(getStatboticsHealth().active).toBe("primary");
 
-    mockHosts({ primary: ok({}), mirror: ok({}) });
+    mockHosts({ primary: ok({}), mirror: ok({}), popcorn: ok({}) });
     const result = await checkStatboticsHosts();
 
-    expect(result).toEqual({ primary: true, mirror: true });
+    expect(result).toEqual({ primary: true, mirror: true, popcorn: true });
     expect(getStatboticsHealth().active).toBe("mirror");
     expect(getStatboticsHealth().lastError).toBeNull();
   });
@@ -157,6 +191,6 @@ describe("checkStatboticsHosts", () => {
 
     const result = await checkStatboticsHosts();
 
-    expect(result).toEqual({ primary: false, mirror: false });
+    expect(result).toEqual({ primary: false, mirror: false, popcorn: false });
   });
 });

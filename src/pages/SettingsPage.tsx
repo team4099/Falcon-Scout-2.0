@@ -165,15 +165,15 @@ function StatboticsSourceCard() {
           : <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-500" />}
         <div className="min-w-0 space-y-1">
           <p className="text-sm font-semibold">
-            {onMirror ? "Using live mirror" : "Using official API (mirror failed)"}
+            {onMirror ? "Using live mirror" : health.active === "popcorn" ? "Using popcornpenguins mirror" : "Using official API (mirror failed)"}
           </p>
           <p className="text-xs text-muted-foreground break-all">
             {statboticsHostLabel(health.active)}
           </p>
           <p className="text-xs text-muted-foreground">
             {onMirror
-              ? "EPA data is coming from the community mirror, which is kept live. The official API is the standby if the mirror fails."
-              : "The mirror failed recently, so EPA data is coming from the official Statbotics API. It retries the mirror automatically every 5 minutes."}
+              ? "EPA data is coming from the community mirror, which is kept live. The official API and the popcornpenguins mirror are standbys."
+              : "The main mirror failed or had no data, so EPA is coming from a standby host. It retries the main mirror automatically every 5 minutes."}
           </p>
         </div>
       </div>

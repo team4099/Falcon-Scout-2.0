@@ -20,6 +20,9 @@ import { api } from "../../convex/_generated/api";
 // tries the official host first and falls back to the mirror only on failure.
 const STATBOTICS_PRIMARY = "https://api.statbotics.io/v3";
 const STATBOTICS_MIRROR  = "https://statbotics-production.up.railway.app/v3";
+// Second community mirror. Last resort, but the only one that carried data for
+// 2026vaale1 when the other two were down or returned empty lists.
+const STATBOTICS_POPCORN = "https://api-statbotics.popcornpenguins.com/v3";
 
 /** Older builds kept a personal TBA key in localStorage. Wipe it so the key
  *  doesn't linger on shared devices now that the server holds the key. */
@@ -216,7 +219,7 @@ export async function fetchTBATeamAvatar(teamNumber: number, year: number): Prom
 // is exposed via getStatboticsHealth() so admins can see it in Settings rather
 // than having to guess from missing EPA numbers.
 
-export type StatboticsSource = "primary" | "mirror";
+export type StatboticsSource = "primary" | "mirror" | "popcorn";
 
 export interface StatboticsHealth {
   /** Host that most recently served a successful response. */
@@ -247,6 +250,7 @@ const SB_DEFAULT_HEALTH: StatboticsHealth = {
 export const STATBOTICS_HOSTS: Record<StatboticsSource, string> = {
   primary: STATBOTICS_PRIMARY,
   mirror:  STATBOTICS_MIRROR,
+  popcorn: STATBOTICS_POPCORN,
 };
 
 /** Human-readable host label for the source, for UI. */
@@ -287,7 +291,7 @@ function writeStatboticsHealth(patch: Partial<StatboticsHealth>): void {
 function statboticsOrder(): StatboticsSource[] {
   const e = getStatboticsHealth().lastError;
   const mirrorDown = e?.source === "mirror" && Date.now() - e.at < SB_MIRROR_STICKY_MS;
-  return mirrorDown ? ["primary", "mirror"] : ["mirror", "primary"];
+  return mirrorDown ? ["primary", "popcorn", "mirror"] : ["mirror", "primary", "popcorn"];
 }
 
 function recordStatboticsSuccess(source: StatboticsSource): void {
@@ -323,6 +327,7 @@ async function fetchStatboticsWithCache<T>(
   if (lsGet<unknown>(errKey) !== null) return lsGetStale<T>(cacheKey);
 
   let lastStatus = 0;
+  let emptyResult: T | null = null;
 
   for (const source of statboticsOrder()) {
     try {
@@ -334,6 +339,12 @@ async function fetchStatboticsWithCache<T>(
         continue;
       }
       const data = (await res.json()) as T;
+      // A host that is up but has no rows (e.g. a mirror that hasn't synced this
+      // event yet) is no use: ask the next host before believing "no data".
+      if (Array.isArray(data) && data.length === 0) {
+        emptyResult = data;
+        continue;
+      }
       lsSet(cacheKey, data, ttl);
       recordStatboticsSuccess(source);
       return data;
@@ -342,6 +353,13 @@ async function fetchStatboticsWithCache<T>(
       lastStatus = 0;
       writeStatboticsHealth({ lastError: { source, status: 0, at: Date.now() } });
     }
+  }
+
+  // Every host that answered had an empty list: that is a real "no data", not an
+  // outage — no backoff, and a short cache so the next host gets retried soon.
+  if (emptyResult !== null) {
+    lsSet(cacheKey, emptyResult, SB_ERROR_BACKOFF_MS);
+    return emptyResult;
   }
 
   // Every host failed — only now is the backoff legitimate. Each failure
@@ -359,7 +377,7 @@ async function fetchStatboticsWithCache<T>(
  */
 export async function checkStatboticsHosts(): Promise<Record<StatboticsSource, boolean>> {
   const result = {} as Record<StatboticsSource, boolean>;
-  for (const source of ["primary", "mirror"] as StatboticsSource[]) {
+  for (const source of ["primary", "mirror", "popcorn"] as StatboticsSource[]) {
     try {
       // Year-independent endpoint: a /team_year probe would 404 for a season
       // Statbotics hasn't populated yet and report a healthy host as down.
@@ -379,6 +397,7 @@ export async function checkStatboticsHosts(): Promise<Record<StatboticsSource, b
     recordStatboticsSuccess("mirror");
     if (getStatboticsHealth().lastError?.source === "mirror") writeStatboticsHealth({ lastError: null });
   } else if (result.primary) recordStatboticsSuccess("primary");
+  else if (result.popcorn) recordStatboticsSuccess("popcorn");
   return result;
 }
 
