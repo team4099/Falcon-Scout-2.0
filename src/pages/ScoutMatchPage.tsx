@@ -370,6 +370,19 @@ export default function ScoutMatchPage() {
   const currentEventLive = useQuery(api.events.getCurrentEvent);
   const currentEvent = useCached(currentEventLive, "current_event");
 
+  // The event roster as the server knows it, synced by whichever device last
+  // reached TBA. Read as a fallback so a device that can't fetch TBA itself —
+  // no local cache yet, or navigator.onLine lying inside an in-app browser —
+  // can still validate a team number over the Convex connection it already has.
+  const serverRosterLive = useQuery(
+    api.forms.getEventTeamRoster,
+    currentEvent?.eventKey ? { eventKey: currentEvent.eventKey } : "skip",
+  );
+  const serverRoster = useCached(
+    serverRosterLive,
+    `event_team_roster_${currentEvent?.eventKey ?? "none"}`,
+  );
+
   const submitForm = useMutation(api.forms.submitForm);
   const syncRoster = useMutation(api.forms.syncEventTeamRoster);
 
@@ -414,10 +427,14 @@ export default function ScoutMatchPage() {
   // field on submit. Preloaded here so the check at submit time is instant;
   // re-fetched at submit time too in case this hasn't resolved yet.
   const [eventTeams, setEventTeams] = useState<TBATeam[] | null>(null);
-  const eventTeamNumbers = useMemo(
-    () => (eventTeams ? new Set(eventTeams.map((t) => t.team_number)) : null),
-    [eventTeams]
-  );
+  // null = roster unknown, which is not the same as "no teams are registered".
+  // An empty list counts as unknown: TBA returns one for an event whose teams
+  // aren't published yet, and treating that as a roster rejects every team.
+  const eventTeamNumbers = useMemo(() => {
+    if (eventTeams?.length) return new Set(eventTeams.map((t) => t.team_number));
+    if (serverRoster?.length) return new Set(serverRoster);
+    return null;
+  }, [eventTeams, serverRoster]);
   useEffect(() => {
     const eventKey = currentEvent?.eventKey;
     if (!eventKey) {
@@ -427,7 +444,7 @@ export default function ScoutMatchPage() {
     let cancelled = false;
     fetchTBAEventTeams(eventKey).then((teams) => {
       if (cancelled) return;
-      if (Array.isArray(teams)) {
+      if (Array.isArray(teams) && teams.length > 0) {
         setEventTeams(teams);
         // Sync the roster to Convex so the backend can validate team numbers
         syncRoster({ eventKey, teamNumbers: teams.map((t) => t.team_number) }).catch(() => {});
@@ -536,20 +553,18 @@ export default function ScoutMatchPage() {
       let roster = eventTeamNumbers;
       if (!roster) {
         const teams = await fetchTBAEventTeams(currentEvent.eventKey);
-        if (Array.isArray(teams)) {
+        if (Array.isArray(teams) && teams.length > 0) {
           setEventTeams(teams);
           roster = new Set(teams.map((t) => t.team_number));
-        } else {
-          roster = null;
         }
       }
-      if (!roster) {
-        toast.error(
-          "Couldn't verify the team roster for this event. Connect online once (or check the TBA API key in Settings) so the roster can sync, then try again."
-        );
-        return;
-      }
-      if (!roster.has(primaryTeamNumber)) {
+      // An unknown roster no longer blocks the submission. This check used to
+      // fail closed, which stranded any device that couldn't reach TBA itself
+      // — phones, mostly, since a desktop that fetched the roster once passes
+      // from its own 7-day cache regardless. submitForm re-runs the same check
+      // server-side against the synced roster, so a real mismatch is still
+      // caught; what's gone is being blocked for want of a roster.
+      if (roster && !roster.has(primaryTeamNumber)) {
         toast.error(
           `Team ${primaryTeamNumber} is not registered at this event. Please enter a different team number.`
         );

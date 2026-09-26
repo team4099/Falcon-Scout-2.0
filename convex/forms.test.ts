@@ -177,4 +177,25 @@ describe("submitForm", () => {
       }),
     ).rejects.toThrow(/not registered at this event/i);
   });
+
+  test("an empty roster row means unknown, not empty — submission goes through", async () => {
+    const t = convexTest(schema, modules);
+    const userId = await t.run(async (ctx) => ctx.db.insert("users", { name: "S", email: "s@team4099.com" }));
+    const as = t.withIdentity({ subject: userId, issuer: "test" });
+    const templateId = await t.run(async (ctx) => {
+      await ctx.db.insert("eventTeamRosters", {
+        eventKey: "2025chcmp", teamNumbers: [], updatedAt: Date.now(),
+      });
+      return ctx.db.insert("formTemplates", { name: "T", fields: [], isActive: true });
+    });
+
+    await as.mutation(api.forms.submitForm, {
+      templateId, eventKey: "2025chcmp", matchNumber: 1,
+      teamNumber: 9999, data: "{}",
+    });
+
+    expect(await t.run(async (ctx) =>
+      (await ctx.db.query("formSubmissions").collect()).length,
+    )).toBe(1);
+  });
 });

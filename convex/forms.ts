@@ -263,7 +263,10 @@ export const submitForm = mutation({
         .query("eventTeamRosters")
         .withIndex("by_event", (q) => q.eq("eventKey", args.eventKey))
         .first();
-      if (roster && !roster.teamNumbers.includes(args.teamNumber)) {
+      // An empty roster means "we never learned who is here" — TBA publishes
+      // one for events whose team list isn't up yet — not "nobody is here".
+      // Enforcing it would reject every submission at such an event.
+      if (roster && roster.teamNumbers.length > 0 && !roster.teamNumbers.includes(args.teamNumber)) {
         throw new Error(
           `Team ${args.teamNumber} is not registered at this event. Submission rejected.`
         );
