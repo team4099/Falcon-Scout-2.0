@@ -677,6 +677,17 @@ function FormBuilderContent() {
     return `${name} (${n})`;
   }
 
+  /** One form per type: picking a type opens the existing template of that
+   *  type (active one first). Only when none exists does it start a fresh
+   *  draft of that type. */
+  function selectType(type: FormType) {
+    const existing = orderedTemplates?.filter((t) => ((t.formType as FormType) ?? "default") === type);
+    const target = existing?.find((t) => t.isActive) ?? existing?.[0];
+    if (target) { loadTemplate(target); return; }
+    setFormType(type);
+    if (type === "checklist") setFields((prev) => prev.filter((f) => f.type !== "teamNumber"));
+  }
+
   function newForm() {
     setSelectedId(null);
     setName(uniqueName("New Scouting Form"));
@@ -980,7 +991,7 @@ function FormBuilderContent() {
                   <Label>Form Type</Label>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     <button
-                      onClick={() => { setFormType("default"); setFields((prev) => prev); }}
+                      onClick={() => selectType("default")}
                       className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm transition-all ${
                         formType === "default"
                           ? "border-primary bg-primary/10 text-primary font-semibold"
@@ -994,7 +1005,7 @@ function FormBuilderContent() {
                       </div>
                     </button>
                     <button
-                      onClick={() => { setFormType("pit"); setFields((prev) => prev); }}
+                      onClick={() => selectType("pit")}
                       className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm transition-all ${
                         formType === "pit"
                           ? "border-cyan-500 bg-cyan-500/10 text-cyan-400 font-semibold"
@@ -1008,7 +1019,7 @@ function FormBuilderContent() {
                       </div>
                     </button>
                     <button
-                      onClick={() => setFormType("super")}
+                      onClick={() => selectType("super")}
                       className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm transition-all ${
                         formType === "super"
                           ? "border-amber-500 bg-amber-500/10 text-amber-400 font-semibold"
@@ -1022,11 +1033,7 @@ function FormBuilderContent() {
                       </div>
                     </button>
                     <button
-                      onClick={() => {
-                        setFormType("checklist");
-                        // Remove teamNumber fields — not applicable for checklists
-                        setFields((prev) => prev.filter((f) => f.type !== "teamNumber"));
-                      }}
+                      onClick={() => selectType("checklist")}
                       className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm transition-all ${
                         formType === "checklist"
                           ? "border-violet-500 bg-violet-500/10 text-violet-400 font-semibold"
