@@ -1,5 +1,6 @@
-import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { ConvexError, v } from "convex/values";
+import { mutation, query, type QueryCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { getApprovedUserId, isSignedIn, requireAdmin } from "./adminAuth";
 import { awardCoins, revokeCoins, PIT_DUTY_REWARD } from "./betting";
 
@@ -115,6 +116,38 @@ export const getMyMatchAssignments = query({
   },
 });
 
+/** Refuse match assignments that land inside a scout's qual pit-rotation window.
+ *  Pit rotations are planned first; upsertPitRotation clears conflicting match
+ *  slots, so this is the mirror check for the other order of operations. */
+async function assertNoPitConflict(
+  ctx: QueryCtx,
+  eventKey: string,
+  assignments: { matchNumber: number; scoutId: Id<"users"> }[],
+) {
+  const rotations = (await ctx.db
+    .query("pitRotations")
+    .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
+    .collect()
+  ).filter((r) => !r.isElims && r.startMatch != null && r.endMatch != null);
+  if (rotations.length === 0) return;
+
+  const conflicts = new Map<string, { scoutId: Id<"users">; range: string }>();
+  for (const { matchNumber, scoutId } of assignments) {
+    const rot = rotations.find(
+      (r) => r.scoutIds.includes(scoutId) && matchNumber >= r.startMatch! && matchNumber <= r.endMatch!,
+    );
+    if (rot) conflicts.set(`${scoutId}-${rot._id}`, { scoutId, range: `Q${rot.startMatch}–Q${rot.endMatch}` });
+  }
+  if (conflicts.size === 0) return;
+
+  const names: string[] = [];
+  for (const { scoutId, range } of conflicts.values()) {
+    const user = await ctx.db.get(scoutId);
+    names.push(`${user?.name ?? "This scout"} is on pit rotation ${range}`);
+  }
+  throw new ConvexError(`${names.join("; ")}. Remove them from the pit rotation first, or pick another scout.`);
+}
+
 /** Upsert a single position slot */
 export const setMatchAssignment = mutation({
   args: {
@@ -127,6 +160,7 @@ export const setMatchAssignment = mutation({
   },
   handler: async (ctx, { eventKey, matchNumber, matchLabel, position, scoutId, adminKey }) => {
     await requireAdmin(ctx, adminKey);
+    await assertNoPitConflict(ctx, eventKey, [{ matchNumber, scoutId }]);
     const existing = await ctx.db
       .query("matchAssignments")
       .withIndex("by_event_match", (q) =>
@@ -184,6 +218,7 @@ export const batchSetMatchAssignments = mutation({
   },
   handler: async (ctx, { eventKey, assignments, adminKey }) => {
     await requireAdmin(ctx, adminKey);
+    await assertNoPitConflict(ctx, eventKey, assignments);
     for (const { matchNumber, matchLabel, position, scoutId } of assignments) {
       const existing = await ctx.db
         .query("matchAssignments")

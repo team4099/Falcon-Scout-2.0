@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
 import { useQuery } from "convex/react";
+import { ConvexError } from "convex/values";
 import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
@@ -13,7 +14,7 @@ import {
   Users, CalendarDays, Wrench, Loader2,
   AlertCircle, Plus, Trash2, Pencil, Check,
   Zap, LayoutGrid, Sparkles, TriangleAlert, ChevronDown as ChevDown,
-  ClipboardList, Car, GripVertical, X,
+  ClipboardList, Car, GripVertical, X, Heart,
 } from "lucide-react";
 import {
   DndContext, closestCenter, PointerSensor, useSensor, useSensors,
@@ -111,6 +112,12 @@ const FG        = "var(--foreground)";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/** The server refuses match assignments inside a scout's pit rotation; show why. */
+function warnAssignRefused(e: unknown) {
+  if (e instanceof ConvexError && typeof e.data === "string") window.alert(`⚠ Not assigned\n\n${e.data}`);
+  else throw e;
+}
+
 function displayName(u: User) { return u.name ?? u.email ?? "?"; }
 function avatarLetter(u: User) { return displayName(u).charAt(0).toUpperCase(); }
 
@@ -190,9 +197,28 @@ function Avatar({ user, size = 36 }: { user: User; size?: number }) {
 
 // ── Scout selector panel ──────────────────────────────────────────────────────
 
+type PrefMap = Map<string, { wantsMoreMatches?: boolean; wantsPitScouting?: boolean; preferredPartners?: string[] }>;
+
+/** Scouts the pinned scout listed as preferred partners (empty if none pinned). */
+function partnerSet(prefs: PrefMap | undefined, pinnedId: string | null): Set<string> {
+  return new Set(pinnedId ? prefs?.get(pinnedId)?.preferredPartners ?? [] : []);
+}
+
+const PARTNER_BORD = "oklch(0.78 0.16 75)";
+const PARTNER_BG   = "oklch(0.78 0.16 75 / 14%)";
+
+/** Marks a scout the pinned scout asked to work with. */
+function PartnerMark({ size = 10 }: { size?: number }) {
+  return (
+    <span title="Preferred partner of the selected scout" style={{ display: "inline-flex", flexShrink: 0 }}>
+      <Heart size={size} fill={PARTNER_BORD} style={{ color: PARTNER_BORD }} />
+    </span>
+  );
+}
+
 interface ScoutSelectorProps {
   users: User[];
-  prefsByScout?: Map<string, { wantsMoreMatches?: boolean; wantsPitScouting?: boolean }>;
+  prefsByScout?: PrefMap;
   pinnedId: string | null;
   onPin: (id: string | null) => void;
   matchCounts: Record<string, number>;
@@ -231,6 +257,7 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
   const [batchBusy, setBatchBusy]   = useState(false);
 
   const pinned = users.find(u => u._id === pinnedId) ?? null;
+  const partners = partnerSet(prefsByScout, pinnedId);
 
   function togglePos(p: Position) {
     setBatchPos(prev => { const n = new Set(prev); if (n.has(p)) n.delete(p); else n.add(p); return n; });
@@ -293,6 +320,7 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
         {!stackLayout && !isLandscapePhone && (
           <p style={{ fontSize: 10, color: MUTED, margin: "5px 0 0", display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><Zap size={10} style={{ color: G }} />wants more matches</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><Heart size={10} fill={PARTNER_BORD} style={{ color: PARTNER_BORD }} />their picks</span>
           </p>
         )}
       </div>
@@ -306,22 +334,24 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
               {users.map(u => {
                 const active = pinnedId === u._id;
                 const cnt = matchCounts[u._id] ?? 0;
+                const pref = !active && partners.has(u._id);
                 return (
                   <button key={u._id} onClick={() => onPin(active ? null : u._id)}
                     style={{
                       width: "100%", display: "flex", alignItems: "center", gap: 6,
                       padding: "5px 6px", borderRadius: 8, cursor: "pointer",
-                      background: active ? G_DIM : "transparent",
-                      border: `1.5px solid ${active ? G_STR : "transparent"}`,
+                      background: active ? G_DIM : pref ? PARTNER_BG : "transparent",
+                      border: `1.5px solid ${active ? G_STR : pref ? PARTNER_BORD : "transparent"}`,
                       outline: "none", transition: "all 0.1s",
                     }}
-                    onMouseEnter={e => { if (!active) e.currentTarget.style.background = SURF_HVR; }}
-                    onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
+                    onMouseEnter={e => { if (!active && !pref) e.currentTarget.style.background = SURF_HVR; }}
+                    onMouseLeave={e => { if (!active) e.currentTarget.style.background = pref ? PARTNER_BG : "transparent"; }}
                   >
                     <Avatar user={u} size={22} />
                     <span style={{ fontSize: 11, fontWeight: 700, color: active ? G : FG, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left" }}>
                       {displayName(u)}{u.isGuest && <GuestTag />}
                     </span>
+                    {pref && <PartnerMark />}
                     <PrefBadges prefs={prefsByScout?.get(u._id)} kind="matches" />
                     {cnt > 0 && (
                       <span style={{ background: active ? G : G_MED, color: active ? G_TXT : G, borderRadius: 20, padding: "0 5px", fontSize: 9, fontWeight: 800, flexShrink: 0 }}>
@@ -343,13 +373,14 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
             {users.map(u => {
               const active = pinnedId === u._id;
               const cnt = matchCounts[u._id] ?? 0;
+              const pref = !active && partners.has(u._id);
               return (
                 <button key={u._id} onClick={() => { onPin(active ? null : u._id); setMobileOpen(false); }}
                   style={{
                     display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
                     padding: "8px 10px", borderRadius: 12, cursor: "pointer", flexShrink: 0,
-                    background: active ? G_DIM : SURF_HVR,
-                    border: `1.5px solid ${active ? G_STR : SURF_BORD}`,
+                    background: active ? G_DIM : pref ? PARTNER_BG : SURF_HVR,
+                    border: `1.5px solid ${active ? G_STR : pref ? PARTNER_BORD : SURF_BORD}`,
                     outline: "none", transition: "all 0.12s", minWidth: 58, maxWidth: 104,
                   }}
                 >
@@ -357,6 +388,7 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
                   <span style={{ fontSize: 10, fontWeight: 700, color: active ? G : FG, whiteSpace: "nowrap", maxWidth: 92, overflow: "hidden", textOverflow: "ellipsis" }}>
                     {displayName(u)}{u.isGuest && <GuestTag />}
                   </span>
+                  {pref && <PartnerMark />}
                   <PrefBadges prefs={prefsByScout?.get(u._id)} kind="matches" />
                   {cnt > 0 && (
                     <span style={{ background: active ? G : SURF_BORD, color: active ? G_TXT : MUTED, borderRadius: 20, padding: "0px 5px", fontSize: 10, fontWeight: 800 }}>
@@ -379,22 +411,24 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
               {users.map(u => {
                 const active = pinnedId === u._id;
                 const cnt = matchCounts[u._id] ?? 0;
+                const pref = !active && partners.has(u._id);
                 return (
                   <button key={u._id} onClick={() => onPin(active ? null : u._id)}
                     style={{
                       width: "100%", display: "flex", alignItems: "center", gap: 9,
                       padding: "8px 9px", borderRadius: 10, cursor: "pointer", textAlign: "left",
-                      background: active ? G_DIM : "transparent",
-                      border: `1.5px solid ${active ? G_STR : "transparent"}`,
+                      background: active ? G_DIM : pref ? PARTNER_BG : "transparent",
+                      border: `1.5px solid ${active ? G_STR : pref ? PARTNER_BORD : "transparent"}`,
                       outline: "none", transition: "all 0.12s",
                     }}
-                    onMouseEnter={e => { if (!active) e.currentTarget.style.background = SURF_HVR; }}
-                    onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
+                    onMouseEnter={e => { if (!active && !pref) e.currentTarget.style.background = SURF_HVR; }}
+                    onMouseLeave={e => { if (!active) e.currentTarget.style.background = pref ? PARTNER_BG : "transparent"; }}
                   >
                     <Avatar user={u} size={30} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, fontWeight: 600, color: FG, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: 6 }}>
                         {displayName(u)}{u.isGuest && <GuestTag />}
+                        {pref && <PartnerMark />}
                         <PrefBadges prefs={prefsByScout?.get(u._id)} kind="matches" />
                       </div>
                     </div>
@@ -2231,7 +2265,7 @@ function PitScoutingTab({
   tbaError: boolean;
   assignments: Map<number, string[]>;
   allUsers: User[];
-  prefsByScout?: Map<string, { wantsMoreMatches?: boolean; wantsPitScouting?: boolean }>;
+  prefsByScout?: PrefMap;
   onToggleScout: (teamNumber: number, scoutId: string) => Promise<void>;
   isMobile: boolean;
   readOnly?: boolean;
@@ -2239,6 +2273,7 @@ function PitScoutingTab({
   const [pinnedScoutId, setPinnedScoutId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState<Set<number>>(new Set());
+  const partners = partnerSet(prefsByScout, pinnedScoutId);
 
   const filtered = useMemo(() =>
     tbaTeams.filter(t =>
@@ -2270,10 +2305,12 @@ function PitScoutingTab({
         }}>
           <div style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: MUTED, marginBottom: 8 }}>
             {readOnly ? "Pin a scout to highlight their teams" : "Pin a scout then click teams"}
+            {pinnedScoutId && partners.size > 0 && <span style={{ color: PARTNER_BORD, marginLeft: 8, textTransform: "none", letterSpacing: 0 }}>♥ = their preferred partners</span>}
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
             {allUsers.map(u => {
               const pinned = u._id === pinnedScoutId;
+              const pref   = !pinned && partners.has(u._id);
               const count  = [...assignments.values()].filter(ids => ids.includes(u._id)).length;
               return (
                 <button key={u._id}
@@ -2282,9 +2319,9 @@ function PitScoutingTab({
                     display: "inline-flex", alignItems: "center", gap: 5,
                     padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600,
                     cursor: "pointer", transition: "all 0.12s",
-                    background: pinned ? G : SURF_HVR,
+                    background: pinned ? G : pref ? PARTNER_BG : SURF_HVR,
                     color:      pinned ? G_TXT : MUTED,
-                    border:     `1.5px solid ${pinned ? G_STR : SURF_BORD}`,
+                    border:     `1.5px solid ${pinned ? G_STR : pref ? PARTNER_BORD : SURF_BORD}`,
                     boxShadow:  pinned ? `0 2px 8px ${G} / 30%` : "none",
                   }}
                 >
@@ -2293,6 +2330,7 @@ function PitScoutingTab({
                     : <span style={{ width: 14, height: 14, borderRadius: "50%", background: pinned ? G_TXT+"30" : G_MED, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 800, color: pinned ? G_TXT : G, flexShrink: 0 }}>{avatarLetter(u)}</span>
                   }
                   {displayName(u)}{u.isGuest && <GuestTag />}
+                  {pref && <PartnerMark />}
                   <PrefBadges prefs={prefsByScout?.get(u._id)} kind="pit" />
                   {count > 0 && (
                     <span style={{ background: pinned ? "oklch(0 0 0 / 20%)" : G_MED, borderRadius: 20, padding: "0 5px", fontSize: 10, fontWeight: 800, color: pinned ? G_TXT : G }}>
@@ -2729,8 +2767,8 @@ export default function SchedulingPage() {
 
   // scoutId -> preference flags, for badging opted-in scouts across the page.
   const prefsByScout = useMemo(() => {
-    const m = new Map<string, { wantsMoreMatches?: boolean; wantsPitScouting?: boolean; wantsPitRotation?: boolean }>();
-    for (const p of (allPreferences ?? []) as Array<{ scoutId: string; wantsMoreMatches?: boolean; wantsPitScouting?: boolean; wantsPitRotation?: boolean }>) {
+    const m = new Map<string, { wantsMoreMatches?: boolean; wantsPitScouting?: boolean; wantsPitRotation?: boolean; preferredPartners?: string[] }>();
+    for (const p of (allPreferences ?? []) as Array<{ scoutId: string; wantsMoreMatches?: boolean; wantsPitScouting?: boolean; wantsPitRotation?: boolean; preferredPartners?: string[] }>) {
       m.set(p.scoutId, p);
     }
     return m;
@@ -2786,6 +2824,8 @@ export default function SchedulingPage() {
           position: pos, scoutId: pinnedScoutId as Id<"users">,
         });
       }
+    } catch (e) {
+      warnAssignRefused(e);
     } finally {
       setSavingCells(p => { const n = new Set(p); n.delete(key); return n; });
     }
@@ -2813,7 +2853,13 @@ export default function SchedulingPage() {
         });
       }
     }
-    if (assignments.length > 0) await batchSet({ eventKey: currentEvent.eventKey, assignments });
+    if (assignments.length > 0) {
+      try {
+        await batchSet({ eventKey: currentEvent.eventKey, assignments });
+      } catch (e) {
+        warnAssignRefused(e);
+      }
+    }
   }
 
   /** Assigns (or clears) the pinned scout across every match in one 5-match
@@ -2840,6 +2886,8 @@ export default function SchedulingPage() {
           })),
         });
       }
+    } catch (e) {
+      warnAssignRefused(e);
     } finally {
       setSavingCells(p => { const n = new Set(p); n.delete(key); return n; });
     }

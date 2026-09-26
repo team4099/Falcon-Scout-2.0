@@ -48,3 +48,49 @@ describe("adminSetPreferences", () => {
     expect(row?.wantsPitScouting).toBe(true);
   });
 });
+
+describe("match assignment vs pit rotation", () => {
+  async function setup() {
+    const t = convexTest(schema, modules);
+    const ids = await t.run(async (ctx) => ({
+      adminId: await ctx.db.insert("users", { name: "Admin", email: ADMIN_EMAIL }),
+      onPit: await ctx.db.insert("users", { name: "Pitty", email: "pit@team4099.com" }),
+      free: await ctx.db.insert("users", { name: "Free", email: "free@team4099.com" }),
+    }));
+    await t.run(async (ctx) => {
+      await ctx.db.insert("pitRotations", {
+        eventKey: EVENT, startMatch: 10, endMatch: 19, scoutIds: [ids.onPit], driveTeamScoutIds: [],
+      });
+    });
+    const asAdmin = t.withIdentity({ subject: ids.adminId, issuer: "test", email: ADMIN_EMAIL });
+    return { t, asAdmin, ...ids };
+  }
+  const slot = (matchNumber: number, scoutId: any) => ({
+    eventKey: EVENT, matchNumber, matchLabel: `Q${matchNumber}`, position: "red1" as const, scoutId,
+  });
+
+  test("refuses a single assignment inside the scout's pit rotation", async () => {
+    const { t, asAdmin, onPit } = await setup();
+    await expect(asAdmin.mutation(api.schedules.setMatchAssignment, slot(12, onPit))).rejects.toThrow(/Pitty.*Q10–Q19/);
+    expect(await t.run(async (ctx) => ctx.db.query("matchAssignments").collect())).toHaveLength(0);
+  });
+
+  test("a batch with any conflicting slot is refused entirely", async () => {
+    const { t, asAdmin, onPit, free } = await setup();
+    const { eventKey: _e, ...a } = slot(5, onPit);
+    const { eventKey: _f, ...b } = slot(15, onPit);
+    const { eventKey: _g, ...c } = slot(15, free);
+    await expect(
+      asAdmin.mutation(api.schedules.batchSetMatchAssignments, { eventKey: EVENT, assignments: [a, { ...c, position: "red2" }, b] }),
+    ).rejects.toThrow(/pit rotation/);
+    expect(await t.run(async (ctx) => ctx.db.query("matchAssignments").collect())).toHaveLength(0);
+  });
+
+  test("allows the scout outside the window and other scouts inside it", async () => {
+    const { t, asAdmin, onPit, free } = await setup();
+    await asAdmin.mutation(api.schedules.setMatchAssignment, slot(9, onPit));
+    await asAdmin.mutation(api.schedules.setMatchAssignment, slot(20, onPit));
+    await asAdmin.mutation(api.schedules.setMatchAssignment, slot(12, free));
+    expect(await t.run(async (ctx) => ctx.db.query("matchAssignments").collect())).toHaveLength(3);
+  });
+});
