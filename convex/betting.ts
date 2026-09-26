@@ -385,19 +385,24 @@ export const getMarketPool = query({
  * every bet placed on the market, so they are written once and never updated.
  * Matches that already have a market are skipped.
  */
+const matchSeed = v.object({
+  matchNumber: v.number(),
+  matchLabel:  v.string(),
+  winRed:      v.number(), // 1-99
+  winBlue:     v.number(), // 1-99, = 100 - winRed
+});
+
 export const batchCreateMatchWinnerMarkets = mutation({
   args: {
     eventKey: v.string(),
     limit:    v.optional(v.number()), // max markets to create (default: unlimited)
-    matches: v.array(v.object({
-      matchNumber: v.number(),
-      matchLabel:  v.string(),
-      winRed:      v.number(), // 1-99
-      winBlue:     v.number(), // 1-99, = 100 - winRed
-    })),
+    matches: v.array(matchSeed),
+    // Odds-only: fixes the odds of markets that exist and have no bets, but
+    // never creates one (e.g. already-played matches on "Generate Upcoming").
+    refreshMatches: v.optional(v.array(matchSeed)),
     adminKey: v.optional(v.string()),
   },
-  handler: async (ctx, { eventKey, limit, matches, adminKey }) => {
+  handler: async (ctx, { eventKey, limit, matches, refreshMatches, adminKey }) => {
     const userId = await requireAdmin(ctx, adminKey);
 
     const existing = await ctx.db
@@ -410,7 +415,8 @@ export const batchCreateMatchWinnerMarkets = mutation({
 
     let created = 0;
     let refreshed = 0;
-    for (const m of matches) {
+    const seeds = [...matches.map((m) => ({ m, create: true })), ...(refreshMatches ?? []).map((m) => ({ m, create: false }))];
+    for (const { m, create } of seeds) {
       // Clamp here too: a bad EPA fetch upstream must not write a 0% option,
       // which would hand out the maximum multiplier on a coin flip.
       const winRed  = Math.max(1, Math.min(99, Math.round(m.winRed)));
@@ -431,7 +437,7 @@ export const batchCreateMatchWinnerMarkets = mutation({
         // under the players who read the old odds. This is what lets a market
         // seeded from a bad/missing EPA fetch (all 50/50) be fixed in place
         // instead of wiping the event's bets and balances.
-        if (prior.status !== "open" || prior.options[0]?.winProb === winRed) continue;
+        if ((prior.status !== "open" && prior.status !== "locked") || prior.options[0]?.winProb === winRed) continue;
         const hasBet = await ctx.db
           .query("bets")
           .withIndex("by_market", (q) => q.eq("marketId", prior._id))
@@ -442,7 +448,7 @@ export const batchCreateMatchWinnerMarkets = mutation({
         continue;
       }
 
-      if (limit !== undefined && created >= limit) continue;
+      if (!create || (limit !== undefined && created >= limit)) continue;
       await ctx.db.insert("bettingMarkets", {
         eventKey,
         title:       `${m.matchLabel} — Match Winner`,

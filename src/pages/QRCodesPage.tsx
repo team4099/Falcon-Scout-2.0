@@ -9,6 +9,7 @@ import {
   type LocalSubmission,
 } from "@/lib/submissionStore";
 import { Button } from "@/components/ui/button";
+import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Dialog,
@@ -260,6 +261,7 @@ export default function QRCodesPage() {
   const [subs, setSubs] = useState<LocalSubmission[]>([]);
   const [viewing, setViewing] = useState<LocalSubmission | null>(null);
   const [clearConfirm, setClearConfirm] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<LocalSubmission | null>(null);
 
   const reload = useCallback(() => setSubs(getMySubmissions()), []);
 
@@ -365,7 +367,7 @@ export default function QRCodesPage() {
                       key={sub.id}
                       sub={sub}
                       onView={() => setViewing(sub)}
-                      onDelete={() => handleDelete(sub.id)}
+                      onDelete={() => setPendingDelete(sub)}
                     />
                   ))}
                 </div>
@@ -383,6 +385,21 @@ export default function QRCodesPage() {
           onClose={() => setViewing(null)}
         />
       )}
+
+      {/* Single delete confirm */}
+      <ConfirmDeleteDialog
+        open={pendingDelete !== null}
+        onOpenChange={(o) => { if (!o) setPendingDelete(null); }}
+        title="Delete this QR code?"
+        description={pendingDelete && (
+          <>
+            Match {matchLabel(pendingDelete.matchNumber, pendingDelete.compLevel)} ·{" "}
+            {pendingDelete.teamNumber ? `Team ${pendingDelete.teamNumber}` : "No team #"} ({pendingDelete.templateName}).
+            This removes the QR backup from this device only. Submissions already synced, or still waiting to sync, are not affected.
+          </>
+        )}
+        onConfirm={() => handleDelete(pendingDelete!.id)}
+      />
 
       {/* Clear all confirm */}
       <AlertDialog open={clearConfirm} onOpenChange={setClearConfirm}>

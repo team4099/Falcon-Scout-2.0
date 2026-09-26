@@ -326,6 +326,25 @@ describe("batchCreateMatchWinnerMarkets", () => {
     expect(await probs(31)).toEqual([50, 50]);
   });
 
+  test("refreshMatches fixes odds on existing markets but never creates one", async () => {
+    const t = convexTest(schema, modules);
+    const { as } = await setup(t);
+    await as.mutation(api.betting.batchCreateMatchWinnerMarkets, {
+      eventKey: EVENT, matches: [{ matchNumber: 40, matchLabel: "Q40", winRed: 50, winBlue: 50 }],
+    });
+    const res = await as.mutation(api.betting.batchCreateMatchWinnerMarkets, {
+      eventKey: EVENT, matches: [],
+      refreshMatches: [
+        { matchNumber: 40, matchLabel: "Q40", winRed: 65, winBlue: 35 },
+        { matchNumber: 41, matchLabel: "Q41", winRed: 65, winBlue: 35 },
+      ],
+    });
+    expect(res).toEqual({ created: 0, refreshed: 1 });
+    const all = await t.run((ctx) => ctx.db.query("bettingMarkets").collect());
+    expect(all.filter((m) => m.matchNumber === 41)).toHaveLength(0);
+    expect(all.find((m) => m.matchNumber === 40)!.options[0].winProb).toBe(65);
+  });
+
   test("an out-of-range probability is clamped, not written as 0%", async () => {
     const t = convexTest(schema, modules);
     const { as } = await setup(t);

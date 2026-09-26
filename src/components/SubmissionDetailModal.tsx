@@ -5,7 +5,8 @@ import { useState } from "react";
 import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { api } from "../../convex/_generated/api";
 import { Button } from "@/components/ui/button";
-import { ClipboardList, Hash, X, Star, CheckCircle2, Trash2, AlertTriangle, ShieldAlert, Lock } from "lucide-react";
+import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
+import { ClipboardList, Hash, X, Star, CheckCircle2, Trash2, ShieldAlert, Lock } from "lucide-react";
 
 export interface Submission {
   _id: string;
@@ -60,7 +61,6 @@ export function SubmissionDetailModal({
 }) {
   const deleteSubmission = useAdminMutation(api.forms.deleteSubmission);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [deleting, setDeleting] = useState(false);
 
   const template = (templates ?? []).find((t) => t._id === submission.templateId);
 
@@ -168,15 +168,9 @@ export function SubmissionDetailModal({
   }
 
   async function handleDelete() {
-    setDeleting(true);
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await deleteSubmission({ id: submission._id as any });
-      onDeleted();
-    } finally {
-      setDeleting(false);
-      setConfirmDelete(false);
-    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await deleteSubmission({ id: submission._id as any });
+    onDeleted();
   }
 
   return (
@@ -294,68 +288,36 @@ export function SubmissionDetailModal({
           flexShrink: 0,
           background: "oklch(1 0 0 / 2%)",
         }}>
-          {!confirmDelete ? (
-            <button
-              onClick={() => setConfirmDelete(true)}
-              style={{
-                display: "flex", alignItems: "center", gap: 7,
-                padding: "8px 14px", borderRadius: 10,
-                border: "1px solid oklch(0.6 0.22 25 / 30%)",
-                background: "oklch(0.6 0.22 25 / 8%)",
-                color: "oklch(0.65 0.22 25)",
-                fontSize: 13, fontWeight: 600, cursor: "pointer",
-                transition: "all 0.15s",
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background = "oklch(0.6 0.22 25 / 16%)";
-                (e.currentTarget as HTMLButtonElement).style.borderColor = "oklch(0.6 0.22 25 / 50%)";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background = "oklch(0.6 0.22 25 / 8%)";
-                (e.currentTarget as HTMLButtonElement).style.borderColor = "oklch(0.6 0.22 25 / 30%)";
-              }}
-            >
-              <Trash2 size={14} />
-              Delete Report
-            </button>
-          ) : (
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "oklch(0.65 0.22 25)", fontWeight: 600 }}>
-                <AlertTriangle size={14} />
-                Are you sure? This cannot be undone.
-              </div>
-              <div style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
-                <button
-                  onClick={() => setConfirmDelete(false)}
-                  disabled={deleting}
-                  style={{
-                    padding: "6px 14px", borderRadius: 9,
-                    border: "1px solid oklch(1 0 0 / 12%)",
-                    background: "transparent",
-                    color: "var(--muted-foreground)",
-                    fontSize: 13, fontWeight: 600, cursor: "pointer",
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleDelete}
-                  disabled={deleting}
-                  style={{
-                    padding: "6px 14px", borderRadius: 9,
-                    border: "none",
-                    background: "oklch(0.6 0.22 25)",
-                    color: "white",
-                    fontSize: 13, fontWeight: 700, cursor: deleting ? "not-allowed" : "pointer",
-                    opacity: deleting ? 0.6 : 1,
-                    transition: "opacity 0.15s",
-                  }}
-                >
-                  {deleting ? "Deleting…" : "Delete"}
-                </button>
-              </div>
-            </div>
-          )}
+          <button
+            onClick={() => setConfirmDelete(true)}
+            style={{
+              display: "flex", alignItems: "center", gap: 7,
+              padding: "8px 14px", borderRadius: 10,
+              border: "1px solid oklch(0.6 0.22 25 / 30%)",
+              background: "oklch(0.6 0.22 25 / 8%)",
+              color: "oklch(0.65 0.22 25)",
+              fontSize: 13, fontWeight: 600, cursor: "pointer",
+              transition: "all 0.15s",
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = "oklch(0.6 0.22 25 / 16%)";
+              (e.currentTarget as HTMLButtonElement).style.borderColor = "oklch(0.6 0.22 25 / 50%)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = "oklch(0.6 0.22 25 / 8%)";
+              (e.currentTarget as HTMLButtonElement).style.borderColor = "oklch(0.6 0.22 25 / 30%)";
+            }}
+          >
+            <Trash2 size={14} />
+            Delete Report
+          </button>
+          <ConfirmDeleteDialog
+            open={confirmDelete}
+            onOpenChange={setConfirmDelete}
+            title="Delete this report?"
+            description={<>Match {submission.matchNumber ?? "—"} · Team {submission.teamNumber ?? "—"}, scouted by {scoutName}. This permanently removes it for everyone and cannot be undone.</>}
+            onConfirm={handleDelete}
+          />
         </div>
       </div>
     </div>

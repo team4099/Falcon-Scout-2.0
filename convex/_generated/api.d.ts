@@ -12,6 +12,8 @@ import type * as admin from "../admin.js";
 import type * as adminAuth from "../adminAuth.js";
 import type * as auth from "../auth.js";
 import type * as betting from "../betting.js";
+import type * as bettingSync from "../bettingSync.js";
+import type * as crons from "../crons.js";
 import type * as events from "../events.js";
 import type * as forms from "../forms.js";
 import type * as guests from "../guests.js";
@@ -34,6 +36,8 @@ declare const fullApi: ApiFromModules<{
   adminAuth: typeof adminAuth;
   auth: typeof auth;
   betting: typeof betting;
+  bettingSync: typeof bettingSync;
+  crons: typeof crons;
   events: typeof events;
   forms: typeof forms;
   guests: typeof guests;

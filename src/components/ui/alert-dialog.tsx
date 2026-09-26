@@ -38,14 +38,17 @@ function AlertDialogOverlay({
 
 function AlertDialogContent({
   className,
+  overlayClassName,
   size = "default",
   ...props
 }: AlertDialogPrimitive.Popup.Props & {
   size?: "default" | "sm"
+  /** e.g. a higher z-index when opened over an inline-styled modal */
+  overlayClassName?: string
 }) {
   return (
     <AlertDialogPortal>
-      <AlertDialogOverlay />
+      <AlertDialogOverlay className={overlayClassName} />
       <AlertDialogPrimitive.Popup
         data-slot="alert-dialog-content"
         data-size={size}

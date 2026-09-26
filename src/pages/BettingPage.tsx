@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { stripEmojis } from "@/lib/utils";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery, useMutation, useAction } from "convex/react";
 import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
@@ -598,6 +598,18 @@ function MarketsTab({
   const createMarkets = useAdminMutation(api.betting.batchCreateMatchWinnerMarkets);
   const clearAll = useAdminMutation(api.betting.clearAllMarkets);
 
+  // Close betting on matches that have started. The server does this on a
+  // 1-minute cron too; this covers the page being open in the meantime. The
+  // action fetches TBA itself, so nothing here is trusted.
+  const lockPlayed = useAction(api.bettingSync.lockPlayedMatches);
+  useEffect(() => {
+    const run = () => { lockPlayed({ eventKey }).catch(() => {}); };
+    run();
+    const id = setInterval(run, 60_000);
+    return () => clearInterval(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventKey]);
+
   useEffect(() => {
     fetchTBAEventMatches(eventKey).then((m) => {
       if (m) setTbaMatches(m);
@@ -664,12 +676,17 @@ function MarketsTab({
         toast.info("No matches to generate markets for");
         return;
       }
-      const seeds = await buildMatchSeeds(matches);
+      // Odds are refreshed for every match (only ones with no bets change);
+      // markets are created only for the requested subset.
+      const all = await buildMatchSeeds(tbaMatches);
+      const wanted = new Set(matches.map((m) => m.match_number));
+      const seeds = all && all.filter((s) => wanted.has(s.matchNumber));
+      const refreshMatches = all ? all.filter((s) => !wanted.has(s.matchNumber)) : [];
       if (!seeds) {
         toast.error("Couldn't get predictions from Statbotics, so no odds were set. Try again in a minute.");
         return;
       }
-      const { created, refreshed } = await createMarkets({ eventKey, matches: seeds }) as { created: number; refreshed: number };
+      const { created, refreshed } = await createMarkets({ eventKey, matches: seeds, refreshMatches }) as { created: number; refreshed: number };
       if (created > 0 || refreshed > 0) {
         toast.success(
           [created > 0 && `Created ${created} ${label}`, refreshed > 0 && `updated odds on ${refreshed} with no bets`]
@@ -730,14 +747,15 @@ function MarketsTab({
     return map;
   }, [myBetsLive]);
 
-  const filtered = useMemo(() => {
-    return markets
-      .filter((m) => statusFilter === "all" || m.status === statusFilter)
-      .sort((a, b) => {
-        const statusOrder = { open: 0, locked: 1, resolved: 2, cancelled: 3 };
-        if (a.status !== b.status) return statusOrder[a.status] - statusOrder[b.status];
-        return (a.matchNumber ?? 9999) - (b.matchNumber ?? 9999);
-      });
+  // Upcoming = still open for bets, soonest first. Played = locked/resolved,
+  // most recent first, kept apart so scouts aren't scrolling past them.
+  const { upcoming, played } = useMemo(() => {
+    const shown = markets.filter((m) => statusFilter === "all" || m.status === statusFilter);
+    const num = (m: Market) => m.matchNumber ?? 9999;
+    return {
+      upcoming: shown.filter((m) => m.status === "open").sort((a, b) => num(a) - num(b)),
+      played: shown.filter((m) => m.status !== "open").sort((a, b) => num(b) - num(a)),
+    };
   }, [markets, statusFilter]);
 
   const unplayed = tbaMatches.filter((m) => !isPlayed(m));
@@ -832,16 +850,25 @@ function MarketsTab({
       )}
 
       <div className="space-y-3">
-        {filtered.map((m) => (
-          <MarketCard
-            key={m._id}
-            market={m}
-            myBalance={myBalance}
-            myBet={myBetByMarket.get(m._id)}
-            isAdmin={isAdmin}
-          />
-        ))}
-        {filtered.length === 0 && markets.length > 0 && (
+        {([["Upcoming", upcoming], ["Played", played]] as const).map(([title, list]) =>
+          list.length === 0 ? null : (
+            <div key={title} className="space-y-3">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground pt-1">
+                {title} · {list.length}
+              </h3>
+              {list.map((m) => (
+                <MarketCard
+                  key={m._id}
+                  market={m}
+                  myBalance={myBalance}
+                  myBet={myBetByMarket.get(m._id)}
+                  isAdmin={isAdmin}
+                />
+              ))}
+            </div>
+          ),
+        )}
+        {upcoming.length + played.length === 0 && markets.length > 0 && (
           <p className="text-center text-sm text-muted-foreground py-8">No markets match filters</p>
         )}
       </div>
