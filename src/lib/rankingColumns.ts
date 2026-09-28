@@ -141,7 +141,7 @@ export interface StatCell {
   accent: boolean;
 }
 
-const EPA_KEYS: Record<string, keyof TeamEpa> = {
+export const EPA_KEYS: Record<string, keyof TeamEpa> = {
   epaEvent: "event",
   epaOverall: "overall",
   epaAuto: "auto",

@@ -12,6 +12,8 @@
 import { idbGetEntry, idbSet, lsGet, lsGetStale, lsSet, TTL } from "./persistentCache";
 import { convex } from "./convexClient";
 import { api } from "../../convex/_generated/api";
+import { slimStatboticsMatches, slimStatboticsTeamMatches } from "./chartData";
+import type { SlimMatch, SlimTeamMatch } from "./chartData";
 
 // Statbotics has two hosts. The official API is the source of truth; the
 // community mirror is a standby. The app used to be hard-pointed at the mirror
@@ -326,12 +328,14 @@ function recordStatboticsSuccess(source: StatboticsSource): void {
  * host has failed.
  *
  * `path` is everything after the /v3 base, e.g. "/team_year/4099/2026".
+ * `transform` shrinks a big response before it is cached.
  */
 async function fetchStatboticsWithCache<T>(
   path: string,
   cacheKey: string,
   ttl: number,
-  timeoutMs: number = SB_TIMEOUT_MS
+  timeoutMs: number = SB_TIMEOUT_MS,
+  transform?: (raw: unknown) => T
 ): Promise<T | null> {
   if (!navigator.onLine) return lsGetStale<T>(cacheKey);
 
@@ -353,13 +357,14 @@ async function fetchStatboticsWithCache<T>(
         writeStatboticsHealth({ lastError: { source, status: res.status, at: Date.now() } });
         continue;
       }
-      const data = (await res.json()) as T;
+      const raw: unknown = await res.json();
       // A host that is up but has no rows (e.g. a mirror that hasn't synced this
       // event yet) is no use: ask the next host before believing "no data".
-      if (Array.isArray(data) && data.length === 0) {
-        emptyResult = data;
+      if (Array.isArray(raw) && raw.length === 0) {
+        emptyResult = (transform ? transform(raw) : raw) as T;
         continue;
       }
+      const data = transform ? transform(raw) : (raw as T);
       lsSet(cacheKey, data, ttl);
       recordStatboticsSuccess(source);
       return data;
@@ -457,15 +462,37 @@ export async function fetchStatboticsEventMatches(eventKey: string) {
   );
 }
 
-// Fetches per-match EPA for every team at an event.
+/** Per-match EPA (going into each match) for every team at an event. */
 export async function fetchStatboticsEventTeamMatches(eventKey: string) {
-  return fetchStatboticsWithCache(
-    // Same 1000 cap as team_events — limit=5000 returns 422 and hard-failed
-    // every fetch. Both hosts enforce it, so this was latent before the mirror.
+  return fetchStatboticsWithCache<SlimTeamMatch[]>(
+    // Same 1000 cap as team_events — limit=5000 returns 422.
     `/team_matches?event=${eventKey}&limit=1000`,
-    `sb_event_team_matches_${eventKey}`,
-    TTL.SHORT
+    `sb_event_team_matches_v2_${eventKey}`,
+    TTL.SHORT,
+    SB_TIMEOUT_MS,
+    slimStatboticsTeamMatches
   );
+}
+
+/** One team's whole season: matches (with scores) + per-match EPA. Both are
+ *  slimmed before caching — the raw match rows are ~2.5 KB each. */
+export async function fetchStatboticsTeamSeason(
+  teamNumber: number,
+  year: number
+): Promise<{ matches: SlimMatch[]; teamMatches: SlimTeamMatch[] }> {
+  const [matches, teamMatches] = await Promise.all([
+    fetchStatboticsWithCache<SlimMatch[]>(
+      `/matches?team=${teamNumber}&year=${year}&limit=1000`,
+      `sb_team_season_matches_${teamNumber}_${year}`,
+      TTL.SHORT, SB_TIMEOUT_MS, slimStatboticsMatches
+    ),
+    fetchStatboticsWithCache<SlimTeamMatch[]>(
+      `/team_matches?team=${teamNumber}&year=${year}&limit=1000`,
+      `sb_team_season_team_matches_${teamNumber}_${year}`,
+      TTL.SHORT, SB_TIMEOUT_MS, slimStatboticsTeamMatches
+    ),
+  ]);
+  return { matches: matches ?? [], teamMatches: teamMatches ?? [] };
 }
 
 export async function fetchStatboticsTeamYear(teamNumber: number, year: number) {
