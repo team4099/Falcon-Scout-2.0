@@ -18,7 +18,6 @@ import {
   ChevronRight,
   X,
   UserCheck,
-  UserX,
   Trophy,
   Star,
   SlidersHorizontal,
@@ -407,75 +406,6 @@ function SubmissionCard({ submission, onOpen }: { submission: Submission; onOpen
   );
 }
 
-// ─── Stat Card ────────────────────────────────────────────────────────────────
-
-function StatCard({
-  icon: Icon,
-  label,
-  value,
-  sub,
-  accent,
-  onClick,
-}: {
-  icon: React.ElementType;
-  label: string;
-  value: string | number;
-  sub: string;
-  accent?: boolean;
-  onClick?: () => void;
-}) {
-  const Tag = onClick ? "button" : "div";
-  return (
-    <Tag
-      onClick={onClick}
-      style={{
-        background: accent ? "oklch(0.85 0.18 95 / 10%)" : "oklch(1 0 0 / 3%)",
-        border: accent ? "1px solid oklch(0.85 0.18 95 / 35%)" : "1px solid oklch(1 0 0 / 8%)",
-        borderRadius: 14,
-        padding: "16px 18px",
-        display: "flex",
-        flexDirection: "column" as const,
-        gap: 6,
-        minWidth: 0,
-        flex: 1,
-        textAlign: "left" as const,
-        cursor: onClick ? "pointer" : "default",
-        font: "inherit",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <Icon
-          size={14}
-          style={{ color: accent ? "oklch(0.85 0.18 95)" : "var(--muted-foreground)", flexShrink: 0 }}
-        />
-        <span
-          style={{
-            fontSize: 10,
-            fontWeight: 700,
-            textTransform: "uppercase" as const,
-            letterSpacing: "0.08em",
-            color: accent ? "oklch(0.85 0.18 95)" : "var(--muted-foreground)",
-          }}
-        >
-          {label}
-        </span>
-      </div>
-      <div
-        style={{
-          fontSize: 26,
-          fontWeight: 800,
-          color: "var(--foreground)",
-          lineHeight: 1,
-          letterSpacing: "-0.02em",
-        }}
-      >
-        {value}
-      </div>
-      <div style={{ fontSize: 11, color: "var(--muted-foreground)" }}>{sub}</div>
-    </Tag>
-  );
-}
-
 // ─── Report Ranking Modal ───────────────────────────────────────────────────────
 
 function ReportRankingModal({
@@ -687,8 +617,6 @@ export default function ManageScoutsPage() {
       )
     : [];
 
-  const topScout = scoutsWithSubs[0] ?? null;
-  const topCount = topScout ? (submissionsByScout[topScout._id]?.length ?? 0) : 0;
   const reportRanking = [...(allUsers ?? [])]
     .map(user => ({ user, count: submissionsByScout[user._id]?.length ?? 0 }))
     .sort((a, b) => b.count - a.count);
@@ -1058,30 +986,6 @@ export default function ManageScoutsPage() {
       {currentEvent && (
         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16, minHeight: 0 }}>
 
-          {/* Stat row */}
-          <div style={{ display: "flex", gap: 12, flexShrink: 0 }}>
-            <StatCard
-              icon={UserCheck}
-              label="Active"
-              value={scoutsWithSubs.length}
-              sub="scouts with reports"
-              accent
-            />
-            <StatCard
-              icon={UserX}
-              label="Inactive"
-              value={scoutsWithoutSubs.length}
-              sub="no reports this event"
-            />
-            <StatCard
-              icon={Trophy}
-              label="Top Scout"
-              value={topScout ? displayName(topScout) : "—"}
-              sub={topScout ? `${topCount} report${topCount !== 1 ? "s" : ""}` : "no reports yet"}
-              onClick={() => setShowRanking(true)}
-            />
-          </div>
-
           {/* Two-panel layout — on mobile the detail panel covers the full screen */}
           <div style={{ flex: 1, display: "flex", gap: 14, minHeight: 0, position: "relative" }}>
 
@@ -1138,10 +1042,29 @@ export default function ManageScoutsPage() {
                   {(allUsers ?? []).length}
                 </span>
                 <button
+                  onClick={() => setShowRanking(true)}
+                  title="Report rankings"
+                  style={{
+                    marginLeft: "auto",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 22,
+                    height: 22,
+                    borderRadius: "50%",
+                    border: "1px solid oklch(0.85 0.18 95 / 40%)",
+                    background: "oklch(0.85 0.18 95 / 12%)",
+                    color: "oklch(0.85 0.18 95)",
+                    cursor: "pointer",
+                    flexShrink: 0,
+                  }}
+                >
+                  <Trophy size={12} />
+                </button>
+                <button
                   onClick={() => setSortAlpha((v) => !v)}
                   title={sortAlpha ? "Sorted A–Z · click to sort by reports" : "Sort alphabetically"}
                   style={{
-                    marginLeft: "auto",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
