@@ -1,7 +1,8 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useUIStore } from "@/store/uiStore";
 import { useQuery } from "convex/react";
 import { useCached } from "@/hooks/useCached";
+import { useEventTeamData } from "@/hooks/useEventTeamData";
 import { api } from "../../convex/_generated/api";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -12,19 +13,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  fetchStatboticsEventTeams,
-  fetchStatboticsTeamYear,
-  fetchTBAEventTeams,
-  fetchTBAEventRankings,
-  fetchTBAEventMatches,
-  fetchTBATeamAvatar,
-  fetchTBATeamInfo,
-  getCacheError,
-  statboticsEventTeamsCacheKey,
-} from "@/lib/api";
+import { fetchTBATeamAvatar, fetchTBATeamInfo } from "@/lib/api";
 import type { TBAMatch } from "@/lib/api";
-import { EMPTY_TEAM_EPA, parseEpaComponents, totalEpa } from "@/lib/epa";
+import { EMPTY_TEAM_EPA } from "@/lib/epa";
 import type { TeamEpa } from "@/lib/epa";
 import { ExternalLink, Search, FileText, TrendingUp, Clock, CalendarCheck, Trophy, CalendarDays, Rows3, Table2, Columns3, EyeOff, Eye } from "lucide-react";
 import TeamDetailPanel from "@/pages/TeamDetailPanel";
@@ -42,24 +33,15 @@ import {
 import {
   BUILTIN_COLUMNS,
   REPORTS_COLUMN_ID,
-  aggregateField,
-  taggedFieldColumns,
   visibleColumns,
 } from "@/lib/rankingColumns";
 import type { FieldCell, RankingColumn } from "@/lib/rankingColumns";
 import type { FormField as TemplateField } from "@/types";
-import { idbGet, lsGetStale, lsSet, TTL } from "@/lib/persistentCache";
+import { idbGet, lsGetStale } from "@/lib/persistentCache";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface FormField {
-  id: string;
-  type: "text" | "number" | "checkbox" | "select" | "counter" | "textarea" | "teamNumber" | "rating";
-  label: string;
-  required: boolean;
-  options?: string[];
-  section?: string;
-}
+type FormField = TemplateField;
 
 interface Submission {
   _id: string;
@@ -910,90 +892,43 @@ function MyScouting({
 
 // ── Dashboard Page ─────────────────────────────────────────────────────────────
 
-/** How many statbotics season-EPA requests to have in flight at once. Their
- *  API docs ask consumers not to hammer the servers. */
-const SB_FETCH_CONCURRENCY = 6;
-
 export default function DashboardPage() {
   const syncRoster = useMutation(api.forms.syncEventTeamRoster);
   const currentEventLive = useQuery(api.events.getCurrentEvent);
   const currentEvent = useCached(currentEventLive, "current_event");
   const eventKey = currentEvent?.eventKey ?? "";
 
-  const allSubmissionsLive = useQuery(
-    api.forms.listSubmissions,
-    eventKey ? { eventKey } : "skip"
-  );
-  const allSubmissions = useCached(allSubmissionsLive, `submissions_${eventKey}`);
+  // Submissions, templates, TBA + Statbotics stats: shared with the Picklist.
+  const {
+    eventYear,
+    allSubmissions,
+    allTemplates,
+    fields,
+    pitFields,
+    tbaTeams,
+    tbaRankings,
+    avgScoreByTeam,
+    matchData,
+    loadingExternal,
+    sbError,
+    epaMap,
+    submissionsByTeam,
+    pitSubmissionsByTeam,
+    fieldColumns,
+    fieldCellsByTeam,
+  } = useEventTeamData(eventKey, (nums) => {
+    // Sync the roster to Convex so the backend can validate team numbers
+    syncRoster({ eventKey, teamNumbers: nums }).catch(() => {});
+  });
+  // Prime avatar memory cache for all event teams in the background
+  useEffect(() => {
+    for (const num of tbaTeams) primeAvatar(num, eventYear);
+  }, [tbaTeams, eventYear]);
 
-  const activeTemplatesLive = useQuery(api.forms.listActiveTemplates);
-  const activeTemplates = useCached(activeTemplatesLive, "active_templates");
-  const fields: FormField[] = useMemo(() => {
-    const tpls = activeTemplates as Array<{ formType?: string; fields: FormField[] }> | null;
-    if (!tpls) return [];
-    const defaultTpl = tpls.find((t) => (t.formType ?? "default") === "default");
-    return ((defaultTpl ?? tpls[0])?.fields as FormField[]) ?? [];
-  }, [activeTemplates]);
-
-  // Pit scouting template + fields
-  const pitTemplate = useMemo(() => {
-    const tpls = activeTemplates as Array<{ _id: string; formType?: string; fields: FormField[] }> | null;
-    return tpls?.find((t) => t.formType === "pit") ?? null;
-  }, [activeTemplates]);
-  const pitFields: FormField[] = (pitTemplate?.fields ?? []) as FormField[];
-
-  // Every live template (incl. inactive): the team panel renders each report
-  // with its own form, and a pit report from a retired pit form is still a pit
-  // report rather than a match report.
-  const allTemplatesLive = useQuery(api.forms.listTemplates);
-  const allTemplatesCached = useCached(allTemplatesLive, "all_templates");
-  const allTemplates = useMemo(
-    () => (allTemplatesCached ?? activeTemplates ?? []) as Array<{ _id: string; name: string; formType?: string; fields: FormField[] }>,
-    [allTemplatesCached, activeTemplates],
-  );
-  const pitTemplateIds = useMemo(() => {
-    const ids = new Set(allTemplates.filter((t) => t.formType === "pit").map((t) => t._id));
-    if (pitTemplate) ids.add(pitTemplate._id);
-    return ids;
-  }, [allTemplates, pitTemplate]);
-
-  // ── Seed external state from stale localStorage on first render ─────────────
-  // This ensures the full team list & EPA data appear instantly on reload,
-  // without waiting for the async loadExternal() fetch to complete.
-  const [sbTeams, setSbTeams] = useState<Record<number, Record<string, unknown>>>(() =>
-    (lsGetStale<Record<number, Record<string, unknown>>>(`dash_sbTeams_${eventKey ?? ""}`) ?? {})
-  );
-  const [sbOverall, setSbOverall] = useState<Record<number, number>>(() =>
-    (lsGetStale<Record<number, number>>(`dash_sbOverall_${eventKey ?? ""}`) ?? {})
-  );
-  const [tbaTeams, setTbaTeams] = useState<number[]>(() =>
-    (lsGetStale<number[]>(`dash_tbaTeams_${eventKey ?? ""}`) ?? [])
-  );
-  const [tbaRankings, setTbaRankings] = useState<Record<number, Record<string, unknown>>>(() =>
-    (lsGetStale<Record<number, Record<string, unknown>>>(`dash_tbaRankings_${eventKey ?? ""}`) ?? {})
-  );
-  const [avgScoreByTeam, setAvgScoreByTeam] = useState<Record<number, number>>(() =>
-    (lsGetStale<Record<number, number>>(`dash_avgScore_${eventKey ?? ""}`) ?? {})
-  );
-  const [matchData, setMatchData] = useState<TBAMatch[]>(() =>
-    // Try dashboard-specific key first, fall back to the key written by
-    // fetchTBAEventMatches — which is `tba_matches_full_`, not `tba_matches_`.
-    // The old fallback named a key nothing writes, so it never fired.
-    (lsGetStale<TBAMatch[]>(`dash_matches_${eventKey ?? ""}`) ??
-     lsGetStale<TBAMatch[]>(`tba_matches_full_${eventKey ?? ""}`) ?? [])
-  );
-  // Track which eventKey the state was seeded for; re-seed when it changes
-  const seededEventKeyRef = useRef<string>("");
-  // True while loadExternal() is in-flight (no cached TBA data yet)
-  const [loadingExternal, setLoadingExternal] = useState(true);
-  // Non-null when the statbotics EPA fetch failed upstream, so the empty
-  // EPA columns can explain themselves instead of looking like an app bug.
-  const [sbError, setSbError] = useState<{ status: number } | null>(null);
   // Lazy initializer: Date.now() must not run during render.
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [search, setSearch] = useState("");
   const [selectedTeam, setSelectedTeam] = useState<number | null>(null);
-  const eventYear = eventKey ? Number(eventKey.slice(0, 4)) : new Date().getFullYear();
 
   // Active sort column, or null for the natural (team-number) order.
   const [sortKey, setSortKey] = useState<string | null>(null);
@@ -1008,12 +943,6 @@ export default function DashboardPage() {
   const columnPrefs = useUIStore((s) => s.rankingColumns);
   const setRankingColumn = useUIStore((s) => s.setRankingColumn);
   const resetRankingColumns = useUIStore((s) => s.resetRankingColumns);
-  const fieldColumns = useMemo(
-    () => taggedFieldColumns(
-      (activeTemplates ?? []) as Array<{ _id: string; name: string; formType?: string; fields: TemplateField[] }>
-    ),
-    [activeTemplates]
-  );
   const allColumns = useMemo(() => [...BUILTIN_COLUMNS, ...fieldColumns], [fieldColumns]);
   const shownColumns = useMemo(() => visibleColumns(allColumns, columnPrefs), [allColumns, columnPrefs]);
   // Per-device hidden teams for this event: dropped from the ranked list and
@@ -1048,169 +977,6 @@ export default function DashboardPage() {
     return () => clearInterval(id);
   }, []);
 
-  // EPA parsing helpers live in @/lib/epa (unit-tested against real
-  // statbotics v3 payload shapes in src/lib/epa.test.ts).
-
-  // Re-seed state maps whenever eventKey changes (e.g. user switches event in Settings)
-  useEffect(() => {
-    if (!eventKey || seededEventKeyRef.current === eventKey) return;
-    seededEventKeyRef.current = eventKey;
-    setSbTeams(lsGetStale<Record<number, Record<string, unknown>>>(`dash_sbTeams_${eventKey}`) ?? {});
-    setSbOverall(lsGetStale<Record<number, number>>(`dash_sbOverall_${eventKey}`) ?? {});
-    setTbaTeams(lsGetStale<number[]>(`dash_tbaTeams_${eventKey}`) ?? []);
-    setTbaRankings(lsGetStale<Record<number, Record<string, unknown>>>(`dash_tbaRankings_${eventKey}`) ?? {});
-    setAvgScoreByTeam(lsGetStale<Record<number, number>>(`dash_avgScore_${eventKey}`) ?? {});
-    setMatchData(lsGetStale<TBAMatch[]>(`dash_matches_${eventKey}`) ?? []);
-  }, [eventKey]);
-
-  useEffect(() => {
-    if (!eventKey) return;
-    let cancelled = false;
-    setLoadingExternal(true);
-
-    async function loadExternal() {
-      const [sbData, tbaTeamData, tbaRankData, matchData] = await Promise.all([
-        fetchStatboticsEventTeams(eventKey),
-        fetchTBAEventTeams(eventKey),
-        fetchTBAEventRankings(eventKey),
-        fetchTBAEventMatches(eventKey),
-      ]);
-      if (cancelled) return;
-
-      // Statbotics per-team event EPA.
-      // An empty array is a real answer ("statbotics has no rows for this
-      // event"); a null/absent one means the request failed. Surface the
-      // upstream error either way so empty EPA columns are explainable
-      // instead of looking like a bug in this app.
-      const sbErr = getCacheError(statboticsEventTeamsCacheKey(eventKey));
-      setSbError(!Array.isArray(sbData) || sbData.length === 0 ? sbErr : null);
-
-      if (Array.isArray(sbData) && sbData.length > 0) {
-        const map: Record<number, Record<string, unknown>> = {};
-        for (const t of sbData as Array<{ team: number } & Record<string, unknown>>) {
-          map[t.team] = t;
-        }
-        setSbTeams(map);
-        // Persist transformed map so it can be seeded next render
-        lsSet(`dash_sbTeams_${eventKey}`, map, TTL.SHORT);
-      }
-
-      if (Array.isArray(tbaTeamData)) {
-        const nums = (tbaTeamData as Array<{ team_number: number }>).map((t) => t.team_number);
-        setTbaTeams(nums);
-        lsSet(`dash_tbaTeams_${eventKey}`, nums, TTL.MEDIUM);
-        // Sync the roster to Convex so the backend can validate team numbers
-        syncRoster({ eventKey, teamNumbers: nums }).catch(() => {});
-        // Prime avatar memory cache for all event teams in the background
-        for (const num of nums) primeAvatar(num, eventYear);
-
-        // Fetch overall (season) EPA for every team on the roster. Keyed off
-        // the TBA roster rather than Statbotics' own event_teams rows: those
-        // rows don't exist until Statbotics has processed this event (e.g. it
-        // hasn't started yet), but season EPA is available per-team the whole
-        // time, so gating it on event-level data left it blank for no reason.
-        //
-        // Statbotics' /team_years batch endpoint holds thousands of rows for
-        // a given year but caps `limit` at 1000, silently dropping most teams
-        // from a single page — fetch per-team instead, bounded by the event
-        // roster (~40-80 teams), which is always accurate.
-        //
-        // Run these a few at a time: statbotics asks API users not to hammer
-        // their servers, and a 80-wide parallel burst is exactly that.
-        void (async () => {
-          const overall: Record<number, number> = {};
-          for (let i = 0; i < nums.length; i += SB_FETCH_CONCURRENCY) {
-            if (cancelled) return;
-            const batch = nums.slice(i, i + SB_FETCH_CONCURRENCY);
-            const results = await Promise.all(
-              batch.map((team) =>
-                fetchStatboticsTeamYear(team, eventYear).catch(() => null)
-              )
-            );
-            for (const d of results) {
-              if (!d || typeof d !== "object") continue;
-              const v = totalEpa((d as { epa?: unknown }).epa);
-              if (v !== null) overall[(d as { team: number }).team] = v;
-            }
-          }
-          if (cancelled) return;
-          setSbOverall(overall);
-          lsSet(`dash_sbOverall_${eventKey}`, overall, TTL.SHORT);
-        })();
-      }
-
-      if (tbaRankData && typeof tbaRankData === "object" && "rankings" in tbaRankData) {
-        const map: Record<number, Record<string, unknown>> = {};
-        for (const r of (
-          tbaRankData as { rankings: Array<{ team_key: string } & Record<string, unknown>> }
-        ).rankings) {
-          const num = Number(r.team_key.replace("frc", ""));
-          map[num] = r;
-        }
-        setTbaRankings(map);
-        lsSet(`dash_tbaRankings_${eventKey}`, map, TTL.SHORT);
-      }
-
-      // Per-team average qual score from TBA match results
-      if (Array.isArray(matchData)) {
-        const totals: Record<number, { sum: number; count: number }> = {};
-        for (const match of matchData) {
-          // Only count qual matches; score of -1 means the match hasn't been played
-          if (match.comp_level !== "qm") continue;
-          for (const color of ["red", "blue"] as const) {
-            const alliance = match.alliances[color];
-            if (!alliance || alliance.score < 0) continue;
-            for (const teamKey of alliance.team_keys) {
-              const num = Number(teamKey.replace("frc", ""));
-              if (!num) continue;
-              if (!totals[num]) totals[num] = { sum: 0, count: 0 };
-              totals[num].sum += alliance.score;
-              totals[num].count += 1;
-            }
-          }
-        }
-        const avgMap: Record<number, number> = {};
-        for (const [team, { sum, count }] of Object.entries(totals)) {
-          if (count > 0) avgMap[Number(team)] = Math.round(sum / count);
-        }
-        setAvgScoreByTeam(avgMap);
-        lsSet(`dash_avgScore_${eventKey}`, avgMap, TTL.SHORT);
-        // Store full match list for schedule tab and next-match banner
-        setMatchData(matchData as TBAMatch[]);
-        lsSet(`dash_matches_${eventKey}`, matchData, TTL.SHORT);
-      }
-      if (!cancelled) setLoadingExternal(false);
-    }
-
-    loadExternal().catch(() => { if (!cancelled) setLoadingExternal(false); });
-    return () => { cancelled = true; };
-  }, [eventKey]);
-
-  // Build a per-team EPA map for the schedule / banner components.
-  //
-  // Keyed off the union of sbTeams and sbOverall, not just sbTeams: for an
-  // event Statbotics hasn't processed yet (upcoming event, no matches played),
-  // sbTeams is empty but sbOverall — each team's season EPA, fetched
-  // independently of event-level rows — is already populated. Iterating
-  // sbTeams alone silently dropped every team's season EPA in that case, even
-  // though it was fetched successfully and sitting in state.
-  const epaMap = useMemo(() => {
-    const map: Record<number, TeamEpa> = {};
-    const teamNums = new Set([
-      ...Object.keys(sbTeams).map(Number),
-      ...Object.keys(sbOverall).map(Number),
-    ]);
-    for (const num of teamNums) {
-      const sb = sbTeams[num];
-      const epaObj = sb && "epa" in sb ? sb.epa : null;
-      map[num] = {
-        ...parseEpaComponents(epaObj),
-        overall: sbOverall[num] ?? null,
-      };
-    }
-    return map;
-  }, [sbTeams, sbOverall]);
-
   // Next unplayed match that includes team 4099
   const nextMatch = useMemo(() => {
     const unplayed = matchData
@@ -1234,43 +1000,6 @@ export default function DashboardPage() {
     (a, b) => (a as number) - (b as number)
   );
 
-  // Match/note reports vs pit reports, per team. Spying (teamNumber 0) is neither.
-  const { submissionsByTeam, pitSubmissionsByTeam } = useMemo(() => {
-    const reports: Record<number, Submission[]> = {};
-    const pits: Record<number, Submission[]> = {};
-    for (const s of (allSubmissions ?? []) as Submission[]) {
-      if (s.teamNumber === 0) continue;
-      const bucket = pitTemplateIds.has(s.templateId) ? pits : reports;
-      (bucket[s.teamNumber] ??= []).push(s);
-    }
-    return { submissionsByTeam: reports, pitSubmissionsByTeam: pits };
-  }, [allSubmissions, pitTemplateIds]);
-
-  // Per team, per tagged column: the aggregated value across that form's
-  // submissions (oldest match first, so "latest note" is really the latest).
-  const fieldCellsByTeam = useMemo(() => {
-    const out: Record<number, Record<string, FieldCell>> = {};
-    if (fieldColumns.length === 0) return out;
-    const byTeamTpl = new Map<string, Record<string, unknown>[]>();
-    const subs = [...((allSubmissions ?? []) as Submission[])]
-      .filter((s) => s.teamNumber > 0)
-      .sort((a, b) => a.matchNumber - b.matchNumber || (a.syncedAt ?? 0) - (b.syncedAt ?? 0));
-    for (const s of subs) {
-      const key = `${s.teamNumber}|${s.templateId}`;
-      let data: Record<string, unknown>;
-      try { data = JSON.parse(s.data) as Record<string, unknown>; } catch { continue; }
-      const list = byTeamTpl.get(key);
-      if (list) list.push(data); else byTeamTpl.set(key, [data]);
-    }
-    for (const [key, rows] of byTeamTpl) {
-      const [team, tpl] = key.split("|");
-      for (const col of fieldColumns) {
-        if (col.templateId !== tpl) continue;
-        (out[Number(team)] ??= {})[col.id] = aggregateField(col.field, rows.map((d) => d[col.field.id]));
-      }
-    }
-    return out;
-  }, [allSubmissions, fieldColumns]);
 
   const filtered = allTeams.filter((t) =>
     search ? String(t).includes(search) : true

@@ -8,8 +8,6 @@ import type { KanbanColumn, KanbanCard } from "@/types";
 import { byPosition, planMove } from "../../convex/kanbanOrder";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
@@ -29,54 +27,34 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import { Plus, X, Pencil, Users, RefreshCw, SlidersHorizontal, LayoutGrid, LayoutList, Check, GripVertical, ChevronDown, Lock } from "lucide-react";
 import {
-  fetchStatboticsEventTeams,
-  fetchTBAEventRankings,
   fetchTBAEventTeams,
   fetchTBATeamInfo,
   fetchTBATeamAvatar,
-  clearCacheErrKey,
 } from "@/lib/api";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCached } from "@/hooks/useCached";
 import { enqueueKanbanOp } from "@/lib/offlineQueue";
+import { useEventTeamData } from "@/hooks/useEventTeamData";
+import type { EventTeamData } from "@/hooks/useEventTeamData";
+import { EMPTY_TEAM_EPA } from "@/lib/epa";
+import {
+  BUILTIN_COLUMNS,
+  PICKLIST_DEFAULT_COLUMNS,
+  REPORTS_COLUMN_ID,
+  columnShortLabel,
+  statCell,
+  visibleColumns,
+  withDefaults,
+} from "@/lib/rankingColumns";
+import type { RankingColumn, TeamStats } from "@/lib/rankingColumns";
+import TeamDetailPanel from "@/pages/TeamDetailPanel";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface FormField {
-  id: string;
-  type: "text" | "number" | "checkbox" | "select" | "counter" | "textarea";
-  label: string;
-  required: boolean;
-  options?: string[];
-  section?: string;
-}
-
-interface Submission {
-  teamNumber: number;
-  matchNumber: number;
-  data: string;
-}
-
-// ── Card display preferences ──────────────────────────────────────────────────
-
-const CARD_PREFS_KEY = "falconscout_card_display_fields";
-
-function getCardPrefs(): string[] {
-  try {
-    const raw = localStorage.getItem(CARD_PREFS_KEY);
-    return raw ? (JSON.parse(raw) as string[]) : ["epa"];
-  } catch {
-    return ["epa"];
-  }
-}
-
-function saveCardPrefs(prefs: string[]): void {
-  localStorage.setItem(CARD_PREFS_KEY, JSON.stringify(prefs));
-}
+type StatsFor = (teamNumber: number) => TeamStats;
 
 // ── Picked-teams helpers (per board, persisted to localStorage) ───────────────
 
@@ -95,45 +73,6 @@ function savePickedTeams(boardId: string, picked: Set<number>): void {
   localStorage.setItem(`${PICKED_KEY_PREFIX}${boardId}`, JSON.stringify([...picked]));
 }
 
-// ── Stat helpers ──────────────────────────────────────────────────────────────
-
-function parseData(submissions: Submission[]): Record<string, unknown>[] {
-  return submissions.map((s) => {
-    try { return JSON.parse(s.data) as Record<string, unknown>; }
-    catch { return {}; }
-  });
-}
-
-function computeFormStat(
-  parsed: Record<string, unknown>[],
-  field: FormField
-): string | null {
-  if (field.type === "number" || field.type === "counter") {
-    const vals = parsed
-      .map((d) => d[field.id])
-      .filter((v) => typeof v === "number") as number[];
-    if (!vals.length) return null;
-    const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
-    return Number.isInteger(avg) ? String(avg) : avg.toFixed(1);
-  }
-  if (field.type === "checkbox") {
-    const vals = parsed.map((d) => d[field.id]).filter((v) => v !== undefined);
-    if (!vals.length) return null;
-    return `${Math.round((vals.filter(Boolean).length / vals.length) * 100)}%`;
-  }
-  if (field.type === "select") {
-    const counts: Record<string, number> = {};
-    for (const d of parsed) {
-      const v = String(d[field.id] ?? "");
-      if (v) counts[v] = (counts[v] ?? 0) + 1;
-    }
-    const entries = Object.entries(counts);
-    if (!entries.length) return null;
-    return entries.sort((a, b) => b[1] - a[1])[0][0];
-  }
-  return null;
-}
-
 // Deterministic accent color per team number
 function teamAccentColor(num: number): string {
   const palette = [
@@ -141,45 +80,6 @@ function teamAccentColor(num: number): string {
     "#eab308", "#22c55e", "#06b6d4", "#3b82f6",
   ];
   return palette[num % palette.length];
-}
-
-// ── EPA helpers (Statbotics v3 — structure varies by season) ──────────────────────
-
-/** Read mean from a {mean, sd} leaf or bare number. */
-function readMean(v: unknown): number | null {
-  if (typeof v === "number") return Number(v.toFixed(1));
-  if (v && typeof v === "object") {
-    const o = v as Record<string, unknown>;
-    if (typeof o.mean === "number") return Number((o.mean as number).toFixed(1));
-  }
-  return null;
-}
-
-/** Recursively search an EPA object for any of the named keys.
- *  Works for flat (epa.auto_points) and nested (epa.breakdown.auto_points) structures. */
-function findInEpa(obj: unknown, ...keys: string[]): number | null {
-  if (!obj || typeof obj !== "object") return null;
-  const o = obj as Record<string, unknown>;
-  for (const key of keys) {
-    if (key in o) {
-      const m = readMean(o[key]);
-      if (m !== null) return m;
-    }
-  }
-  for (const val of Object.values(o)) {
-    if (val && typeof val === "object" && !Array.isArray(val)) {
-      const found = findInEpa(val, ...keys);
-      if (found !== null) return found;
-    }
-  }
-  return null;
-}
-
-/** Total event EPA: prefer total_points key, then a direct mean on the epa object. */
-function extractEpa(raw: unknown): number | null {
-  if (!raw || typeof raw !== "object") return null;
-  const obj = raw as Record<string, unknown>;
-  return findInEpa(obj, "total_points", "total") ?? readMean(obj);
 }
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
@@ -206,175 +106,85 @@ function useTeamInfo(teamNumber: number, year: number) {
   return { nickname, avatar };
 }
 
-function useTeamRanking(teamNumber: number, eventKey: string) {
-  const [rank, setRank] = useState<number | null>(null);
-  const [record, setRecord] = useState<{ w: number; l: number; t: number } | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      const tbaRankData = await fetchTBAEventRankings(eventKey);
-      if (cancelled) return;
-
-      if (tbaRankData && typeof tbaRankData === "object" && "rankings" in tbaRankData) {
-        const rankings = (
-          tbaRankData as {
-            rankings: Array<{
-              team_key: string;
-              rank: number;
-              record: { wins: number; losses: number; ties: number };
-            }>;
-          }
-        ).rankings;
-        const r = rankings.find((x) => x.team_key === `frc${teamNumber}`);
-        if (r) {
-          setRank(r.rank);
-          setRecord({ w: r.record.wins, l: r.record.losses, t: r.record.ties });
-        }
-      }
-    }
-    load();
-    return () => { cancelled = true; };
-  }, [teamNumber, eventKey]);
-
-  return { rank, record };
-}
-
 // ── Configure Cards Dialog ────────────────────────────────────────────────────
 
+/** Same options as the Dashboard rankings "Columns" menu; applies to both the
+ *  board cards and the list view. */
 function CardPrefsDialog({
   open,
   onClose,
-  fields,
-  cardPrefs,
+  columns,
+  prefs,
   onSave,
 }: {
   open: boolean;
   onClose: () => void;
-  fields: FormField[];
-  cardPrefs: string[];
-  onSave: (prefs: string[]) => void;
+  columns: RankingColumn[];
+  prefs: Record<string, boolean>;
+  onSave: (prefs: Record<string, boolean>) => void;
 }) {
-  const [draft, setDraft] = useState<string[]>(cardPrefs);
-
-  useEffect(() => { setDraft(cardPrefs); }, [cardPrefs, open]);
-
-  function toggle(id: string) {
-    setDraft((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
+  const resolve = (p: Record<string, boolean>) =>
+    Object.fromEntries(columns.map((c) => [c.id, p[c.id] ?? c.defaultVisible]));
+  const [draft, setDraft] = useState<Record<string, boolean>>(() => resolve(prefs));
+  // Start each opening from the saved prefs.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setDraft(resolve(prefs));
   }
 
-  // Only numeric/counter/checkbox fields make sense as card stats
-  const displayableFields = fields.filter(
-    (f) => f.type === "number" || f.type === "counter" || f.type === "checkbox"
-  );
+  const groups = Array.from(new Set(columns.map((c) => c.group)));
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>Configure Card Display</DialogTitle>
+          <DialogTitle>Configure Cards</DialogTitle>
         </DialogHeader>
-
-        <p className="text-xs text-muted-foreground -mt-1">
-          Choose which stats appear on each picklist card.
+        <p className="text-sm text-muted-foreground -mt-1">
+          Stats shown for each team in board and list view.
         </p>
 
-        <div className="space-y-3">
-          {/* Built-in stats */}
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-              External Data
-            </p>
-            <div className="space-y-0.5">
-              <label className="flex items-center gap-3 cursor-pointer py-1.5">
-                <Checkbox checked={draft.includes("epa")} onCheckedChange={() => toggle("epa")} />
-                <div>
-                  <span className="text-sm font-medium">EPA — Event</span>
-                  <span className="ml-2 text-xs text-muted-foreground">Total at this event</span>
-                </div>
-              </label>
-              <label className="flex items-center gap-3 cursor-pointer py-1.5">
-                <Checkbox checked={draft.includes("epa_auto")} onCheckedChange={() => toggle("epa_auto")} />
-                <div>
-                  <span className="text-sm font-medium">EPA — Auto</span>
-                  <span className="ml-2 text-xs text-muted-foreground">Autonomous period</span>
-                </div>
-              </label>
-              <label className="flex items-center gap-3 cursor-pointer py-1.5">
-                <Checkbox checked={draft.includes("epa_teleop")} onCheckedChange={() => toggle("epa_teleop")} />
-                <div>
-                  <span className="text-sm font-medium">EPA — Teleop</span>
-                  <span className="ml-2 text-xs text-muted-foreground">Teleop period</span>
-                </div>
-              </label>
-              <label className="flex items-center gap-3 cursor-pointer py-1.5">
-                <Checkbox checked={draft.includes("epa_endgame")} onCheckedChange={() => toggle("epa_endgame")} />
-                <div>
-                  <span className="text-sm font-medium">EPA — Endgame</span>
-                  <span className="ml-2 text-xs text-muted-foreground">Endgame / climb</span>
-                </div>
-              </label>
-              <label className="flex items-center gap-3 cursor-pointer py-1.5">
-                <Checkbox checked={draft.includes("epa_overall")} onCheckedChange={() => toggle("epa_overall")} />
-                <div>
-                  <span className="text-sm font-medium">EPA — Season</span>
-                  <span className="ml-2 text-xs text-muted-foreground">Overall {new Date().getFullYear()} rating</span>
-                </div>
-              </label>
+        <div className="max-h-[55vh] overflow-y-auto -mx-1 px-1 space-y-4">
+          {groups.map((group) => (
+            <div key={group}>
+              <p className="text-xs font-medium text-muted-foreground mb-1">
+                {group === "Stats" ? "Team stats" : group}
+              </p>
+              {columns.filter((c) => c.group === group).map((c) => (
+                <label key={c.id} className="flex items-center gap-3 cursor-pointer py-1.5">
+                  <Checkbox
+                    checked={draft[c.id] ?? false}
+                    onCheckedChange={(v) => setDraft((d) => ({ ...d, [c.id]: v === true }))}
+                  />
+                  <span className="text-sm">{c.label}</span>
+                  {c.id === REPORTS_COLUMN_ID && (
+                    <span className="text-xs text-muted-foreground">count</span>
+                  )}
+                </label>
+              ))}
             </div>
-          </div>
-
-          {displayableFields.length > 0 && (
-            <>
-              <Separator />
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                  Form Fields
-                </p>
-                <div className="space-y-0.5">
-                  {displayableFields.map((f) => (
-                    <label key={f.id} className="flex items-center gap-3 cursor-pointer py-1.5">
-                      <Checkbox
-                        checked={draft.includes(f.id)}
-                        onCheckedChange={() => toggle(f.id)}
-                      />
-                      <div className="flex-1 min-w-0">
-                        <span className="text-sm font-medium">{f.label}</span>
-                        <span className="ml-2 text-xs text-muted-foreground capitalize">
-                          {f.type === "number" || f.type === "counter"
-                            ? "avg"
-                            : f.type === "checkbox"
-                              ? "% on"
-                              : "top"}
-                        </span>
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
-
-          {displayableFields.length === 0 && (
+          ))}
+          {groups.length === 1 && (
             <p className="text-xs text-muted-foreground">
-              No active form template found. Set one in Form Builder.
+              To show scouting data, tick "Rankings column" on a field in Form Builder.
             </p>
           )}
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button
-            onClick={() => {
-              onSave(draft);
-              onClose();
-              toast.success("Card display saved");
-            }}
-          >
-            Save
-          </Button>
+        <DialogFooter className="sm:justify-between">
+          <Button variant="ghost" onClick={() => setDraft(resolve({}))}>Reset</Button>
+          <div className="flex gap-2 justify-end">
+            <Button variant="outline" onClick={onClose}>Cancel</Button>
+            <Button
+              onClick={() => {
+                onSave(draft);
+                onClose();
+              }}
+            >
+              Save
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -424,152 +234,91 @@ function TeamAvatar({
 
 // ── Team Card ─────────────────────────────────────────────────────────────────
 
-/** Compact card: one header line (avatar · number · name · rank · record) and
- *  one stats line, so a column shows ~4x more teams than the old tall card. */
+/** Makes a card/row open the team profile on click, Enter or Space. */
+function openHandlers(onOpen: () => void, label: string) {
+  return {
+    role: "button" as const,
+    tabIndex: 0,
+    "aria-label": label,
+    onClick: onOpen,
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.target !== e.currentTarget) return;
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); }
+    },
+  };
+}
+
+/** Header (avatar, number, name, rank) plus a label-over-value stat grid, so
+ *  each stat reads on its own instead of running together on one line. */
 function TeamCard({
   card,
-  eventKey,
   eventYear,
-  epa,
-  epaStatus,
-  submissions,
-  fields,
-  cardPrefs,
+  stats,
+  columns,
   isDragging,
   readOnly,
-  onEdit,
-  onRemove,
+  onOpen,
   onDragStart,
   onDragEnd,
 }: {
   card: KanbanCard;
-  eventKey: string;
   eventYear: number;
-  epa: { event: number | null; auto: number | null; teleop: number | null; endgame: number | null } | null;
-  epaStatus: "loading" | "ok" | "error";
-  submissions: Submission[];
-  fields: FormField[];
-  cardPrefs: string[];
+  stats: TeamStats;
+  columns: RankingColumn[];
   isDragging: boolean;
   readOnly: boolean;
-  onEdit: (card: KanbanCard) => void;
-  onRemove: (cardId: string) => void;
+  onOpen: () => void;
   onDragStart: (e: React.DragEvent, cardId: string) => void;
   onDragEnd: () => void;
 }) {
   const { nickname, avatar } = useTeamInfo(card.teamNumber, eventYear);
-  const { rank, record } = useTeamRanking(card.teamNumber, eventKey);
-
-  const parsed = parseData(submissions);
-
-  const visibleStats: Array<{ key: string; label: string; value: string }> = [];
-
-  // Determine EPA stat value based on fetch status
-  function epaVal(v: number | null | undefined): string {
-    if (epaStatus === "loading") return "…";
-    if (epaStatus === "error")   return "N/A";
-    return v !== null && v !== undefined ? Number(v.toFixed(1)).toString() : "—";
-  }
-
-  // EPA stats — always show when configured
-  if (cardPrefs.includes("epa")) {
-    visibleStats.push({ key: "epa",      label: "EPA",     value: epaVal(epa?.event)   });
-  }
-  if (cardPrefs.includes("epa_auto")) {
-    visibleStats.push({ key: "epa_auto", label: "Auto",    value: epaVal(epa?.auto)    });
-  }
-  if (cardPrefs.includes("epa_teleop")) {
-    visibleStats.push({ key: "epa_teleop", label: "Teleop", value: epaVal(epa?.teleop) });
-  }
-  if (cardPrefs.includes("epa_endgame")) {
-    visibleStats.push({ key: "epa_endgame", label: "Endgame", value: epaVal(epa?.endgame) });
-  }
-  if (cardPrefs.includes("epa_overall")) {
-    // Season EPA: fall back to event EPA since team_year data may not be available yet.
-    visibleStats.push({ key: "epa_overall", label: "Season", value: epaVal(epa?.event) });
-  }
-
-  for (const f of fields) {
-    if (!cardPrefs.includes(f.id)) continue;
-    const val = computeFormStat(parsed, f);
-    if (val !== null) visibleStats.push({ key: f.id, label: f.label, value: val });
-  }
-
-  const color = teamAccentColor(card.teamNumber);
+  // Rank sits in the header; every other stat goes in the grid.
+  const showRank = columns.some((c) => c.id === "rank");
+  const statCols = columns.filter((c) => c.id !== "rank");
 
   return (
     <div
       draggable={!readOnly}
       onDragStart={(e) => onDragStart(e, card._id)}
       onDragEnd={onDragEnd}
-      className={`group relative bg-card border border-border border-l-[3px] rounded-md transition-all select-none ${
-        readOnly ? "" : "cursor-grab active:cursor-grabbing"
-      } ${isDragging ? "opacity-40 scale-95" : "hover:border-primary/50"}`}
-      style={{ borderLeftColor: color }}
+      {...openHandlers(onOpen, `Open team ${card.teamNumber} profile`)}
+      className={`bg-card border border-border rounded-lg px-3 py-2.5 select-none transition-[border-color,opacity,transform] duration-150 hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+        readOnly ? "cursor-pointer" : "cursor-grab active:cursor-grabbing"
+      } ${isDragging ? "opacity-40 scale-[0.98]" : ""}`}
     >
-      <div className="px-2 py-1.5 space-y-0.5">
-        {/* Header: avatar · number · name · rank · record */}
-        <div className="flex items-center gap-1.5 min-w-0">
-          <TeamAvatar teamNumber={card.teamNumber} avatar={avatar} size={22} />
-          <span className="font-bold text-sm leading-none tabular-nums shrink-0">{card.teamNumber}</span>
-          <span className={`text-xs truncate flex-1 min-w-0 ${nickname ? "text-muted-foreground" : "text-muted-foreground/50"}`}>
-            {nickname ?? "Loading…"}
-          </span>
-          {rank !== null && (
-            <span
-              className="px-1 rounded font-mono text-[10px] font-semibold shrink-0"
-              style={{ background: `${color}20`, color }}
-            >
-              #{rank}
-            </span>
-          )}
-          {record !== null && (
-            <span className="font-mono text-[10px] text-muted-foreground shrink-0">
-              {record.w}-{record.l}-{record.t}
-            </span>
-          )}
+      <div className="flex items-center gap-2.5 min-w-0">
+        <TeamAvatar teamNumber={card.teamNumber} avatar={avatar} size={32} />
+        <div className="min-w-0 flex-1">
+          <p className="font-bold text-sm leading-tight tabular-nums">{card.teamNumber}</p>
+          <p className="text-xs text-muted-foreground truncate leading-tight mt-0.5">{nickname ?? " "}</p>
         </div>
-
-        {/* Stats line: configurable stats + matches scouted */}
-        {(visibleStats.length > 0 || submissions.length > 0) && (
-          <div className="flex flex-wrap items-baseline gap-x-2.5 text-[11px] leading-tight pl-[28px]">
-            {visibleStats.map((s) => (
-              <span key={s.key} className="whitespace-nowrap">
-                <span className="text-muted-foreground">{s.label} </span>
-                <span className="font-mono font-semibold">{s.value}</span>
-              </span>
-            ))}
-            {submissions.length > 0 && (
-              <span className="ml-auto text-[10px] text-muted-foreground/60 whitespace-nowrap">
-                {submissions.length} scouted
-              </span>
-            )}
-          </div>
-        )}
-
-        {card.notes && (
-          <p className="text-[11px] text-muted-foreground italic truncate pl-[28px]">{card.notes}</p>
+        {showRank && stats.rank !== null && (
+          <span className="shrink-0 self-start font-mono text-xs text-muted-foreground">#{stats.rank}</span>
         )}
       </div>
 
-      {/* Actions — overlay on hover so they don't cost a row of height */}
-      {!readOnly && (
-        <div className="absolute top-1 right-1 flex gap-0.5 rounded bg-card opacity-0 group-hover:opacity-100 transition-opacity">
-          <button
-            onClick={(e) => { e.stopPropagation(); onEdit(card); }}
-            className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-            title="Edit notes"
-          >
-            <Pencil className="h-3.5 w-3.5" />
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); onRemove(card._id); }}
-            className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
-            title="Remove"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
+      {statCols.length > 0 && (
+        <dl
+          className="mt-2.5 grid gap-x-2 gap-y-2"
+          style={{ gridTemplateColumns: "repeat(auto-fill, minmax(3.75rem, 1fr))" }}
+        >
+          {statCols.map((c) => {
+            const s = statCell(c.id, stats);
+            return (
+              <div key={c.id} className="min-w-0">
+                <dt className="text-[10px] leading-tight text-muted-foreground truncate">{columnShortLabel(c)}</dt>
+                <dd
+                  className={`font-mono text-sm font-semibold tabular-nums truncate ${
+                    s.empty ? "text-muted-foreground/50" : s.accent ? "text-primary" : ""
+                  }`}
+                  title={s.display}
+                >
+                  {s.display}
+                </dd>
+              </div>
+            );
+          })}
+        </dl>
       )}
     </div>
   );
@@ -643,7 +392,7 @@ function KanbanCol({
           : "border-border bg-muted/30"
       }`}
       style={{
-        width: "clamp(250px, 85vw, 280px)",
+        width: "clamp(260px, 85vw, 300px)",
         scrollSnapAlign: "start",
         borderTopColor: column.color ?? undefined,
         borderTopWidth: column.color ? 3 : undefined,
@@ -727,10 +476,10 @@ function KanbanCol({
 
       {/* Cards */}
       <ScrollArea className="flex-1" style={{ maxHeight: "max(260px, calc(100vh - 340px))" }}>
-        <div className="px-1.5 py-[3px]">
+        <div className="px-2 py-1">
           {sorted.map(renderCard)}
           {sorted.length === 0 && (
-            <div className={`rounded-lg border-2 border-dashed py-6 text-center text-xs text-muted-foreground transition-colors ${
+            <div className={`my-1 rounded-lg border-2 border-dashed py-6 text-center text-xs text-muted-foreground transition-colors ${
               isDragTarget ? "border-primary/40 text-primary/60" : "border-border"
             }`}>
               {isDragTarget ? "Drop here" : "Empty"}
@@ -744,17 +493,24 @@ function KanbanCol({
 
 // ── List Team Row ─────────────────────────────────────────────────────────────
 
+/** Left block width, shared by the column header and every row so the stat
+ *  columns line up. */
+const LIST_TEAM_COL = "w-44 sm:w-60";
+
+function listGrid(columns: RankingColumn[]): string {
+  return columns.map(() => "minmax(4.5rem, 1fr)").join(" ");
+}
+
 function ListTeamRow({
   card,
   eventYear,
-  epa,
-  columnColor,
+  stats,
+  columns,
   isPicked,
   isDragging,
   readOnly,
   onTogglePick,
-  onEdit,
-  onRemove,
+  onOpen,
   onDragStart,
   onDragEnd,
   onDragOver,
@@ -762,21 +518,19 @@ function ListTeamRow({
 }: {
   card: KanbanCard;
   eventYear: number;
-  epa: { event: number | null; auto: number | null; teleop: number | null; endgame: number | null } | null;
-  columnColor?: string;
+  stats: TeamStats;
+  columns: RankingColumn[];
   isPicked: boolean;
   isDragging: boolean;
   readOnly: boolean;
   onTogglePick: () => void;
-  onEdit: (card: KanbanCard) => void;
-  onRemove: (cardId: string) => void;
+  onOpen: () => void;
   onDragStart: (e: React.DragEvent) => void;
   onDragEnd: () => void;
   onDragOver: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent) => void;
 }) {
   const { nickname, avatar } = useTeamInfo(card.teamNumber, eventYear);
-  const color = teamAccentColor(card.teamNumber);
 
   return (
     <div
@@ -785,88 +539,65 @@ function ListTeamRow({
       onDragEnd={onDragEnd}
       onDragOver={onDragOver}
       onDrop={onDrop}
-      className={`group flex items-center gap-3 px-3 py-2 border-b border-border transition-all select-none ${
+      {...openHandlers(onOpen, `Open team ${card.teamNumber} profile`)}
+      className={`group flex items-center gap-3 px-3 py-2 border-b border-border transition-colors select-none focus-visible:outline-none focus-visible:bg-muted/50 ${
         isDragging
           ? "opacity-40 bg-primary/5"
           : isPicked
           ? "opacity-35 bg-muted/20"
           : "hover:bg-muted/40"
-      } ${readOnly ? "" : isDragging ? "cursor-grabbing" : "cursor-grab"}`}
+      } ${readOnly ? "cursor-pointer" : isDragging ? "cursor-grabbing" : "cursor-grab"}`}
     >
-      {/* Drag handle */}
-      {!readOnly && (
-        <GripVertical className="h-4 w-4 text-muted-foreground/30 group-hover:text-muted-foreground/60 shrink-0 transition-colors" />
-      )}
+      <div className={`flex items-center gap-3 shrink-0 ${LIST_TEAM_COL}`}>
+        {/* Drag handle slot is kept when read-only so columns stay aligned */}
+        <GripVertical
+          className={`h-4 w-4 shrink-0 transition-colors ${
+            readOnly ? "invisible" : "text-muted-foreground/30 group-hover:text-muted-foreground/60"
+          }`}
+        />
 
-      {/* Pick toggle */}
-      <button
-        onClick={(e) => { e.stopPropagation(); onTogglePick(); }}
-        className={`shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${
-          isPicked
-            ? "bg-muted-foreground/40 border-muted-foreground/40"
-            : "border-border hover:border-primary hover:bg-primary/10"
-        }`}
-        title={isPicked ? "Unmark picked" : "Mark as picked"}
-      >
-        {isPicked && <Check className="h-3 w-3 text-muted-foreground" />}
-      </button>
+        {/* Pick toggle */}
+        <button
+          onClick={(e) => { e.stopPropagation(); onTogglePick(); }}
+          className={`shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${
+            isPicked
+              ? "bg-muted-foreground/40 border-muted-foreground/40"
+              : "border-border hover:border-primary hover:bg-primary/10"
+          }`}
+          title={isPicked ? "Unmark picked" : "Mark as picked"}
+          aria-label={isPicked ? `Unmark team ${card.teamNumber} picked` : `Mark team ${card.teamNumber} picked`}
+        >
+          {isPicked && <Check className="h-3 w-3 text-muted-foreground" />}
+        </button>
 
-      {/* Avatar */}
-      <TeamAvatar teamNumber={card.teamNumber} avatar={avatar} size={28} />
+        <TeamAvatar teamNumber={card.teamNumber} avatar={avatar} size={28} />
 
-      {/* Team number + nickname */}
-      <div className="min-w-[5.5rem] shrink-0">
-        <p className={`font-bold text-sm leading-tight ${
-          isPicked ? "line-through text-muted-foreground" : ""
-        }`}>
-          {card.teamNumber}
-        </p>
-        {nickname ? (
-          <p className="text-xs text-muted-foreground truncate leading-tight max-w-[7rem]">{nickname}</p>
-        ) : (
-          <p className="text-xs text-muted-foreground/40 leading-tight">Loading…</p>
-        )}
+        <div className="min-w-0">
+          <p className={`font-bold text-sm leading-tight tabular-nums ${isPicked ? "line-through text-muted-foreground" : ""}`}>
+            {card.teamNumber}
+          </p>
+          <p className="text-xs text-muted-foreground truncate leading-tight">{nickname ?? " "}</p>
+        </div>
       </div>
 
-      {/* EPA */}
-      {epa?.event !== null && epa?.event !== undefined && (
-        <div className="hidden md:flex flex-col shrink-0 min-w-[3rem]">
-          <span className="text-[9px] text-muted-foreground">EPA</span>
-          <span
-            className="text-xs font-bold font-mono"
-            style={{ color: columnColor ?? color }}
-          >
-            {epa.event.toFixed(1)}
-          </span>
+      {columns.length > 0 && (
+        <div className="grid flex-1 gap-x-3 items-center" style={{ gridTemplateColumns: listGrid(columns) }}>
+          {columns.map((c) => {
+            const s = statCell(c.id, stats);
+            return (
+              <span
+                key={c.id}
+                title={s.display}
+                className={`font-mono text-sm font-semibold tabular-nums truncate ${
+                  s.empty ? "text-muted-foreground/50" : s.accent ? "text-primary" : ""
+                }`}
+              >
+                {s.display}
+              </span>
+            );
+          })}
         </div>
       )}
-
-      {/* Notes */}
-      {card.notes ? (
-        <p className="flex-1 text-xs text-muted-foreground italic truncate hidden lg:block">
-          {card.notes}
-        </p>
-      ) : (
-        <div className="flex-1" />
-      )}
-
-      {/* Actions */}
-      {!readOnly && <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-        <button
-          onClick={(e) => { e.stopPropagation(); onEdit(card); }}
-          className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-          title="Edit notes"
-        >
-          <Pencil className="h-3.5 w-3.5" />
-        </button>
-        <button
-          onClick={(e) => { e.stopPropagation(); onRemove(card._id); }}
-          className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
-          title="Remove"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
-      </div>}
     </div>
   );
 }
@@ -877,26 +608,27 @@ function ListView({
   columns,
   cards,
   eventYear,
-  epaByTeam,
+  statColumns,
+  statsFor,
   pickedTeams,
   readOnly,
   onTogglePick,
   onClearPicked,
   onMoveCard,
-  onEditCard,
-  onRemoveCard,
+  onOpenTeam,
 }: {
   columns: KanbanColumn[];
   cards: KanbanCard[];
   eventYear: number;
-  epaByTeam: Record<number, { event: number | null; auto: number | null; teleop: number | null; endgame: number | null }>;
+  /** Stats chosen in Configure Cards, in display order. */
+  statColumns: RankingColumn[];
+  statsFor: StatsFor;
   pickedTeams: Set<number>;
   readOnly: boolean;
   onTogglePick: (teamNumber: number) => void;
   onClearPicked: () => void;
   onMoveCard: (cardId: string, columnId: string, position: number) => void;
-  onEditCard: (card: KanbanCard) => void;
-  onRemoveCard: (cardId: string) => void;
+  onOpenTeam: (teamNumber: number) => void;
 }) {
   // ── Internal display order (survives re-renders, resets on server update) ──
   const defaultSort = (arr: KanbanCard[]) =>
@@ -1053,10 +785,21 @@ function ListView({
         )}
       </div>
 
-      {/* List — grouped by column / tier */}
-      <ScrollArea
-        className="flex-1 min-h-0 border border-t-0 border-border rounded-b-xl bg-card"
-      >
+      {/* List — grouped by column / tier; scrolls sideways on a phone when
+          many stats are shown, so the columns never squash. */}
+      <div className="flex-1 min-h-0 overflow-auto border border-t-0 border-border rounded-b-xl bg-card">
+        <div style={{ minWidth: 264 + statColumns.length * 84 }}>
+        {/* Column labels, aligned with every row's stat grid */}
+        <div className="sticky top-0 z-20 flex items-center gap-3 h-8 px-3 border-b border-border bg-card text-[11px] text-muted-foreground">
+          <span className={`shrink-0 pl-[3.75rem] ${LIST_TEAM_COL}`}>Team</span>
+          {statColumns.length > 0 && (
+            <div className="grid flex-1 gap-x-3" style={{ gridTemplateColumns: listGrid(statColumns) }}>
+              {statColumns.map((c) => (
+                <span key={c.id} className="truncate" title={c.label}>{columnShortLabel(c)}</span>
+              ))}
+            </div>
+          )}
+        </div>
         {groups.map(({ column, cards: colCards }) => (
           <div key={column.id}>
             {/* Section header — also a drop zone (insert at top of section) */}
@@ -1064,7 +807,7 @@ function ListView({
               onDragOver={(e) => handleHeaderDragOver(e, column.id)}
               onDragLeave={() => setHeaderDrop(null)}
               onDrop={(e) => handleHeaderDrop(e, column.id)}
-              className={`sticky top-0 z-10 flex items-center gap-2 px-4 py-1.5 border-b border-border backdrop-blur transition-colors ${
+              className={`sticky top-8 z-10 flex items-center gap-2 px-4 py-1.5 border-b border-border backdrop-blur transition-colors ${
                 headerDrop === column.id && listDragId
                   ? "bg-primary/15 border-primary/40"
                   : "bg-muted/70"
@@ -1093,14 +836,13 @@ function ListView({
                   <ListTeamRow
                     card={card}
                     eventYear={eventYear}
-                    epa={epaByTeam[card.teamNumber] ?? null}
-                    columnColor={column.color}
+                    stats={statsFor(card.teamNumber)}
+                    columns={statColumns}
                     isPicked={pickedTeams.has(card.teamNumber)}
                     isDragging={listDragId === card._id}
                     readOnly={readOnly}
                     onTogglePick={() => onTogglePick(card.teamNumber)}
-                    onEdit={onEditCard}
-                    onRemove={onRemoveCard}
+                    onOpen={() => onOpenTeam(card.teamNumber)}
                     onDragStart={(e) => handleDragStart(e, card._id)}
                     onDragEnd={handleDragEnd}
                     onDragOver={(e) => handleRowDragOver(e, card._id)}
@@ -1136,7 +878,8 @@ function ListView({
             No teams on this board yet.
           </div>
         )}
-      </ScrollArea>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1148,11 +891,14 @@ function BoardView({
   eventKey,
   eventYear,
   boardType,
+  data,
 }: {
   boardId: Id<"kanbanBoards">;
   eventKey: string;
   eventYear: number;
   boardType: "personal" | "central";
+  /** Event stats + submissions, shared with the Dashboard. */
+  data: EventTeamData;
 }) {
   // ── Convex queries with offline cache fallback ───────────────────────────
   const boardLive = useQuery(
@@ -1164,33 +910,23 @@ function BoardView({
   const rawCardsLive = useQuery(api.kanban.getBoardCards, { boardId });
   const rawCardsCached = useCached(rawCardsLive, `kanban_cards_${boardId}`);
 
-  const allSubmissionsLive = useQuery(
-    api.forms.listSubmissions,
-    eventKey ? { eventKey } : "skip"
-  );
-  const allSubmissions = useCached(allSubmissionsLive, `submissions_${eventKey}`);
-
-  const activeTemplatesLive = useQuery(api.forms.listActiveTemplates);
-  const activeTemplates = useCached(activeTemplatesLive, `active_templates`);
-  // Prefer the default form type; fall back to first active of any type
-  const activeTemplate = (activeTemplates ?? []).find((t) => (t.formType ?? "default") === "default")
-    ?? (activeTemplates ?? [])[0]
-    ?? null;
-
   const updateColumns    = useAdminMutation(api.kanban.updateBoardColumns);
   const moveCardMutation = useMutation(api.kanban.moveCard);
   const updateCardMutation = useMutation(api.kanban.updateCard);
-  const removeCardMutation = useMutation(api.kanban.removeCard);
   const seedTeamsMutation  = useAdminMutation(api.kanban.seedTeams);
 
-  const [editingCard, setEditingCard]   = useState<KanbanCard | null>(null);
-  const [editNotes, setEditNotes]       = useState("");
+  const [openTeam, setOpenTeam]         = useState<number | null>(null);
   const [newColName, setNewColName]     = useState("");
   const [seeding, setSeeding]           = useState(false);
   const [cardPrefsOpen, setCardPrefsOpen] = useState(false);
-  const [cardPrefs, setCardPrefs]       = useState<string[]>(getCardPrefs);
-  const [epaByTeam, setEpaByTeam] = useState<Record<number, { event: number | null; auto: number | null; teleop: number | null; endgame: number | null }>>({});
-  const [epaStatus, setEpaStatus] = useState<"loading" | "ok" | "error">("loading");
+  // Card stats: the Dashboard's column options, with picklist defaults.
+  const cardPrefs = useUIStore((s) => s.picklistColumns);
+  const setCardPrefs = useUIStore((s) => s.setPicklistColumns);
+  const allStatColumns = useMemo(
+    () => withDefaults([...BUILTIN_COLUMNS, ...data.fieldColumns], PICKLIST_DEFAULT_COLUMNS),
+    [data.fieldColumns]
+  );
+  const statColumns = useMemo(() => visibleColumns(allStatColumns, cardPrefs), [allStatColumns, cardPrefs]);
   const [viewMode, setViewMode]         = useState<"board" | "list">("board");
   const [pickedTeams, setPickedTeams]   = useState<Set<number>>(() => getPickedTeams(String(boardId)));
   const { isAdminMode } = useUIStore();
@@ -1208,7 +944,6 @@ function BoardView({
 
   // Optimistic offline state
   const [localMoves, setLocalMoves]         = useState<Record<string, { columnId: string; position: number }>>({});
-  const [removedCardIds, setRemovedCardIds] = useState<Set<string>>(new Set());
 
   const draggingCardId   = useRef<string | null>(null);
   const [activeDragCardId, setActiveDragCardId] = useState<string | null>(null);
@@ -1220,7 +955,6 @@ function BoardView({
   const [colDropTargetId, setColDropTargetId]   = useState<string | null>(null);
 
   // Confirmation state for destructive actions
-  const [confirmRemoveCardId, setConfirmRemoveCardId] = useState<string | null>(null);
   const [confirmRemoveColId, setConfirmRemoveColId]   = useState<string | null>(null);
 
   const columns: KanbanColumn[] = board?.columns ?? [];
@@ -1239,18 +973,16 @@ function BoardView({
       }) => ({ ...c, boardId: c.boardId as string })
     );
     return base
-      .filter((c) => !removedCardIds.has(c._id))
       .map((c) => {
         const move = localMoves[c._id];
         return move ? { ...c, columnId: move.columnId, position: move.position } : c;
       });
-  }, [rawCardsCached, localMoves, removedCardIds]);
+  }, [rawCardsCached, localMoves]);
 
   // Clear optimistic overrides once Convex confirms the real state
   useEffect(() => {
     if (rawCardsLive === undefined) return;
     setLocalMoves({});
-    setRemovedCardIds(new Set());
   }, [rawCardsLive]);
 
   // Flat ordering (by column, then position) used to figure out drag direction
@@ -1266,45 +998,13 @@ function BoardView({
     [cards, columns]
   );
 
-  const fields: FormField[] = (activeTemplate?.fields as FormField[]) ?? [];
-
-  // Group submissions by team
-  const submissionsByTeam = (allSubmissions ?? []).reduce<Record<number, Submission[]>>(
-    (acc, s: Submission) => {
-      acc[s.teamNumber] = [...(acc[s.teamNumber] ?? []), s];
-      return acc;
-    },
-    {}
-  );
-
-  // ── Fetch Statbotics EPA breakdown for all event teams ─────────────────
-  useEffect(() => {
-    if (!eventKey) return;
-    setEpaStatus("loading");
-    async function loadEpa() {
-      const data = await fetchStatboticsEventTeams(eventKey);
-      // null = every Statbotics host failed (official + mirror) and nothing is
-      // cached. An empty array is a *working* host that simply has no EPA for
-      // this event yet (upcoming event) — cards show "—", but that isn't an outage.
-      if (!Array.isArray(data)) {
-        setEpaStatus("error");
-        return;
-      }
-      const map: Record<number, { event: number | null; auto: number | null; teleop: number | null; endgame: number | null }> = {};
-      for (const t of data as Array<{ team: number; epa: unknown }>) {
-        const epaRaw = t.epa;
-        map[t.team] = {
-          event:   extractEpa(epaRaw),
-          auto:    findInEpa(epaRaw, "auto_points", "auto"),
-          teleop:  findInEpa(epaRaw, "teleop_points", "teleop"),
-          endgame: findInEpa(epaRaw, "endgame_points", "endgame"),
-        };
-      }
-      setEpaByTeam(map);
-      setEpaStatus("ok");
-    }
-    loadEpa();
-  }, [eventKey]);
+  const statsFor: StatsFor = (team) => ({
+    rank: (data.tbaRankings[team] as { rank?: number } | undefined)?.rank ?? null,
+    avgScore: data.avgScoreByTeam[team] ?? null,
+    epa: data.epaMap[team] ?? EMPTY_TEAM_EPA,
+    reportCount: data.submissionsByTeam[team]?.length ?? 0,
+    fieldCells: data.fieldCellsByTeam[team] ?? {},
+  });
 
   // ── Auto-seed TBA teams ──────────────────────────────────────────────────
   useEffect(() => {
@@ -1586,12 +1286,9 @@ function BoardView({
     await commitMove(cardId, targetCard.columnId, position);
   }
 
-  async function handleSaveCardEdit() {
-    if (!editingCard) return;
-    const { _id: cardId } = editingCard;
-    const notes = editNotes;
-    setEditingCard(null); // close immediately (optimistic)
-
+  /** Notes live on the board's card: admin-only on the shared board,
+   *  owner-only on a personal one (convex/kanban.ts requireBoardWrite). */
+  async function handleSaveNotes(cardId: string, notes: string) {
     if (navigator.onLine) {
       try {
         await updateCardMutation({ cardId: cardId as Id<"kanbanCards">, notes });
@@ -1601,33 +1298,8 @@ function BoardView({
       }
     } else {
       enqueueKanbanOp({ type: "updateCard", cardId, notes });
-      toast.success("Notes saved — will sync when online");
+      toast.success("Notes saved, will sync when online");
     }
-  }
-
-  async function handleRemoveCard(cardId: string) {
-    setConfirmRemoveCardId(cardId);
-  }
-
-  async function doRemoveCard(cardId: string) {
-    // Optimistic remove
-    setRemovedCardIds((prev) => new Set([...prev, cardId]));
-
-    if (navigator.onLine) {
-      try {
-        await removeCardMutation({ cardId: cardId as Id<"kanbanCards"> });
-      } catch {
-        setRemovedCardIds((prev) => { const s = new Set(prev); s.delete(cardId); return s; });
-        toast.error("Failed to remove card");
-      }
-    } else {
-      enqueueKanbanOp({ type: "removeCard", cardId });
-    }
-  }
-
-  function handleSavePrefs(prefs: string[]) {
-    saveCardPrefs(prefs);
-    setCardPrefs(prefs);
   }
 
   function handleTogglePick(teamNumber: number) {
@@ -1669,35 +1341,25 @@ function BoardView({
     .filter((c) => c.columnId === "unsorted")
     .sort(byPosition);
 
-  function openNotes(card: KanbanCard) {
-    setEditingCard(card);
-    setEditNotes(card.notes ?? "");
-  }
-
   function renderCard(card: KanbanCard) {
     const showAbove = cardDropInfo?.cardId === card._id && cardDropInfo.before  && activeDragCardId !== card._id;
     const showBelow = cardDropInfo?.cardId === card._id && !cardDropInfo.before && activeDragCardId !== card._id;
     return (
       <div
         key={card._id}
-        className="relative py-[3px]"
+        className="relative py-1"
         onDragOver={(e) => handleCardDragOver(e, card._id)}
         onDrop={(e) => handleCardDrop(e, card._id)}
       >
         {showAbove && <div className="absolute top-0 left-0 right-0 h-0.5 bg-primary z-20 pointer-events-none" />}
         <TeamCard
           card={card}
-          eventKey={eventKey}
           eventYear={eventYear}
-          epa={epaByTeam[card.teamNumber] ?? null}
-          epaStatus={epaStatus}
-          submissions={submissionsByTeam[card.teamNumber] ?? []}
-          fields={fields}
-          cardPrefs={cardPrefs}
+          stats={statsFor(card.teamNumber)}
+          columns={statColumns}
           isDragging={activeDragCardId === card._id}
           readOnly={!canEdit}
-          onEdit={openNotes}
-          onRemove={handleRemoveCard}
+          onOpen={() => setOpenTeam(card.teamNumber)}
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
         />
@@ -1705,6 +1367,8 @@ function BoardView({
       </div>
     );
   }
+
+  const openCard = openTeam !== null ? cards.find((c) => c.teamNumber === openTeam) ?? null : null;
 
   // Show cached board skeleton while loading; never fully block on Convex
   if (!board && rawCardsCached === undefined) {
@@ -1803,41 +1467,15 @@ function BoardView({
       )}
 
       {/* EPA status banner */}
-      {epaStatus === "error" && (
-        <div className="flex items-center gap-2 px-3 py-1.5 mb-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs">
-          <span className="shrink-0">⚠</span>
-          <span>Statbotics EPA data is currently unavailable — both the official API and the mirror failed. Cards will show "N/A" until data loads.</span>
+      {data.sbError && (
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs">
+          <span>Statbotics EPA data is unavailable right now, so EPA stats show a dash.</span>
           <button
             className="ml-auto shrink-0 underline hover:text-amber-500 transition-colors"
-            onClick={() => {
-              // Clear the 5-min error backoff so fetchWithCache hits the network again
-              clearCacheErrKey(`sb_event_teams_${eventKey}`);
-              setEpaStatus("loading");
-              fetchStatboticsEventTeams(eventKey).then((data) => {
-                if (!Array.isArray(data)) { setEpaStatus("error"); return; }
-                const map: Record<number, { event: number | null; auto: number | null; teleop: number | null; endgame: number | null }> = {};
-                for (const t of data as Array<{ team: number; epa: unknown }>) {
-                  const epaRaw = t.epa;
-                  map[(t as { team: number }).team] = {
-                    event:   extractEpa(epaRaw),
-                    auto:    findInEpa(epaRaw, "auto_points", "auto"),
-                    teleop:  findInEpa(epaRaw, "teleop_points", "teleop"),
-                    endgame: findInEpa(epaRaw, "endgame_points", "endgame"),
-                  };
-                }
-                setEpaByTeam(map);
-                setEpaStatus("ok");
-              });
-            }}
+            onClick={data.reloadExternal}
           >
             Retry
           </button>
-        </div>
-      )}
-      {epaStatus === "loading" && (
-        <div className="flex items-center gap-2 px-3 py-1 mb-2 rounded-lg bg-muted/50 text-muted-foreground text-xs">
-          <span className="animate-spin inline-block">⟳</span>
-          <span>Loading EPA data from Statbotics…</span>
         </div>
       )}
 
@@ -1879,8 +1517,8 @@ function BoardView({
               </button>
               {unsortedOpen && (
                 <div
-                  className="max-h-[152px] overflow-y-auto px-1.5 py-[3px] grid gap-x-1.5"
-                  style={{ gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))" }}
+                  className="max-h-[min(236px,32vh)] overflow-y-auto px-2 py-1 grid gap-x-2"
+                  style={{ gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}
                 >
                   {unsortedCards.map(renderCard)}
                   {unsortedCards.length === 0 && (
@@ -1930,85 +1568,53 @@ function BoardView({
           columns={columns}
           cards={cards}
           eventYear={eventYear}
-          epaByTeam={epaByTeam}
+          statColumns={statColumns}
+          statsFor={statsFor}
           pickedTeams={pickedTeams}
           readOnly={!canEdit}
           onTogglePick={handleTogglePick}
           onClearPicked={handleClearPicked}
           onMoveCard={handleMoveInList}
-          onEditCard={openNotes}
-          onRemoveCard={handleRemoveCard}
+          onOpenTeam={setOpenTeam}
         />
       )}
 
-      {/* Edit notes dialog */}
-      <Dialog open={!!editingCard} onOpenChange={(o) => !o && setEditingCard(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              Team {editingCard?.teamNumber}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label>Notes</Label>
-              <Textarea
-                value={editNotes}
-                onChange={(e) => setEditNotes(e.target.value)}
-                rows={4}
-                placeholder="Add notes about this team…"
-              />
-            </div>
-            <div className="flex gap-2 justify-end">
-              <Button variant="outline" onClick={() => setEditingCard(null)}>Cancel</Button>
-              <Button onClick={handleSaveCardEdit}>Save</Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* Team profile (same panel as the Dashboard) + picklist Notes tab */}
+      {openCard && (
+        <TeamDetailPanel
+          key={openCard.teamNumber}
+          teamNumber={openCard.teamNumber}
+          eventKey={eventKey}
+          eventYear={eventYear}
+          submissions={data.submissionsByTeam[openCard.teamNumber] ?? []}
+          fields={data.fields}
+          epa={data.epaMap[openCard.teamNumber] ?? EMPTY_TEAM_EPA}
+          avgScore={data.avgScoreByTeam[openCard.teamNumber] ?? null}
+          tbaRank={data.tbaRankings[openCard.teamNumber] ?? null}
+          pitSubmissions={data.pitSubmissionsByTeam[openCard.teamNumber] ?? []}
+          pitFields={data.pitFields}
+          templates={data.allTemplates}
+          epaByTeam={data.epaMap}
+          avgScoreByTeam={data.avgScoreByTeam}
+          submissionsByTeam={data.submissionsByTeam}
+          notes={{
+            value: openCard.notes ?? "",
+            canEdit,
+            readOnlyHint: "Only admins can edit notes on the shared picklist.",
+            onSave: (text) => handleSaveNotes(openCard._id, text),
+          }}
+          onClose={() => setOpenTeam(null)}
+        />
+      )}
 
       {/* Card prefs dialog */}
       <CardPrefsDialog
         open={cardPrefsOpen}
         onClose={() => setCardPrefsOpen(false)}
-        fields={fields}
-        cardPrefs={cardPrefs}
-        onSave={handleSavePrefs}
+        columns={allStatColumns}
+        prefs={cardPrefs}
+        onSave={setCardPrefs}
       />
-
-      {/* Confirm remove card */}
-      {(() => {
-        const card = confirmRemoveCardId ? cards.find((c) => c._id === confirmRemoveCardId) : null;
-        return (
-          <AlertDialog
-            open={!!confirmRemoveCardId}
-            onOpenChange={(o) => { if (!o) setConfirmRemoveCardId(null); }}
-          >
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Remove Team {card?.teamNumber ?? ""}?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This will remove <strong className="text-foreground">Team {card?.teamNumber}</strong> from the board.
-                  Any notes you've added will be lost. You can re-add the team by syncing with TBA.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction
-                  className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
-                  onClick={() => {
-                    const id = confirmRemoveCardId!;
-                    setConfirmRemoveCardId(null);
-                    doRemoveCard(id);
-                  }}
-                >
-                  Remove
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        );
-      })()}
 
       {/* Confirm remove column */}
       {(() => {
@@ -2072,6 +1678,8 @@ export default function KanbanPage() {
   const personalBoard = useCached(personalBoardLive, `kanban_board_personal_${eventKey}`);
 
   const eventYear = eventKey ? parseInt(eventKey.slice(0, 4)) || new Date().getFullYear() : new Date().getFullYear();
+  // Loaded once here so switching Shared/My Picklist doesn't refetch.
+  const teamData = useEventTeamData(eventKey);
 
   const DEFAULT_COLUMNS = [
     { id: "tier1",    title: "Tier 1 – Alliance Pick", color: "#22c55e" },
@@ -2143,6 +1751,7 @@ export default function KanbanPage() {
                 eventKey={eventKey}
                 eventYear={eventYear}
                 boardType="central"
+                data={teamData}
               />
             ) : isAdminMode ? (
               <p className="text-muted-foreground text-sm">Creating board…</p>
@@ -2163,6 +1772,7 @@ export default function KanbanPage() {
                 eventKey={eventKey}
                 eventYear={eventYear}
                 boardType="personal"
+                data={teamData}
               />
             ) : (
               <div className="flex flex-col items-center justify-center h-48 gap-3">

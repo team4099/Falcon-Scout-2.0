@@ -1,6 +1,7 @@
 // Column model for the Dashboard rankings table: fixed built-in columns plus
 // any form fields an admin tagged `showInRankings` in the form builder.
 import type { FormField } from "@/types";
+import type { TeamEpa } from "@/lib/epa";
 
 export interface RankingColumn {
   id: string;
@@ -111,4 +112,60 @@ export function aggregateField(field: FormField, values: unknown[]): FieldCell {
       return { display: best, sort: best.toLowerCase() };
     }
   }
+}
+
+// ── Picklist cards ───────────────────────────────────────────────────────────
+// The picklist offers the same options as the rankings Columns menu, with a
+// shorter default set so a card stays readable.
+
+export const PICKLIST_DEFAULT_COLUMNS = new Set(["rank", "epaEvent", "epaOverall", REPORTS_COLUMN_ID]);
+
+/** Same columns, but visible by default only when listed in `on`. */
+export function withDefaults<C extends RankingColumn>(columns: C[], on: Set<string>): C[] {
+  return columns.map((c) => ({ ...c, defaultVisible: on.has(c.id) }));
+}
+
+export interface TeamStats {
+  rank: number | null;
+  avgScore: number | null;
+  epa: TeamEpa;
+  reportCount: number;
+  fieldCells: Record<string, FieldCell>;
+}
+
+export interface StatCell {
+  display: string;
+  /** No data yet: rendered muted. */
+  empty: boolean;
+  /** EPA totals get the accent color, as on the Dashboard. */
+  accent: boolean;
+}
+
+const EPA_KEYS: Record<string, keyof TeamEpa> = {
+  epaEvent: "event",
+  epaOverall: "overall",
+  epaAuto: "auto",
+  epaTeleop: "teleop",
+  epaEndgame: "endgame",
+};
+
+/** One team's value for any built-in or tagged-field column. */
+export function statCell(id: string, t: TeamStats): StatCell {
+  const cell = (v: string | null, accent = false): StatCell =>
+    v === null ? { display: "—", empty: true, accent: false } : { display: v, empty: false, accent };
+  if (id === "rank") return cell(t.rank !== null ? `#${t.rank}` : null);
+  if (id === "avgScore") return cell(t.avgScore !== null ? String(Math.round(t.avgScore)) : null);
+  if (id === REPORTS_COLUMN_ID) return cell(t.reportCount > 0 ? String(t.reportCount) : null);
+  const epaKey = EPA_KEYS[id];
+  if (epaKey) {
+    const v = t.epa[epaKey];
+    return cell(v !== null ? fmt(v) : null, id === "epaEvent" || id === "epaOverall");
+  }
+  const f = t.fieldCells[id];
+  return cell(f && f.sort !== null ? f.display : null);
+}
+
+/** Short header for a picklist card / list column. */
+export function columnShortLabel(c: RankingColumn): string {
+  return c.id === REPORTS_COLUMN_ID ? "Reports" : c.label;
 }

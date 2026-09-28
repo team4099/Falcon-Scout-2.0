@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import type { FormField } from "@/types";
 import {
   BUILTIN_COLUMNS,
+  PICKLIST_DEFAULT_COLUMNS,
   aggregateField,
+  statCell,
+  withDefaults,
   taggedFieldColumns,
   visibleColumns,
 } from "./rankingColumns";
@@ -51,5 +54,39 @@ describe("visibleColumns", () => {
     expect(ids).not.toContain("rank");
     expect(ids).toContain("f:m:a");
     expect(ids).toContain("reports");
+  });
+});
+
+describe("picklist card stats", () => {
+  const stats = {
+    rank: 3,
+    avgScore: 181.6,
+    epa: { event: 40.54, overall: 39.3, auto: null, teleop: 21.5, endgame: 13.9 },
+    reportCount: 6,
+    fieldCells: { "f:m:a": { display: "2.8", sort: 2.8 }, "f:m:b": { display: "—", sort: null } },
+  };
+
+  it("defaults to a short set but offers every rankings column", () => {
+    const cols = withDefaults(BUILTIN_COLUMNS, PICKLIST_DEFAULT_COLUMNS);
+    expect(cols.map((c) => c.id)).toEqual(BUILTIN_COLUMNS.map((c) => c.id));
+    expect(visibleColumns(cols, {}).map((c) => c.id)).toEqual(["rank", "epaEvent", "epaOverall", "reports"]);
+    expect(visibleColumns(cols, { epaAuto: true, rank: false }).map((c) => c.id)).toContain("epaAuto");
+  });
+
+  it("formats built-ins, keeping season EPA distinct from event EPA", () => {
+    expect(statCell("rank", stats).display).toBe("#3");
+    expect(statCell("avgScore", stats).display).toBe("182");
+    expect(statCell("epaEvent", stats)).toEqual({ display: "40.5", empty: false, accent: true });
+    expect(statCell("epaOverall", stats).display).toBe("39.3");
+    expect(statCell("epaTeleop", stats)).toEqual({ display: "21.5", empty: false, accent: false });
+    expect(statCell("epaAuto", stats).empty).toBe(true);
+    expect(statCell("reports", stats).display).toBe("6");
+    expect(statCell("reports", { ...stats, reportCount: 0 }).empty).toBe(true);
+  });
+
+  it("shows tagged scouting fields and marks missing ones empty", () => {
+    expect(statCell("f:m:a", stats).display).toBe("2.8");
+    expect(statCell("f:m:b", stats).empty).toBe(true);
+    expect(statCell("f:m:missing", stats).empty).toBe(true);
   });
 });

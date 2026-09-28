@@ -14,6 +14,9 @@ interface UIState {
   rankingColumns: Record<string, boolean>;
   setRankingColumn: (id: string, visible: boolean) => void;
   resetRankingColumns: () => void;
+  // Picklist card/list stats: same options as the rankings columns, own prefs.
+  picklistColumns: Record<string, boolean>;
+  setPicklistColumns: (prefs: Record<string, boolean>) => void;
   // Dashboard teams hidden from the rankings list, per event key, per device.
   hiddenTeams: Record<string, number[]>;
   setTeamHidden: (eventKey: string, team: number, hidden: boolean) => void;
@@ -33,6 +36,8 @@ export const useUIStore = create<UIState>()(
       setRankingColumn: (id, visible) =>
         set((s) => ({ rankingColumns: { ...s.rankingColumns, [id]: visible } })),
       resetRankingColumns: () => set({ rankingColumns: {} }),
+      picklistColumns: {},
+      setPicklistColumns: (prefs) => set({ picklistColumns: prefs }),
       hiddenTeams: {},
       setTeamHidden: (eventKey, team, hidden) =>
         set((s) => {
@@ -52,6 +57,7 @@ export const useUIStore = create<UIState>()(
       partialize: (state) => ({
         isAdminMode: state.isAdminMode,
         rankingColumns: state.rankingColumns,
+        picklistColumns: state.picklistColumns,
         hiddenTeams: state.hiddenTeams,
       }),
     }

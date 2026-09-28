@@ -42,6 +42,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Textarea } from "@/components/ui/textarea";
 import {
   X,
   ExternalLink,
@@ -53,6 +54,7 @@ import {
   XCircle,
   Star,
   Trash2,
+  StickyNote,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -965,6 +967,44 @@ const REPORT_MODES: ReadonlyArray<readonly [ReportMode, string]> = [
   ["data", "Data"],
 ];
 
+function NotesTab({ value, canEdit, readOnlyHint, onSave }: NonNullable<TeamDetailProps["notes"]>) {
+  const [draft, setDraft] = useState(value);
+  // Follow server updates (another admin saving) unless we're mid-edit.
+  const [base, setBase] = useState(value);
+  if (value !== base) {
+    setBase(value);
+    if (draft === base) setDraft(value);
+  }
+  const dirty = draft !== value;
+
+  return (
+    <div className="px-5 py-4 flex flex-col gap-3 h-full">
+      <Textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        readOnly={!canEdit}
+        aria-label="Team notes"
+        placeholder={canEdit ? "Notes about this team..." : "No notes yet."}
+        className="flex-1 min-h-48 resize-none text-sm leading-relaxed"
+      />
+      {canEdit ? (
+        <div className="flex items-center justify-end gap-2">
+          {dirty && (
+            <Button variant="ghost" size="sm" onClick={() => setDraft(value)}>
+              Discard
+            </Button>
+          )}
+          <Button size="sm" disabled={!dirty} onClick={() => onSave(draft)}>
+            Save notes
+          </Button>
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">{readOnlyHint}</p>
+      )}
+    </div>
+  );
+}
+
 export interface TeamDetailProps {
   teamNumber: number;
   eventKey: string;
@@ -982,6 +1022,9 @@ export interface TeamDetailProps {
   epaByTeam: Record<number, TeamEpa>;
   avgScoreByTeam: Record<number, number>;
   submissionsByTeam: Record<number, Submission[]>;
+  /** Picklist only: adds a Notes tab. Who may edit is decided by the caller
+   *  (and enforced server-side); everyone else sees the notes read-only. */
+  notes?: { value: string; canEdit: boolean; readOnlyHint: string; onSave: (text: string) => void };
   onClose: () => void;
 }
 
@@ -1000,6 +1043,7 @@ export default function TeamDetailPanel({
   epaByTeam,
   avgScoreByTeam,
   submissionsByTeam,
+  notes,
   onClose,
 }: TeamDetailProps) {
   const [teamInfo, setTeamInfo] = useState<{ nickname?: string; city?: string } | null>(null);
@@ -1141,6 +1185,11 @@ export default function TeamDetailPanel({
             <TabsTrigger value="reports" className="gap-1.5">
               <ClipboardList className="h-3.5 w-3.5" /> Reports
             </TabsTrigger>
+            {notes && (
+              <TabsTrigger value="notes" className="gap-1.5">
+                <StickyNote className="h-3.5 w-3.5" /> Notes
+              </TabsTrigger>
+            )}
           </TabsList>
 
           {/* ── OVERVIEW ── */}
@@ -1282,6 +1331,12 @@ export default function TeamDetailPanel({
               </div>
             </ScrollArea>
           </TabsContent>
+
+          {notes && (
+            <TabsContent value="notes" className="flex-1 min-h-0 mt-0">
+              <NotesTab {...notes} />
+            </TabsContent>
+          )}
         </Tabs>
       </div>
 
