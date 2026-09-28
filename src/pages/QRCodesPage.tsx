@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "react-router";
 import { matchKey, matchLabel, matchSortValue } from "@/lib/utils";
 import QRCode from "react-qr-code";
 import {
@@ -9,6 +10,11 @@ import {
   type LocalSubmission,
 } from "@/lib/submissionStore";
 import { Button } from "@/components/ui/button";
+import {
+  QRScannerOverlay,
+  ScannedCard,
+  useScannedSubmissions,
+} from "@/components/QRScanner";
 import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -34,6 +40,8 @@ import {
   ChevronRight,
   ClipboardList,
   AlertTriangle,
+  ScanLine,
+  RefreshCw,
 } from "lucide-react";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -256,6 +264,19 @@ export default function QRCodesPage() {
   const [viewing, setViewing] = useState<LocalSubmission | null>(null);
   const [clearConfirm, setClearConfirm] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<LocalSubmission | null>(null);
+  const [clearScannedConfirm, setClearScannedConfirm] = useState(false);
+  const scannedData = useScannedSubmissions();
+  const { scanned, attemptUpload } = scannedData;
+  const pendingScans = scanned.filter((s) => s.uploadStatus !== "uploaded").length;
+
+  // ?scan=1 opens the camera directly (the old /scanner route redirects here)
+  const [searchParams, setSearchParams] = useSearchParams();
+  const scannerOpen = searchParams.get("scan") === "1";
+  const setScannerOpen = useCallback(
+    (open: boolean) => setSearchParams(open ? { scan: "1" } : {}, { replace: true }),
+    [setSearchParams]
+  );
+  const closeScanner = useCallback(() => setScannerOpen(false), [setScannerOpen]);
 
   const reload = useCallback(() => setSubs(getMySubmissions()), []);
 
@@ -295,7 +316,7 @@ export default function QRCodesPage() {
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4 shrink-0">
+      <div className="flex items-center justify-between mb-3 shrink-0">
         <div>
           <h2 className="text-2xl font-bold tracking-tight">My QR Codes</h2>
           <p className="text-muted-foreground text-sm">
@@ -316,28 +337,37 @@ export default function QRCodesPage() {
         )}
       </div>
 
-      {/* Empty state */}
-      {subs.length === 0 && (
-        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-4">
-          <div className="h-16 w-16 rounded-2xl bg-muted flex items-center justify-center">
-            <QrCode className="h-8 w-8 text-muted-foreground" />
-          </div>
-          <div>
-            <p className="font-semibold">No scouting submissions yet</p>
-            <p className="text-sm text-muted-foreground mt-1">
-              Submit a match via Scout Match and your QR codes will appear here — even offline.
-            </p>
-          </div>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/40 rounded-xl px-4 py-3 mt-2">
-            <ClipboardList className="h-4 w-4 shrink-0" />
-            Go to <strong className="mx-0.5">Scout Match</strong> to start scouting
-          </div>
-        </div>
-      )}
+      {/* Open the camera to import a teammate's codes */}
+      <Button
+        size="lg"
+        className="w-full h-12 gap-2 mb-4 shrink-0 text-base"
+        onClick={() => setScannerOpen(true)}
+      >
+        <ScanLine className="h-5 w-5" /> Scan QR Code
+      </Button>
 
       {/* Submissions grouped by match */}
       <ScrollArea className="flex-1 -mx-1 px-1">
         <div className="space-y-6 pb-4">
+          {/* Empty state */}
+          {subs.length === 0 && (
+            <div className="flex flex-col items-center justify-center gap-3 text-center px-4 py-8">
+              <div className="h-16 w-16 rounded-2xl bg-muted flex items-center justify-center">
+                <QrCode className="h-8 w-8 text-muted-foreground" />
+              </div>
+              <div>
+                <p className="font-semibold">No scouting submissions yet</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Submit a match via Scout Match and your QR codes will appear here — even offline.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/40 rounded-xl px-4 py-3 mt-2">
+                <ClipboardList className="h-4 w-4 shrink-0" />
+                Go to <strong className="mx-0.5">Scout Match</strong> to start scouting
+              </div>
+            </div>
+          )}
+
           {matchKeys.map((key) => {
             const matchSubs = byMatch.get(key)!;
             const head = matchSubs[0];
@@ -368,8 +398,58 @@ export default function QRCodesPage() {
               </div>
             );
           })}
+
+          {/* Codes scanned from teammates on this device */}
+          {scanned.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-xs font-bold text-primary uppercase tracking-wider">
+                  Scanned from teammates
+                </span>
+                <div className="flex-1 h-px bg-border" />
+                <span className="text-xs text-muted-foreground">
+                  {scanned.length} · {pendingScans} pending
+                </span>
+              </div>
+              <div className="flex gap-2 mb-2">
+                {pendingScans > 0 && navigator.onLine && (
+                  <Button variant="secondary" size="sm" className="gap-1" onClick={scannedData.retryPending}>
+                    <RefreshCw className="h-3.5 w-3.5" /> Retry {pendingScans}
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="ml-auto text-destructive hover:text-destructive hover:bg-destructive/10"
+                  onClick={() => setClearScannedConfirm(true)}
+                >
+                  <Trash2 className="h-3.5 w-3.5 mr-1" /> Clear scanned
+                </Button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {scanned.map((sub) => (
+                  <ScannedCard
+                    key={sub.id}
+                    sub={sub}
+                    onRetry={() => attemptUpload(sub)}
+                    onDelete={() => scannedData.remove(sub.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </ScrollArea>
+
+      {scannerOpen && (
+        <QRScannerOverlay
+          onClose={closeScanner}
+          onComplete={(sub) => {
+            scannedData.reload();
+            attemptUpload(sub);
+          }}
+        />
+      )}
 
       {/* QR Viewer */}
       {viewing && (
@@ -413,6 +493,34 @@ export default function QRCodesPage() {
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={handleClearAll}
+            >
+              Clear all
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Clear scanned confirm */}
+      <AlertDialog open={clearScannedConfirm} onOpenChange={setClearScannedConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              Clear all scanned data?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Removes all {scanned.length} locally stored scanned submissions.
+              Records already uploaded to Convex are not affected.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                scannedData.clearAll();
+                setClearScannedConfirm(false);
+              }}
             >
               Clear all
             </AlertDialogAction>

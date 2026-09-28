@@ -1,4 +1,4 @@
-import { Routes, Route, NavLink, useNavigate, useLocation, Link } from "react-router";
+import { Routes, Route, NavLink, Navigate, useNavigate, useLocation, Link } from "react-router";
 import { useTheme } from "next-themes";
 import { useQuery, useMutation } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
@@ -34,7 +34,6 @@ import {
   CalendarDays,
   BarChart2,
   QrCode,
-  ScanLine,
   MoreHorizontal,
   X,
   DollarSign,
@@ -51,7 +50,6 @@ import DataViewerPage from "@/pages/DataViewerPage";
 import FormBuilderPage from "@/pages/FormBuilderPage";
 import SettingsPage from "@/pages/SettingsPage";
 import QRCodesPage from "@/pages/QRCodesPage";
-import ScannerPage from "@/pages/ScannerPage";
 import LoginPage from "@/pages/LoginPage";
 import ManageScoutsPage from "@/pages/ManageScoutsPage";
 import SubmissionsPage from "@/pages/SubmissionsPage";
@@ -72,7 +70,6 @@ const BASE_NAV = [
   { to: "/scout",     label: "Scout Match",     icon: ClipboardList   },
   { to: "/betting",   label: "FalconBet",       icon: DollarSign      },
   { to: "/qrcodes",   label: "My QR Codes",     icon: QrCode          },
-  { to: "/scanner",   label: "QR Scanner",      icon: ScanLine        },
   { to: "/kanban",    label: "Picklist",        icon: Columns         },
   { to: "/data",      label: "Data Viewer",     icon: BarChart2       },
 ];
@@ -277,7 +274,6 @@ function AuthenticatedApp() {
     { to: "/data",       label: "Data",       icon: BarChart2    },
     { to: "/betting",    label: "FalconBet",  icon: DollarSign   },
     { to: "/qrcodes",    label: "QR Codes",   icon: QrCode       },
-    { to: "/scanner",    label: "Scanner",    icon: ScanLine     },
     { to: "/kanban",     label: "Picklist",   icon: Columns      },
     { to: "/scheduling", label: "Scheduling", icon: CalendarDays },
     ...(isAdminMode
@@ -478,7 +474,7 @@ function AuthenticatedApp() {
             <Route path="/schedule"   element={<MySchedulePage />} />
             <Route path="/betting"    element={<BettingPage />} />
             <Route path="/qrcodes"    element={<QRCodesPage />} />
-            <Route path="/scanner"    element={<ScannerPage />} />
+            <Route path="/scanner"    element={<Navigate to="/qrcodes?scan=1" replace />} />
             <Route path="/kanban"     element={<KanbanPage />} />
             <Route path="/builder"    element={<FormBuilderPage />} />
             <Route path="/scouts"     element={<ManageScoutsPage />} />
