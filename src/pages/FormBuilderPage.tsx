@@ -241,7 +241,18 @@ function FieldEditor({
   const [draft, setDraft] = useState<FormField>(field);
   const allMeta = FIELD_TYPES;
 
-  function save() { onChange(draft); setOpen(false); }
+  // Re-seed the draft from the live field on every open: a cancelled edit
+  // must not linger, and a section rename/drag since mount must not be
+  // reverted by saving a stale copy.
+  function openEditor() { setDraft(field); setOpen(true); }
+
+  function save() {
+    const options = hasChoiceOptions(draft.type)
+      ? [...new Set((draft.options ?? []).map((o) => o.trim()).filter(Boolean))]
+      : draft.options;
+    onChange({ ...draft, label: draft.label.trim() || field.label, options });
+    setOpen(false);
+  }
 
   const ratingMax = Number(draft.options?.[0] ?? "5");
 
@@ -258,7 +269,7 @@ function FieldEditor({
         {field.showInRankings && (
           <span className="text-xs px-1.5 py-0.5 rounded-sm bg-muted text-muted-foreground font-mono" title="Available as a Dashboard rankings column">col</span>
         )}
-        <button onClick={() => setOpen(true)} className="p-1 rounded opacity-100 sm:opacity-0 group-hover:opacity-100 hover:bg-muted text-muted-foreground hover:text-foreground">
+        <button onClick={openEditor} className="p-1 rounded opacity-100 sm:opacity-0 group-hover:opacity-100 hover:bg-muted text-muted-foreground hover:text-foreground">
           <Settings className="h-4 w-4" />
         </button>
         <Button variant="ghost" size="icon" className="h-7 w-7 opacity-100 sm:opacity-0 group-hover:opacity-100 text-destructive hover:text-destructive" onClick={onDelete}>
@@ -799,21 +810,23 @@ function FormBuilderContent() {
 
       if (selectedId) {
         // Deduplicate name against all other templates (excluding self)
-        const safeName = uniqueName(name, selectedId);
+        const safeName = uniqueName(name.trim() || "Untitled Form", selectedId);
         if (safeName !== name) setName(safeName);
         await updateTemplate({
           id: selectedId as Id<"formTemplates">,
-          name: safeName, description: description || undefined,
+          // Send "" rather than undefined so a cleared description is removed
+          // server-side (undefined args are dropped and would be a no-op).
+          name: safeName, description,
           formType,
           fields: savedFields,
           coinReward,
         });
         toast.success("Form saved!");
       } else {
-        const safeName = uniqueName(name);
+        const safeName = uniqueName(name.trim() || "Untitled Form");
         if (safeName !== name) setName(safeName);
         const newId = await createTemplate({
-          name: safeName, description: description || undefined,
+          name: safeName, description: description.trim() || undefined,
           formType,
           fields: savedFields,
           coinReward,

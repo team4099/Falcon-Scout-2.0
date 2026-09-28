@@ -223,9 +223,14 @@ export const updateTemplate = mutation({
     isActive: v.optional(v.boolean()),
     adminKey: v.optional(v.string()),
   },
-  handler: async (ctx, { id, adminKey, ...updates }) => {
+  handler: async (ctx, { id, adminKey, description, ...updates }) => {
     await requireAdmin(ctx, adminKey);
-    await ctx.db.patch(id, updates);
+    // The client can't send `undefined` (it's stripped in transit), so a
+    // cleared description arrives as "" — map it to undefined, which makes
+    // patch remove the field. Omitted entirely = leave it alone.
+    await ctx.db.patch(id, description === undefined
+      ? updates
+      : { ...updates, description: description.trim() || undefined });
   },
 });
 

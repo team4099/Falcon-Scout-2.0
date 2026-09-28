@@ -199,3 +199,31 @@ describe("submitForm", () => {
     )).toBe(1);
   });
 });
+
+describe("updateTemplate description", () => {
+  async function setup() {
+    const t = convexTest(schema, modules);
+    const id = await t.run((ctx) =>
+      ctx.db.insert("formTemplates", {
+        name: "Pit", description: "old notes", fields: [], isActive: false,
+      }),
+    );
+    return { t, id, as: t.withIdentity(admin) };
+  }
+  const desc = async ({ t, id }: Awaited<ReturnType<typeof setup>>) =>
+    (await t.run((ctx) => ctx.db.get(id)))?.description;
+
+  test("an emptied description is removed, not silently kept", async () => {
+    const s = await setup();
+    await s.as.mutation(api.forms.updateTemplate, { id: s.id, description: "  " });
+    expect(await desc(s)).toBeUndefined();
+  });
+
+  test("edits are trimmed; omitting it leaves it alone", async () => {
+    const s = await setup();
+    await s.as.mutation(api.forms.updateTemplate, { id: s.id, name: "Pit 2" });
+    expect(await desc(s)).toBe("old notes");
+    await s.as.mutation(api.forms.updateTemplate, { id: s.id, description: " new " });
+    expect(await desc(s)).toBe("new");
+  });
+});
