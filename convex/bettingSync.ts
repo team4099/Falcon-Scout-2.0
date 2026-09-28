@@ -1,15 +1,19 @@
-// ── Auto-lock markets shortly before a match, and keep odds fresh ─────────────
+// ── Auto-lock markets shortly before a match, pay out once it ends ────────────
 //
-// Betting stays open until an admin locks it by hand unless something closes it
-// 5 minutes before the match starts. This does that from TBA data fetched *server-side*
-// (never client-supplied, so nobody can lock markets by lying), on a cron and
-// whenever a signed-in client opens the Betting page. Idempotent and cheap: it
-// returns before touching TBA if the event has no open markets.
+// Betting used to stay open forever and every match had to be resolved by hand
+// in FalconBet's admin UI, so bets sat unpaid long after the match finished.
+// This closes betting 5 minutes before a match starts and pays out the moment
+// TBA posts a winner, from TBA data fetched *server-side* (never client-
+// supplied, so nobody can lock or resolve a market by lying about a match). It
+// runs on a 1-minute cron and whenever a signed-in client opens the Betting
+// page. Idempotent and cheap: it returns before touching TBA if the event has
+// no market left to lock or resolve.
 
 import { v } from "convex/values";
 import { action, internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { ActionCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { multiplierFor } from "./betting";
 
 /** Betting closes this long before a match's start time. */
@@ -25,8 +29,24 @@ type TbaMatch = {
   time?: number | null;           // scheduled start (unix s)
   predicted_time?: number | null; // TBA's running estimate (unix s), follows delays
   actual_time?: number | null;
+  winning_alliance?: "red" | "blue" | "" | null;
   alliances?: { red?: { score?: number }; blue?: { score?: number } };
 };
+
+/**
+ * The match's winner, if it has one. Prefers TBA's own `winning_alliance`
+ * (authoritative — accounts for fouls, tiebreakers, etc.); falls back to
+ * comparing scores for older data that lacks the field. Ties and unplayed
+ * matches return null and are left for an admin to resolve by hand — FalconBet
+ * has no "tie" option to auto-pay.
+ */
+export function matchWinner(m: TbaMatch): "red" | "blue" | null {
+  if (m.winning_alliance === "red" || m.winning_alliance === "blue") return m.winning_alliance;
+  const red = m.alliances?.red?.score ?? -1;
+  const blue = m.alliances?.blue?.score ?? -1;
+  if (red < 0 || blue < 0 || red === blue) return null;
+  return red > blue ? "red" : "blue";
+}
 
 /** Same labels the client writes into market titles (BettingPage matchLabel). */
 export function tbaMatchLabel(m: TbaMatch): string {
@@ -61,6 +81,18 @@ export const openMarkets = internalQuery({
       .map((m) => ({ id: m._id, title: m.title })),
 });
 
+/** Open or locked — not yet paid out, and not cancelled. What auto-resolve looks at. */
+export const unresolvedMarkets = internalQuery({
+  args: { eventKey: v.string() },
+  handler: async (ctx, { eventKey }) =>
+    (await ctx.db
+      .query("bettingMarkets")
+      .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
+      .collect())
+      .filter((m) => m.type === "match_winner" && (m.status === "open" || m.status === "locked"))
+      .map((m) => ({ id: m._id, title: m.title })),
+});
+
 export const currentEventKey = internalQuery({
   args: {},
   handler: async (ctx): Promise<string | null> =>
@@ -85,49 +117,77 @@ export const lockMarkets = internalMutation({
   },
 });
 
-async function lockPlayed(ctx: ActionCtx, eventKey: string): Promise<number> {
-  if (!/^\d{4}[a-z0-9]{1,20}$/.test(eventKey)) return 0;
-  const open = await ctx.runQuery(internal.bettingSync.openMarkets, { eventKey });
-  if (open.length === 0) return 0;
+async function syncEventMatches(
+  ctx: ActionCtx,
+  eventKey: string,
+): Promise<{ locked: number; resolved: number; totalPaid: number }> {
+  const zero = { locked: 0, resolved: 0, totalPaid: 0 };
+  if (!/^\d{4}[a-z0-9]{1,20}$/.test(eventKey)) return zero;
+  const unresolved = await ctx.runQuery(internal.bettingSync.unresolvedMarkets, { eventKey });
+  if (unresolved.length === 0) return zero;
 
   const key = await ctx.runQuery(internal.tba.getKey);
-  if (!key) return 0;
+  if (!key) return zero;
   let matches: TbaMatch[];
   try {
     const res = await fetch(`${TBA_BASE}/event/${eventKey}/matches`, {
       headers: { "X-TBA-Auth-Key": key },
     });
-    if (!res.ok) return 0;
+    if (!res.ok) return zero;
     matches = (await res.json()) as TbaMatch[];
   } catch {
-    return 0;
+    return zero;
   }
-  if (!Array.isArray(matches)) return 0;
+  if (!Array.isArray(matches)) return zero;
 
   const now = Date.now();
-  const closingTitles = new Set(
-    matches.filter((m) => shouldLock(m, now)).map((m) => `${tbaMatchLabel(m)} — Match Winner`),
-  );
-  const ids = open.filter((m) => closingTitles.has(m.title)).map((m) => m.id);
-  if (ids.length === 0) return 0;
-  return await ctx.runMutation(internal.bettingSync.lockMarkets, { ids });
+  const byTitle = new Map(unresolved.map((m) => [m.title, m]));
+
+  // Lock first: a match can be both "should lock" and already have a winner
+  // (payout still resolves it below — resolved markets aren't "locked", so
+  // there's no conflict between the two states).
+  const toLock = matches
+    .filter((m) => shouldLock(m, now))
+    .map((m) => byTitle.get(`${tbaMatchLabel(m)} — Match Winner`))
+    .filter((m): m is { id: Id<"bettingMarkets">; title: string } => m !== undefined)
+    .map((m) => m.id);
+  const locked = toLock.length > 0
+    ? await ctx.runMutation(internal.bettingSync.lockMarkets, { ids: toLock })
+    : 0;
+
+  let resolved = 0;
+  let totalPaid = 0;
+  for (const m of matches) {
+    const winner = matchWinner(m);
+    if (!winner) continue;
+    if (!byTitle.has(`${tbaMatchLabel(m)} — Match Winner`)) continue;
+    const result = await ctx.runMutation(internal.betting.autoResolveMarket, {
+      eventKey, matchLabel: tbaMatchLabel(m), winner,
+    });
+    if (result) {
+      resolved++;
+      totalPaid += result.totalPaid;
+    }
+  }
+
+  return { locked, resolved, totalPaid };
 }
 
 /** Called by the Betting page. Approved users only; takes no trusted input. */
-export const lockPlayedMatches = action({
+export const syncPlayedMatches = action({
   args: { eventKey: v.string() },
-  handler: async (ctx, { eventKey }): Promise<number> => {
-    if (!(await ctx.runQuery(internal.tba.isApproved))) return 0;
-    return await lockPlayed(ctx, eventKey);
+  handler: async (ctx, { eventKey }): Promise<{ locked: number; resolved: number; totalPaid: number }> => {
+    if (!(await ctx.runQuery(internal.tba.isApproved))) return { locked: 0, resolved: 0, totalPaid: 0 };
+    return await syncEventMatches(ctx, eventKey);
   },
 });
 
-/** Cron entry point: the current event, so betting closes with nobody watching. */
-export const lockPlayedForCurrentEvent = internalAction({
+/** Cron entry point: the current event, so betting closes and pays out with nobody watching. */
+export const syncPlayedMatchesForCurrentEvent = internalAction({
   args: {},
   handler: async (ctx) => {
     const eventKey = await ctx.runQuery(internal.bettingSync.currentEventKey);
-    if (eventKey) await lockPlayed(ctx, eventKey);
+    if (eventKey) await syncEventMatches(ctx, eventKey);
   },
 });
 

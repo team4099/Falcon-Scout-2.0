@@ -1,7 +1,7 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { getApprovedUserId, isSignedIn, requireAdmin } from "./adminAuth";
 
 const STARTING_BALANCE = 1000;
@@ -492,6 +492,83 @@ export const unlockMarket = mutation({
  * look at the pool, and one scout's bet never changes another's payout. Losers
  * get nothing; their stake already left the balance at placement.
  */
+/**
+ * Shared by the admin `resolveMarket` mutation and the server-triggered
+ * auto-resolve (`bettingSync.ts`, fires once TBA reports a winner). Both need
+ * the exact same settlement so a match resolved automatically pays out
+ * identically to one an admin resolves by hand.
+ */
+async function settleMarket(
+  ctx: MutationCtx,
+  market: Doc<"bettingMarkets">,
+  resolvedOptionId: string,
+): Promise<{ settledBets: number; totalPaid: number }> {
+  if (market.status === "resolved" || market.status === "cancelled") {
+    throw new Error("Market already closed");
+  }
+  const winnerOption = market.options.find((o) => o.id === resolvedOptionId);
+  if (!winnerOption) throw new Error("Unknown winning option");
+
+  const allBets = await ctx.db
+    .query("bets")
+    .withIndex("by_market", (q) => q.eq("marketId", market._id))
+    .collect();
+
+  // Legacy bets placed before fixed odds carry no multiplier. Rather than keep
+  // the whole parimutuel code path alive for them, they settle at even money.
+  const fallbackMultiplier = 2;
+
+  let totalPaid = 0;
+
+  // Settle each winning bet
+  for (const bet of allBets) {
+    const won = bet.optionId === resolvedOptionId;
+    const payout = won
+      ? Math.floor(bet.amount * (bet.multiplier ?? fallbackMultiplier))
+      : 0;
+    totalPaid += payout;
+
+    await ctx.db.patch(bet._id, { payout, settled: true });
+
+    // Update user balance
+    const bal = await ctx.db
+      .query("userBalances")
+      .withIndex("by_user_event", (q) =>
+        q.eq("userId", bet.userId).eq("eventKey", bet.eventKey)
+      )
+      .first();
+
+    if (bal) {
+      if (won) {
+        const balanceAfter = bal.balance + payout;
+        await ctx.db.patch(bal._id, {
+          balance:  balanceAfter,
+          totalWon: bal.totalWon + payout,
+        });
+        if (payout > 0) {
+          await logTransaction(
+            ctx, bet.userId, bet.eventKey, "bet_won", payout, balanceAfter,
+            market.title, market._id,
+          );
+        }
+      } else {
+        await ctx.db.patch(bal._id, {
+          totalLost: bal.totalLost + bet.amount,
+        });
+      }
+    }
+  }
+
+  // Mark market resolved
+  await ctx.db.patch(market._id, {
+    status:           "resolved",
+    resolvedOptionId,
+    resolvedAt:       Date.now(),
+  });
+
+  return { settledBets: allBets.length, totalPaid };
+}
+
 export const resolveMarket = mutation({
   args: {
     marketId:        v.id("bettingMarkets"),
@@ -500,75 +577,30 @@ export const resolveMarket = mutation({
   },
   handler: async (ctx, { marketId, resolvedOptionId, adminKey }) => {
     await requireAdmin(ctx, adminKey);
-
     const market = await ctx.db.get(marketId);
     if (!market) throw new Error("Market not found");
-    if (market.status === "resolved" || market.status === "cancelled") {
-      throw new Error("Market already closed");
-    }
+    return await settleMarket(ctx, market, resolvedOptionId);
+  },
+});
 
-    // Collect all bets
-    const allBets = await ctx.db
-      .query("bets")
-      .withIndex("by_market", (q) => q.eq("marketId", marketId))
-      .collect();
-
-    const winnerOption = market.options.find((o) => o.id === resolvedOptionId);
-    if (!winnerOption) throw new Error("Unknown winning option");
-
-    // Legacy bets placed before fixed odds carry no multiplier. Rather than keep
-    // the whole parimutuel code path alive for them, they settle at even money.
-    const fallbackMultiplier = 2;
-
-    let totalPaid = 0;
-
-    // Settle each winning bet
-    for (const bet of allBets) {
-      const won = bet.optionId === resolvedOptionId;
-      const payout = won
-        ? Math.floor(bet.amount * (bet.multiplier ?? fallbackMultiplier))
-        : 0;
-      totalPaid += payout;
-
-      await ctx.db.patch(bet._id, { payout, settled: true });
-
-      // Update user balance
-      const bal = await ctx.db
-        .query("userBalances")
-        .withIndex("by_user_event", (q) =>
-          q.eq("userId", bet.userId).eq("eventKey", bet.eventKey)
-        )
-        .first();
-
-      if (bal) {
-        if (won) {
-          const balanceAfter = bal.balance + payout;
-          await ctx.db.patch(bal._id, {
-            balance:  balanceAfter,
-            totalWon: bal.totalWon + payout,
-          });
-          if (payout > 0) {
-            await logTransaction(
-              ctx, bet.userId, bet.eventKey, "bet_won", payout, balanceAfter,
-              market.title, marketId,
-            );
-          }
-        } else {
-          await ctx.db.patch(bal._id, {
-            totalLost: bal.totalLost + bet.amount,
-          });
-        }
-      }
-    }
-
-    // Mark market resolved
-    await ctx.db.patch(marketId, {
-      status:           "resolved",
-      resolvedOptionId,
-      resolvedAt:       Date.now(),
-    });
-
-    return { settledBets: allBets.length, totalPaid };
+/**
+ * Server-triggered resolution (`bettingSync.ts`), keyed by match title rather
+ * than a client-supplied marketId: nothing about which market gets paid comes
+ * from a caller. Silently skips a market that's already resolved/cancelled or
+ * whose winner isn't "red"/"blue", since the caller processes many events at
+ * once and one odd market must not fail the whole batch.
+ */
+export const autoResolveMarket = internalMutation({
+  args: { eventKey: v.string(), matchLabel: v.string(), winner: v.union(v.literal("red"), v.literal("blue")) },
+  handler: async (ctx, { eventKey, matchLabel, winner }) => {
+    const market = await ctx.db
+      .query("bettingMarkets")
+      .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
+      .filter((q) => q.eq(q.field("title"), `${matchLabel} — Match Winner`))
+      .first();
+    if (!market || market.type !== "match_winner") return null;
+    if (market.status === "resolved" || market.status === "cancelled") return null;
+    return await settleMarket(ctx, market, winner);
   },
 });
 

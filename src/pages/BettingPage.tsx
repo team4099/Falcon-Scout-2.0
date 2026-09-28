@@ -600,10 +600,11 @@ function MarketsTab({
 
   // Close betting on matches that have started. The server does this on a
   // 1-minute cron too; this covers the page being open in the meantime. The
-  // action fetches TBA itself, so nothing here is trusted.
-  const lockPlayed = useAction(api.bettingSync.lockPlayedMatches);
+  // action fetches TBA itself, so nothing here is trusted. Pays out bets the
+  // moment TBA posts a winner — no admin click needed.
+  const syncPlayed = useAction(api.bettingSync.syncPlayedMatches);
   useEffect(() => {
-    const run = () => { lockPlayed({ eventKey }).catch(() => {}); };
+    const run = () => { syncPlayed({ eventKey }).catch(() => {}); };
     run();
     const id = setInterval(run, 60_000);
     return () => clearInterval(id);

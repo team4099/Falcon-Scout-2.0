@@ -6,7 +6,7 @@
  */
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -367,6 +367,63 @@ describe("batchCreateMatchWinnerMarkets", () => {
       (await ctx.db.query("bets").withIndex("by_market", (q) => q.eq("marketId", m._id)).first())!,
     );
     expect(bet.multiplier).toBe(10);
+  });
+});
+
+describe("autoResolveMarket (server-triggered payout)", () => {
+  // autoResolveMarket looks a market up by title ("<label> — Match Winner"), the
+  // shape batchCreateMatchWinnerMarkets writes — not the bare "Q1" the shared
+  // setup() fixture above uses for its own unrelated tests, so this builds its
+  // own market rather than reusing that fixture.
+  async function marketFixture(t: ReturnType<typeof convexTest>) {
+    const userId = await t.run((ctx) => ctx.db.insert("users", { name: "Bettor" }));
+    const as = t.withIdentity({ subject: userId, issuer: "test", email: "czhao@team4099.com" });
+    const marketId = await t.run(async (ctx) => {
+      await ctx.db.insert("userBalances", { userId, eventKey: EVENT, balance: 1000, totalWon: 0, totalLost: 0, totalBet: 0, totalBegs: 0 });
+      return ctx.db.insert("bettingMarkets", {
+        eventKey: EVENT, title: "Q1 — Match Winner", type: "match_winner",
+        options: [
+          { id: "red", label: "Red", winProb: 40, seedPool: 40 },
+          { id: "blue", label: "Blue", winProb: 60, seedPool: 60 },
+        ],
+        status: "open", createdAt: Date.now(),
+      });
+    });
+    return { userId, as, marketId };
+  }
+
+  test("resolves and pays out exactly like the admin resolveMarket path", async () => {
+    const t = convexTest(schema, modules);
+    const { as, marketId } = await marketFixture(t);
+    await as.mutation(api.betting.placeBet, { marketId, optionId: "red", amount: 100 });
+    // Betting closes (auto-lock) before the match plays; resolution follows.
+    await t.run((ctx) => ctx.db.patch(marketId, { status: "locked" }));
+
+    const res = await t.mutation(internal.betting.autoResolveMarket, {
+      eventKey: EVENT, matchLabel: "Q1", winner: "red",
+    });
+    expect(res).not.toBeNull();
+    expect(res!.totalPaid).toBe(250); // 40% underdog pays 2.5x
+
+    const market = await t.run((ctx) => ctx.db.get(marketId));
+    expect(market!.status).toBe("resolved");
+    expect(market!.resolvedOptionId).toBe("red");
+  });
+
+  test("is silently a no-op for an already-resolved market or an unknown label", async () => {
+    const t = convexTest(schema, modules);
+    const { marketId } = await marketFixture(t);
+    await t.run((ctx) => ctx.db.patch(marketId, { status: "resolved", resolvedOptionId: "red" }));
+
+    expect(await t.mutation(internal.betting.autoResolveMarket, {
+      eventKey: EVENT, matchLabel: "Q1", winner: "blue",
+    })).toBeNull();
+    const stillRed = await t.run((ctx) => ctx.db.get(marketId));
+    expect(stillRed!.resolvedOptionId).toBe("red"); // not flipped to blue by a second call
+
+    expect(await t.mutation(internal.betting.autoResolveMarket, {
+      eventKey: EVENT, matchLabel: "Q404 — nonexistent", winner: "red",
+    })).toBeNull();
   });
 });
 
