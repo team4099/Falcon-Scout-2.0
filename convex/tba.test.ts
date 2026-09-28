@@ -67,7 +67,7 @@ describe("tba.fetchTba", () => {
     "/team/frc4099?x=1",
     "//evil.example/team/frc4099",
     "https://evil.example/team/frc4099",
-    "/event/2026vaale1/alliances",
+    "/event/2026vaale1/awards",
   ])("path %s is rejected with 400 and not forwarded", async (path) => {
     const { scout } = await setup();
     expect(await scout.action(api.tba.fetchTba, { path })).toEqual({ status: 400, data: null });
@@ -81,6 +81,7 @@ describe("tba.fetchTba", () => {
       "/event/2026vaale1/rankings",
       "/event/2026vaale1/matches",
       "/event/2026vaale1/insights",
+      "/event/2026vaale1/alliances",
       "/team/frc4099",
       "/team/frc4099/media/2026",
     ]) {

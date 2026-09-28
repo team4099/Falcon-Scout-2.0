@@ -223,7 +223,7 @@ export default function ScannerPage() {
       }
 
       if (result.status === "ignored") {
-        // Not a scouting code (or a checklist code) — stay quiet.
+        // Not a scouting code (or a legacy checklist code) — stay quiet.
         return;
       }
 

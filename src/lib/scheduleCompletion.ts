@@ -21,8 +21,6 @@ export interface SubmissionKey {
 }
 
 export interface Completion {
-  /** `checklist` keys: match + the specific checklist template. */
-  checklists: Set<string>;
   /** Match scouting keyed by comp level + match + team. */
   matchTeams: Set<string>;
   /** Match scouting keyed by comp level + match only — used when TBA has not
@@ -33,17 +31,15 @@ export interface Completion {
 }
 
 export const EMPTY_COMPLETION: Completion = {
-  checklists: new Set(), matchTeams: new Set(), matches: new Set(), pitTeams: new Set(),
+  matchTeams: new Set(), matches: new Set(), pitTeams: new Set(),
 };
 
 export function buildCompletion(subs: SubmissionKey[]): Completion {
   const c: Completion = {
-    checklists: new Set(), matchTeams: new Set(), matches: new Set(), pitTeams: new Set(),
+    matchTeams: new Set(), matches: new Set(), pitTeams: new Set(),
   };
   for (const s of subs) {
-    if (s.formType === "checklist") {
-      c.checklists.add(`${s.matchNumber}-${s.templateId}`);
-    } else if (s.formType === "pit") {
+    if (s.formType === "pit") {
       c.pitTeams.add(s.teamNumber);
     } else if (s.formType === "default") {
       // compLevel is optional on older rows; quals are the overwhelming default.

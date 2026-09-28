@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 import { getApprovedUserId, isSignedIn, requireAdmin, requireUser } from "./adminAuth";
 import { awardCoins, DEFAULT_SCOUT_REWARD } from "./betting";
 import type { Id } from "./_generated/dataModel";
@@ -19,7 +19,7 @@ import type { MutationCtx } from "./_generated/server";
  *    exact team" — still enough to block scouting matches nobody rostered
  *    them for.
  *  - "pit": the scout must be on this team's `pitScoutingTeams` roster.
- *  - Everything else (checklist, super, unknown): never pays. Only match and
+ *  - Everything else (note scout, spying, unknown): never pays. Only match and
  *    pit scouting are rewarded; pit duty has its own payout on check-in.
  */
 async function isAssignedForReward(
@@ -87,6 +87,7 @@ const fieldTypeValidator = v.union(
   v.literal("number"),
   v.literal("checkbox"),
   v.literal("select"),
+  v.literal("radio"),
   v.literal("counter"),
   v.literal("textarea"),
   v.literal("teamNumber"),
@@ -99,7 +100,7 @@ const formTypeValidator = v.optional(
     v.literal("default"),
     v.literal("super"),
     v.literal("pit"),
-    v.literal("checklist")
+    v.literal("spy")
   )
 );
 
@@ -116,11 +117,45 @@ const fieldValidator = v.object({
 // Form Templates
 // ──────────────────────────────────────────────
 
+/** Legacy "checklist" templates are dead rows — never surface them. */
+function isLiveTemplate(t: { formType?: string }): boolean {
+  return t.formType !== "checklist";
+}
+
+/**
+ * One-shot cleanup for the removed checklist form type: deletes every
+ * "checklist" template, the submissions made against them, and the deprecated
+ * checklistSubmissions table. Run from the Convex dashboard (Functions →
+ * forms:purgeLegacyChecklists) once per deployment. Idempotent.
+ */
+export const purgeLegacyChecklists = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    let templates = 0, submissions = 0, legacyRows = 0;
+    for (const t of await ctx.db.query("formTemplates").collect()) {
+      if (t.formType !== "checklist") continue;
+      const subs = await ctx.db
+        .query("formSubmissions")
+        .filter((q) => q.eq(q.field("templateId"), t._id))
+        .collect();
+      for (const s of subs) await ctx.db.delete(s._id);
+      submissions += subs.length;
+      await ctx.db.delete(t._id);
+      templates++;
+    }
+    for (const r of await ctx.db.query("checklistSubmissions").collect()) {
+      await ctx.db.delete(r._id);
+      legacyRows++;
+    }
+    return { templates, submissions, legacyRows };
+  },
+});
+
 export const listTemplates = query({
   args: {},
   handler: async (ctx) => {
     if (!(await isSignedIn(ctx))) return [];
-    return await ctx.db.query("formTemplates").collect();
+    return (await ctx.db.query("formTemplates").collect()).filter(isLiveTemplate);
   },
 });
 
@@ -136,10 +171,14 @@ export const getActiveTemplate = query({
   args: {},
   handler: async (ctx) => {
     if (!(await isSignedIn(ctx))) return null;
-    return await ctx.db
-      .query("formTemplates")
-      .filter((q) => q.eq(q.field("isActive"), true))
-      .first();
+    return (
+      (
+        await ctx.db
+          .query("formTemplates")
+          .filter((q) => q.eq(q.field("isActive"), true))
+          .collect()
+      ).find(isLiveTemplate) ?? null
+    );
   },
 });
 
@@ -147,10 +186,12 @@ export const listActiveTemplates = query({
   args: {},
   handler: async (ctx) => {
     if (!(await isSignedIn(ctx))) return [];
-    return await ctx.db
-      .query("formTemplates")
-      .filter((q) => q.eq(q.field("isActive"), true))
-      .collect();
+    return (
+      await ctx.db
+        .query("formTemplates")
+        .filter((q) => q.eq(q.field("isActive"), true))
+        .collect()
+    ).filter(isLiveTemplate);
   },
 });
 
@@ -187,10 +228,7 @@ export const updateTemplate = mutation({
   },
 });
 
-/**
- * Activate a template and deactivate any other template of the same formType.
- * Checklist forms are exempt — any number can be active simultaneously.
- */
+/** Activate a template and deactivate any other template of the same formType. */
 export const activateTemplate = mutation({
   args: { id: v.id("formTemplates"), adminKey: v.optional(v.string()) },
   handler: async (ctx, { id, adminKey }) => {
@@ -199,14 +237,10 @@ export const activateTemplate = mutation({
     if (!template) throw new Error("Template not found");
     const myType = template.formType ?? "default";
 
-    // Checklists: allow multiple to be active — skip deactivating others
-    if (myType !== "checklist") {
-      // Deactivate all active templates of the same type
-      const all = await ctx.db.query("formTemplates").collect();
-      for (const t of all) {
-        if (t._id !== id && (t.formType ?? "default") === myType && t.isActive) {
-          await ctx.db.patch(t._id, { isActive: false });
-        }
+    const all = await ctx.db.query("formTemplates").collect();
+    for (const t of all) {
+      if (t._id !== id && (t.formType ?? "default") === myType && t.isActive) {
+        await ctx.db.patch(t._id, { isActive: false });
       }
     }
 
@@ -350,7 +384,7 @@ export const submitForm = mutation({
  * The signed-in scout's own submissions at an event.
  *
  * Only the identity fields are returned — this backs "have I already done
- * this?" checks (My Schedule's checklist cards), not data display, so there is
+ * this?" checks (My Schedule completion), not data display, so there is
  * no reason to ship every response blob to every client.
  */
 export const getMySubmissions = query({

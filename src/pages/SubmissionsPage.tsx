@@ -178,15 +178,15 @@ export default function SubmissionsPage() {
                 >
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 52, flexShrink: 0 }}>
                     <span style={{ fontSize: 10, fontWeight: 700, color: "var(--muted-foreground)", letterSpacing: "0.06em" }}>
-                      {s.matchNumber != null ? "MATCH" : "PIT"}
+                      {s.matchNumber ? "MATCH" : "FORM"}
                     </span>
                     <span style={{ fontSize: 17, fontWeight: 800, color: "oklch(0.85 0.18 95)" }}>
-                      {s.matchNumber ?? "—"}
+                      {s.matchNumber || "—"}
                     </span>
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      {/* Checklists aren't per-team (teamNumber 0) — label them by form instead. */}
+                      {/* Spying rows aren't per-team (teamNumber 0) — label them by form instead. */}
                       <span style={{ fontWeight: 700, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.teamNumber ? `Team ${s.teamNumber}` : formName(s.templateId)}</span>
                       {isNew && (
                         <span style={{

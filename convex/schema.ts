@@ -7,6 +7,7 @@ const fieldTypeValidator = v.union(
   v.literal("number"),
   v.literal("checkbox"),
   v.literal("select"),
+  v.literal("radio"),   // multiple choice — `options` are the answers
   v.literal("counter"),
   v.literal("textarea"),
   v.literal("teamNumber"),
@@ -48,10 +49,14 @@ export default defineSchema({
     name: v.string(),
     description: v.optional(v.string()),
     // "default" = match scouting (all field types, auto team# pinned at top)
-    // "super"   = super scout (text + rating only)
+    // "super"   = note scout (shown as "Note Scout"; value kept from the old name)
     // "pit"     = pit scouting (all field types, team# pinned, no match number)
+    // "spy"     = spying (unassigned, no team# required, tagged with a playoff alliance)
+    // "checklist" is legacy: the form type was removed and nothing can create
+    // one. Kept only so old rows still validate until forms.purgeLegacyChecklists
+    // has been run on every deployment, after which it can be dropped.
     // optional for backwards compat with existing records
-    formType: v.optional(v.union(v.literal("default"), v.literal("super"), v.literal("pit"), v.literal("checklist"))),
+    formType: v.optional(v.union(v.literal("default"), v.literal("super"), v.literal("pit"), v.literal("spy"), v.literal("checklist"))),
     fields: v.array(v.object({
       id: v.string(),
       type: fieldTypeValidator,
@@ -86,12 +91,9 @@ export default defineSchema({
     // so only the first one pays out. See awardOncePerMatch in forms.ts.
     .index("by_scout_event_match", ["scoutId", "eventKey", "matchNumber"]),
 
-  // DEPRECATED — checklists are now ordinary form submissions (formType
-  // "checklist" templates submitted through forms.submitForm), so nothing
-  // writes here any more. The table is kept, not dropped, because rows written
-  // before the merge still exist and `convex deploy` rejects a schema that
-  // omits a populated table. Safe to delete once the historical rows are no
-  // longer wanted.
+  // DEPRECATED — checklists were removed. Nothing writes here. Kept because
+  // `convex deploy` rejects a schema that omits a populated table; drop it once
+  // forms.purgeLegacyChecklists has emptied it on every deployment.
   checklistSubmissions: defineTable({
     templateId: v.id("formTemplates"),
     eventKey: v.string(),

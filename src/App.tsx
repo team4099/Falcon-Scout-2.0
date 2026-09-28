@@ -1,4 +1,4 @@
-import { Routes, Route, NavLink, Navigate, useNavigate, useLocation, Link } from "react-router";
+import { Routes, Route, NavLink, useNavigate, useLocation, Link } from "react-router";
 import { useTheme } from "next-themes";
 import { useQuery, useMutation } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
@@ -476,11 +476,6 @@ function AuthenticatedApp() {
             <Route path="/data"       element={<DataViewerPage />} />
             <Route path="/scout"      element={<ScoutMatchPage />} />
             <Route path="/schedule"   element={<MySchedulePage />} />
-            {/* Checklists are ordinary scouting forms now — the dedicated tab
-                is gone. Redirect rather than 404 so an installed PWA's stale
-                shortcut, a bookmark or an old deep link still lands somewhere
-                useful. */}
-            <Route path="/checklist"  element={<Navigate to="/scout?form=checklist" replace />} />
             <Route path="/betting"    element={<BettingPage />} />
             <Route path="/qrcodes"    element={<QRCodesPage />} />
             <Route path="/scanner"    element={<ScannerPage />} />

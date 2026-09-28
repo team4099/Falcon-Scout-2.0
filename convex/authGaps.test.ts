@@ -2,9 +2,8 @@
  * Authorization gaps found in the full-app audit.
  *
  *  - submitChecklist read getAuthUserId but never enforced it, so an anonymous
- *    caller could insert checklist rows. Checklists are now ordinary form
- *    submissions, so the same guarantee is asserted against submitForm with a
- *    checklist template.
+ *    caller could insert rows. Checklists are gone; the same guarantee is
+ *    asserted against submitForm with a teamless (spying) template.
  *  - Every read query except the ones in users.ts was ungated, so the whole
  *    dataset was readable by anyone with the deployment URL.
  *  - The kanban card mutations took a bare cardId and only checked sign-in, so
@@ -13,23 +12,23 @@
  */
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
 const EVENT = "2025chcmp";
 
-describe("checklist submission requires a signed-in caller", () => {
+describe("submission and pit-duty auth", () => {
   test("an anonymous caller is rejected", async () => {
     const t = convexTest(schema, modules);
     const templateId = await t.run(async (ctx) =>
       ctx.db.insert("formTemplates", {
-        name: "CL", formType: "checklist", fields: [], isActive: true,
+        name: "Spy", formType: "spy", fields: [], isActive: true,
       }),
     );
 
-    // Checklists go through submitForm now. teamNumber 0 is what a checklist
-    // carries (no teamNumber field), which must not become an auth bypass.
+    // teamNumber 0 is what a spying form carries, which must not become an
+    // auth bypass.
     await expect(
       t.mutation(api.forms.submitForm, {
         templateId, eventKey: EVENT, matchNumber: 1,
@@ -41,30 +40,29 @@ describe("checklist submission requires a signed-in caller", () => {
     expect(rows).toHaveLength(0);
   });
 
-  test("a signed-in scout's checklist lands in formSubmissions", async () => {
+  test("a signed-in scout's spy report lands in formSubmissions", async () => {
     const t = convexTest(schema, modules);
     const { userId, templateId } = await t.run(async (ctx) => ({
       userId: await ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" }),
       templateId: await ctx.db.insert("formTemplates", {
-        name: "CL", formType: "checklist", fields: [], isActive: true,
+        name: "Spy", formType: "spy", fields: [], isActive: true,
       }),
     }));
     const as = t.withIdentity({ subject: userId, issuer: "test" });
     await as.mutation(api.forms.submitForm, {
-      templateId, eventKey: EVENT, matchNumber: 7,
-      compLevel: "qm", teamNumber: 0, data: "{}",
+      templateId, eventKey: EVENT, matchNumber: 0,
+      compLevel: "elim", teamNumber: 0, data: JSON.stringify({ _alliance: 3 }),
     });
 
-    // getMySubmissions is what My Schedule uses to tick a checklist off.
     const mine = await as.query(api.forms.getMySubmissions, { eventKey: EVENT });
     expect(mine).toHaveLength(1);
-    expect(mine[0].matchNumber).toBe(7);
+    expect(mine[0].matchNumber).toBe(0);
     expect(mine[0].templateId).toBe(templateId);
     // teamNumber 0 keeps it out of the Dashboard/Data Viewer team rollups.
     expect(mine[0].teamNumber).toBe(0);
-    // formType is resolved from the template so My Schedule can tell a
-    // checklist apart from a match or pit submission when marking it complete.
-    expect(mine[0].formType).toBe("checklist");
+    // formType is resolved from the template, so it can never be mistaken
+    // for match or pit work when My Schedule marks assignments complete.
+    expect(mine[0].formType).toBe("spy");
   });
 
   test("getMySubmissions reports formType even for a deactivated template", async () => {
@@ -504,18 +502,17 @@ describe("scouting pays once per match", () => {
     expect(await b.bal()).toBe(1050);
   });
 
-  test("checklists never pay, even on a covering pit rotation", async () => {
+  test("spying and note scouting never pay — they are unassigned", async () => {
     const t = convexTest(schema, modules);
-    const { as, bal, userId } = await scout(t);
-    const checklistTemplateId = await t.run(async (ctx) => ctx.db.insert("formTemplates", {
-      name: "Checklist", formType: "checklist", fields: [], isActive: true, coinReward: 25,
-    }));
-    await t.run(async (ctx) => ctx.db.insert("pitRotations", {
-      eventKey: EVENT, startMatch: 1, endMatch: 10, isElims: false, scoutIds: [userId],
-    }));
-    await as.mutation(api.forms.submitForm, {
-      templateId: checklistTemplateId, eventKey: EVENT, matchNumber: 6, teamNumber: 0, data: "{}",
-    });
+    const { as, bal } = await scout(t);
+    for (const formType of ["spy", "super"] as const) {
+      const templateId = await t.run(async (ctx) => ctx.db.insert("formTemplates", {
+        name: formType, formType, fields: [], isActive: true, coinReward: 25,
+      }));
+      await as.mutation(api.forms.submitForm, {
+        templateId, eventKey: EVENT, matchNumber: 0, compLevel: "elim", teamNumber: 0, data: "{}",
+      });
+    }
     expect(await bal()).toBe(0);
   });
 });
@@ -562,5 +559,54 @@ describe("admin coin awards", () => {
     await expect(admin.mutation(api.betting.adminAwardCoins, { ...base, amount: 0, message: "x" })).rejects.toThrow(/positive/);
     await expect(admin.mutation(api.betting.adminAwardCoins, { ...base, amount: -5, message: "x" })).rejects.toThrow(/positive/);
     await expect(admin.mutation(api.betting.adminAwardCoins, { ...base, amount: 1.5, message: "x" })).rejects.toThrow(/whole/);
+  });
+});
+
+describe("removed checklist form type", () => {
+  test("legacy checklist templates are hidden and purged; other forms survive", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, clId, spyId } = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" });
+      const clId = await ctx.db.insert("formTemplates", {
+        name: "CL", formType: "checklist", fields: [], isActive: true,
+      });
+      const spyId = await ctx.db.insert("formTemplates", {
+        name: "Spy", formType: "spy", isActive: true,
+        fields: [{ id: "q", type: "radio", label: "Defense?", required: true, options: ["Yes", "No"] }],
+      });
+      await ctx.db.insert("formSubmissions", {
+        templateId: clId, eventKey: EVENT, matchNumber: 3, teamNumber: 0, data: "{}", syncedAt: 1,
+      });
+      await ctx.db.insert("formSubmissions", {
+        templateId: spyId, eventKey: EVENT, matchNumber: 0, teamNumber: 0, data: "{}", syncedAt: 1,
+      });
+      return { userId, clId, spyId };
+    });
+    const as = t.withIdentity({ subject: userId, issuer: "test" });
+
+    // Never surfaced to scouts or the builder, even before the purge runs.
+    expect((await as.query(api.forms.listActiveTemplates, {})).map((x) => x._id)).toEqual([spyId]);
+    expect((await as.query(api.forms.listTemplates, {})).map((x) => x._id)).toEqual([spyId]);
+
+    expect(await t.mutation(internal.forms.purgeLegacyChecklists, {}))
+      .toEqual({ templates: 1, submissions: 1, legacyRows: 0 });
+    await t.run(async (ctx) => {
+      expect(await ctx.db.get(clId)).toBeNull();
+      const left = await ctx.db.query("formSubmissions").collect();
+      expect(left.map((r) => r.templateId)).toEqual([spyId]);
+    });
+    // Idempotent.
+    expect(await t.mutation(internal.forms.purgeLegacyChecklists, {}))
+      .toEqual({ templates: 0, submissions: 0, legacyRows: 0 });
+  });
+
+  test("a checklist template can no longer be created", async () => {
+    const t = convexTest(schema, modules);
+    await expect(
+      t.mutation(api.forms.createTemplate, {
+        // @ts-expect-error — "checklist" is no longer an accepted form type
+        name: "CL", formType: "checklist", fields: [], isActive: false,
+      }),
+    ).rejects.toThrow(/Validator|validator|formType/);
   });
 });

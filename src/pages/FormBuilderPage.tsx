@@ -5,7 +5,7 @@ import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import type { FormField, FieldType, FormType } from "@/types";
-import { formTypeRank } from "@/types";
+import { formTypeRank, FORM_TYPE_LABEL, hasChoiceOptions } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -67,8 +67,9 @@ import {
   ChevronRight,
   Menu,
   X as XIcon,
-  ClipboardCheck,
   Camera,
+  CircleDot,
+  Eye,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -91,40 +92,27 @@ import { CSS } from "@dnd-kit/utilities";
 // Field type metadata
 // ──────────────────────────────────────────────
 
-// All field types available in Default forms
-const DEFAULT_FIELD_TYPES: Partial<Record<FieldType, { label: string; icon: React.ReactNode }>> = {
-  text:       { label: "Short Text",  icon: <Type className="h-4 w-4" /> },
-  textarea:   { label: "Long Text",   icon: <AlignLeft className="h-4 w-4" /> },
-  number:     { label: "Number",      icon: <Hash className="h-4 w-4" /> },
-  counter:    { label: "Counter",     icon: <Zap className="h-4 w-4" /> },
-  checkbox:   { label: "Checkbox",    icon: <CheckSquare className="h-4 w-4" /> },
-  select:     { label: "Dropdown",    icon: <List className="h-4 w-4" /> },
-  teamNumber: { label: "Team Number", icon: <Users className="h-4 w-4" /> },
-  rating:     { label: "Rating",      icon: <Star className="h-4 w-4" /> },
-  photo:      { label: "Photo",       icon: <Camera className="h-4 w-4" /> },
+// Every form type offers every field type.
+const FIELD_TYPES: Partial<Record<FieldType, { label: string; icon: React.ReactNode }>> = {
+  text:       { label: "Short Text",      icon: <Type className="h-4 w-4" /> },
+  textarea:   { label: "Long Text",       icon: <AlignLeft className="h-4 w-4" /> },
+  number:     { label: "Number",          icon: <Hash className="h-4 w-4" /> },
+  counter:    { label: "Counter",         icon: <Zap className="h-4 w-4" /> },
+  checkbox:   { label: "Checkbox",        icon: <CheckSquare className="h-4 w-4" /> },
+  select:     { label: "Dropdown",        icon: <List className="h-4 w-4" /> },
+  radio:      { label: "Multiple Choice", icon: <CircleDot className="h-4 w-4" /> },
+  teamNumber: { label: "Team Number",     icon: <Users className="h-4 w-4" /> },
+  rating:     { label: "Rating",          icon: <Star className="h-4 w-4" /> },
+  photo:      { label: "Photo",           icon: <Camera className="h-4 w-4" /> },
 };
 
-// Super scout forms: all field types (same as default)
-const SUPER_FIELD_TYPES: Partial<Record<FieldType, { label: string; icon: React.ReactNode }>> = {
-  ...DEFAULT_FIELD_TYPES,
-};
-
-// Pit scouting forms: all field types (same as default)
-const PIT_FIELD_TYPES: Partial<Record<FieldType, { label: string; icon: React.ReactNode }>> = {
-  ...DEFAULT_FIELD_TYPES,
-};
-
-// Checklist forms: all field types except teamNumber (not team-specific)
-const CHECKLIST_FIELD_TYPES: Partial<Record<FieldType, { label: string; icon: React.ReactNode }>> = {
-  text:     { label: "Short Text", icon: <Type className="h-4 w-4" /> },
-  textarea: { label: "Long Text",  icon: <AlignLeft className="h-4 w-4" /> },
-  number:   { label: "Number",     icon: <Hash className="h-4 w-4" /> },
-  counter:  { label: "Counter",    icon: <Zap className="h-4 w-4" /> },
-  checkbox: { label: "Checkbox",   icon: <CheckSquare className="h-4 w-4" /> },
-  select:   { label: "Dropdown",   icon: <List className="h-4 w-4" /> },
-  rating:   { label: "Rating",     icon: <Star className="h-4 w-4" /> },
-  photo:    { label: "Photo",      icon: <Camera className="h-4 w-4" /> },
-};
+/** Starting options when a field becomes `type`, keeping any answers it
+ *  already had when switching between dropdown and multiple choice. */
+function initialOptions(type: FieldType, prev?: string[]): string[] | undefined {
+  if (hasChoiceOptions(type)) return prev?.length ? prev : ["Option 1", "Option 2"];
+  if (type === "rating") return ["5"];
+  return undefined;
+}
 
 // The pinned auto team-number field for Default forms
 const AUTO_TEAM_FIELD: FormField = {
@@ -139,7 +127,7 @@ function generateId() {
 }
 
 function defaultField(type: FieldType, existing: FormField[]): FormField {
-  const meta = DEFAULT_FIELD_TYPES[type] ?? SUPER_FIELD_TYPES[type];
+  const meta = FIELD_TYPES[type];
   const base = `New ${meta?.label ?? type} field`;
   const existingLabels = new Set(existing.map((f) => f.label));
   let label = base;
@@ -150,7 +138,7 @@ function defaultField(type: FieldType, existing: FormField[]): FormField {
     type,
     label,
     required: false,
-    options: type === "select" ? ["Option 1", "Option 2"] : type === "rating" ? ["5"] : undefined,
+    options: initialOptions(type),
   };
 }
 
@@ -243,7 +231,7 @@ function FieldEditor({
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<FormField>(field);
-  const allMeta = { ...DEFAULT_FIELD_TYPES };
+  const allMeta = FIELD_TYPES;
 
   function save() { onChange(draft); setOpen(false); }
 
@@ -253,7 +241,7 @@ function FieldEditor({
     <Dialog open={open} onOpenChange={setOpen}>
       <div className="flex items-center gap-2 group bg-card border border-border rounded-lg px-3 py-2 hover:border-primary/50 transition-colors">
         <div className="text-muted-foreground shrink-0">
-          {(allMeta[field.type] ?? SUPER_FIELD_TYPES[field.type])?.icon}
+          {allMeta[field.type]?.icon}
         </div>
         <span className="flex-1 text-sm font-medium truncate">{field.label}</span>
         {field.required && (
@@ -276,7 +264,7 @@ function FieldEditor({
 
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">
-            <Label>Label</Label>
+            <Label>{draft.type === "radio" ? "Question / prompt" : "Label"}</Label>
             <Input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} />
           </div>
 
@@ -286,10 +274,12 @@ function FieldEditor({
               value={draft.type}
               onValueChange={(v) => setDraft({
                 ...draft, type: v as FieldType,
-                options: v === "select" ? ["Option 1"] : v === "rating" ? ["5"] : undefined,
+                options: initialOptions(v as FieldType, hasChoiceOptions(draft.type) ? draft.options : undefined),
               })}
             >
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger>
+                <SelectValue>{(v: string | null) => (v ? allMeta[v as FieldType]?.label ?? v : "")}</SelectValue>
+              </SelectTrigger>
               <SelectContent>
                 {(Object.keys(allMeta) as FieldType[]).map((t) => (
                   <SelectItem key={t} value={t}>
@@ -343,9 +333,9 @@ function FieldEditor({
             </div>
           )}
 
-          {draft.type === "select" && (
+          {hasChoiceOptions(draft.type) && (
             <div className="space-y-2">
-              <Label>Options</Label>
+              <Label>{draft.type === "radio" ? "Answers" : "Options"}</Label>
               <div className="space-y-1.5">
                 {(draft.options ?? []).map((opt, i) => (
                   <div key={i} className="flex gap-2">
@@ -368,7 +358,7 @@ function FieldEditor({
                 <Button variant="outline" size="sm" className="w-full" onClick={() =>
                   setDraft({ ...draft, options: [...(draft.options ?? []), `Option ${(draft.options?.length ?? 0) + 1}`] })
                 }>
-                  <Plus className="h-3 w-3 mr-1" /> Add option
+                  <Plus className="h-3 w-3 mr-1" /> {draft.type === "radio" ? "Add answer" : "Add option"}
                 </Button>
               </div>
             </div>
@@ -395,7 +385,7 @@ function SectionBlock({
   fields: FormField[];
   allSections: string[];
   sensors: ReturnType<typeof useSensors>;
-  fieldTypeMeta: typeof DEFAULT_FIELD_TYPES;
+  fieldTypeMeta: typeof FIELD_TYPES;
   canDelete: boolean;
   onRename: (newName: string) => void;
   onDelete: () => void;
@@ -571,13 +561,12 @@ function AddSectionButton({ onAdd, existing }: { onAdd: (name: string) => void; 
 // Form type badge
 // ──────────────────────────────────────────────
 function FormTypeBadge({ type }: { type: FormType }) {
-  if (type === "super")
-    return <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 font-semibold">Super Scout</span>;
-  if (type === "pit")
-    return <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 font-semibold">Pit Scout</span>;
-  if (type === "checklist")
-    return <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-400 font-semibold">Checklist</span>;
-  return <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/20 text-primary font-semibold">Default</span>;
+  const cls =
+    type === "super" ? "bg-amber-500/20 text-amber-400"
+    : type === "pit" ? "bg-cyan-500/20 text-cyan-400"
+    : type === "spy" ? "bg-violet-500/20 text-violet-400"
+    : "bg-primary/20 text-primary";
+  return <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${cls}`}>{FORM_TYPE_LABEL[type] ?? "Default"}</span>;
 }
 
 // ──────────────────────────────────────────────
@@ -626,6 +615,7 @@ function FormBuilderContent() {
   const [name, setName] = useState("New Scouting Form");
   const [description, setDescription] = useState("");
   const [formType, setFormType] = useState<FormType>("default");
+  const hasPinnedTeam = formType !== "spy";
   // Coins paid per accepted submission of this form.
   const [coinReward, setCoinReward] = useState<number>(50);
   const [fields, setFields] = useState<FormField[]>([]);
@@ -636,7 +626,7 @@ function FormBuilderContent() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
-  // Form list order: match scouting → pit → super scout → checklist, with the
+  // Form list order: FORM_TYPE_ORDER (match → pit → note → spying), with the
   // backend's own order (creation time) as the tie-break inside a type.
   const orderedTemplates = templates
     ? [...templates].sort((a, b) => formTypeRank(a.formType) - formTypeRank(b.formType))
@@ -685,7 +675,6 @@ function FormBuilderContent() {
     const target = existing?.find((t) => t.isActive) ?? existing?.[0];
     if (target) { loadTemplate(target); return; }
     setFormType(type);
-    if (type === "checklist") setFields((prev) => prev.filter((f) => f.type !== "teamNumber"));
   }
 
   function newForm() {
@@ -700,10 +689,8 @@ function FormBuilderContent() {
   async function saveTemplate() {
     setSaving(true);
     try {
-      // Default, pit, and super scout forms all get the pinned team# field prepended
-      const savedFields = (formType === "default" || formType === "pit" || formType === "super")
-        ? [AUTO_TEAM_FIELD, ...fields]
-        : fields;
+      // Every form but spying gets the pinned team# field prepended
+      const savedFields = hasPinnedTeam ? [AUTO_TEAM_FIELD, ...fields] : fields;
 
       if (selectedId) {
         // Deduplicate name against all other templates (excluding self)
@@ -746,8 +733,7 @@ function FormBuilderContent() {
     await saveTemplate();
     try {
       await activateTemplate({ id: selectedId as Id<"formTemplates"> });
-      const label = formType === "default" ? "Default" : formType === "super" ? "Super Scout" : formType === "pit" ? "Pit Scout" : "Checklist";
-      toast.success(`Activated as ${label} form!`);
+      toast.success(`Activated as ${FORM_TYPE_LABEL[formType]} form!`);
     } catch {
       toast.error("Failed to activate.");
     }
@@ -810,10 +796,8 @@ function FormBuilderContent() {
     }
   }
 
-  const fieldTypeMeta = formType === "super" ? SUPER_FIELD_TYPES : formType === "pit" ? PIT_FIELD_TYPES : formType === "checklist" ? CHECKLIST_FIELD_TYPES : DEFAULT_FIELD_TYPES;
-
   // Group fields by section for preview
-  const previewFields = (formType === "default" || formType === "pit" || formType === "super") ? [AUTO_TEAM_FIELD, ...fields] : fields;
+  const previewFields = hasPinnedTeam ? [AUTO_TEAM_FIELD, ...fields] : fields;
   const previewSections = previewFields.reduce<Record<string, FormField[]>>((acc, f) => {
     const key = f.section ?? "General";
     acc[key] = [...(acc[key] ?? []), f];
@@ -936,7 +920,7 @@ function FormBuilderContent() {
                   ) : (
                     <Button onClick={handleActivate} size="sm" variant="outline" className="border-green-500/50 text-green-400 hover:bg-green-500/10">
                       <ActiveIcon className="h-4 w-4 mr-1" />
-                      Activate as {formType === "default" ? "Default" : formType === "super" ? "Super Scout" : formType === "pit" ? "Pit Scout" : "Checklist"}
+                      Activate as {FORM_TYPE_LABEL[formType]}
                     </Button>
                   )
                 )}
@@ -1028,22 +1012,22 @@ function FormBuilderContent() {
                     >
                       <Binoculars className="h-4 w-4 shrink-0" />
                       <div className="text-left">
-                        <p className="font-medium leading-none">Super Scout</p>
+                        <p className="font-medium leading-none">Note Scout</p>
                         <p className="text-[10px] opacity-70 mt-0.5">Qualitative observations</p>
                       </div>
                     </button>
                     <button
-                      onClick={() => selectType("checklist")}
+                      onClick={() => selectType("spy")}
                       className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm transition-all ${
-                        formType === "checklist"
+                        formType === "spy"
                           ? "border-violet-500 bg-violet-500/10 text-violet-400 font-semibold"
                           : "border-border text-muted-foreground hover:bg-muted/50"
                       }`}
                     >
-                      <ClipboardCheck className="h-4 w-4 shrink-0" />
+                      <Eye className="h-4 w-4 shrink-0" />
                       <div className="text-left">
-                        <p className="font-medium leading-none">Checklist</p>
-                        <p className="text-[10px] opacity-70 mt-0.5">Pit duty tasks</p>
+                        <p className="font-medium leading-none">Spying</p>
+                        <p className="text-[10px] opacity-70 mt-0.5">Per-alliance, unassigned</p>
                       </div>
                     </button>
                   </div>
@@ -1053,6 +1037,8 @@ function FormBuilderContent() {
                   <Label>Form Name</Label>
                   <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. 2025 Regional Scouting Form" />
                 </div>
+                {/* Only match and pit scouting pay out (forms.submitForm) */}
+                {(formType === "default" || formType === "pit") && (
                 <div className="space-y-1.5">
                   <Label>Coins per submission</Label>
                   <Input
@@ -1066,14 +1052,15 @@ function FormBuilderContent() {
                     Paid to the scout each time this form is submitted. Set 0 to pay nothing.
                   </p>
                 </div>
+                )}
                 <div className="space-y-1.5">
                   <Label>Description (optional)</Label>
                   <Textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Notes about this form…" rows={2} />
                 </div>
               </div>
 
-              {/* Pinned auto team# field for default, pit, and super scout forms */}
-              {(formType === "default" || formType === "pit" || formType === "super") && (
+              {/* Pinned auto team# field for every form but spying */}
+              {hasPinnedTeam && (
                 <div className="flex items-center gap-1.5">
                   <div className="p-1 text-muted-foreground/40">
                     <Lock className="h-4 w-4" />
@@ -1086,15 +1073,16 @@ function FormBuilderContent() {
                   </div>
                 </div>
               )}
-              {formType === "checklist" && (
+              {formType === "spy" && (
                 <div className="flex items-center gap-1.5">
                   <div className="p-1 text-muted-foreground/40">
                     <Lock className="h-4 w-4" />
                   </div>
                   <div className="flex-1 flex items-center gap-2 bg-violet-500/5 border border-violet-500/20 border-dashed rounded-lg px-3 py-2 opacity-80">
-                    <ClipboardCheck className="h-4 w-4 text-violet-400 shrink-0" />
-                    <span className="text-sm font-medium text-violet-400">Pit Scout Checklist</span>
-                    <span className="ml-auto text-xs text-muted-foreground italic">assigned by match · no team#</span>
+                    <Eye className="h-4 w-4 text-violet-400 shrink-0" />
+                    <span className="text-sm font-medium text-violet-400">Alliance</span>
+                    <span className="text-xs px-1.5 py-0.5 rounded-sm bg-violet-500/20 text-violet-400 font-mono ml-1">req</span>
+                    <span className="ml-auto text-xs text-muted-foreground italic">picked from playoff alliances · no team#</span>
                   </div>
                 </div>
               )}
@@ -1110,7 +1098,7 @@ function FormBuilderContent() {
                       fields={secFields}
                       allSections={sectionNames}
                       sensors={sensors}
-                      fieldTypeMeta={fieldTypeMeta}
+                      fieldTypeMeta={FIELD_TYPES}
                       canDelete={sectionNames.length > 1}
                       onRename={(newName) => renameSection(sec, newName)}
                       onDelete={() => deleteSection(sec)}
@@ -1167,6 +1155,15 @@ function FormBuilderContent() {
                           <div className="flex gap-2">
                             <Button variant="outline" size="sm" disabled><Camera className="h-4 w-4 mr-1" /> Take Photo</Button>
                             <Button variant="outline" size="sm" disabled>Choose Photo</Button>
+                          </div>
+                        )}
+                        {f.type === "radio" && (
+                          <div className="space-y-1.5">
+                            {(f.options ?? []).map((o) => (
+                              <label key={o} className="flex items-center gap-2 text-sm text-muted-foreground">
+                                <input type="radio" disabled className="h-4 w-4" /> {o}
+                              </label>
+                            ))}
                           </div>
                         )}
                         {f.type === "select" && (

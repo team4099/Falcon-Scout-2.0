@@ -15,10 +15,9 @@ import {
 } from "@/lib/scheduleCompletion";
 import { enqueuePitDutyOp, dequeuePitDutyOp, getPitDutyQueue } from "@/lib/offlineQueue";
 import type { TBAMatch } from "@/lib/api";
-import type { FormField } from "@/types";
 import {
   CalendarDays, CalendarCheck, ClipboardList, Wrench, Coffee,
-  Loader2, CheckCircle2, Users, ClipboardCheck, CircleDashed, Undo2,
+  Loader2, CheckCircle2, Users, CircleDashed, Undo2,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -40,20 +39,6 @@ interface PitRotation {
   endMatch?: number;
   isElims?: boolean;
   scoutIds: string[];
-}
-
-interface ChecklistTemplate {
-  _id: string;
-  name: string;
-  fields: FormField[];
-  isActive: boolean;
-}
-
-interface ChecklistAssignment {
-  matchNumber: number;
-  templateId: string;
-  templateName: string;
-  isCompleted: boolean;
 }
 
 interface PitScoutingAssignment {
@@ -82,64 +67,6 @@ const SURF_BORD = "oklch(1 0 0 / 8%)";
 const MUTED     = "var(--muted-foreground)";
 const FG        = "var(--foreground)";
 
-// ── Checklist assignment algorithm ───────────────────────────────────────────
-//
-// This is the only home for it now: the standalone Checklists tab is gone and a
-// checklist is an ordinary scouting form, so My Schedule is where a scout finds
-// out which one is theirs and taps through to fill it in.
-
-const OUR_TEAM_KEY = "frc4099";
-
-function computeMyChecklistAssignments(
-  tbaMatches: TBAMatch[],
-  allPitRotations: PitRotation[],
-  templates: ChecklistTemplate[],
-  myUserId: string,
-  completedSet: Set<string>,
-): ChecklistAssignment[] {
-  const qualMatchNums = tbaMatches
-    .filter(m =>
-      m.comp_level === "qm" &&
-      (m.alliances.red.team_keys.includes(OUR_TEAM_KEY) ||
-       m.alliances.blue.team_keys.includes(OUR_TEAM_KEY))
-    )
-    .map(m => m.match_number)
-    .sort((a, b) => a - b);
-
-  const results: ChecklistAssignment[] = [];
-
-  for (const matchNum of qualMatchNums) {
-    const pitScoutIds: string[] = [];
-    const seen = new Set<string>();
-    for (const rot of allPitRotations) {
-      if (rot.isElims || rot.startMatch == null || rot.endMatch == null) continue;
-      // The match itself must fall inside the rotation window. This used to test
-      // `matchNum - 4`, which handed the checklist to whoever was on pit duty
-      // four matches earlier — someone rostered for 30-35 was getting checklists
-      // for matches 36-39, after their shift had ended.
-      if (matchNum >= rot.startMatch && matchNum <= rot.endMatch) {
-        for (const sid of rot.scoutIds) {
-          if (!seen.has(sid)) { seen.add(sid); pitScoutIds.push(sid); }
-        }
-      }
-    }
-    if (pitScoutIds.length === 0) continue;
-
-    for (let i = 0; i < templates.length; i++) {
-      const tpl = templates[i];
-      const assignedTo = pitScoutIds[i % pitScoutIds.length];
-      if (assignedTo !== myUserId) continue; // only mine
-      results.push({
-        matchNumber: matchNum,
-        templateId: tpl._id,
-        templateName: tpl.name,
-        isCompleted: completedSet.has(`${matchNum}-${tpl._id}`),
-      });
-    }
-  }
-  return results;
-}
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function matchSortKey(m: TBAMatch) {
@@ -166,85 +93,13 @@ function teamNumberForPosition(match: TBAMatch, position: Position): number | nu
   return isNaN(num) ? null : num;
 }
 
-// ── Checklist card ────────────────────────────────────────────────────────────
-
-function ChecklistCard({ assignment }: { assignment: ChecklistAssignment }) {
-  const navigate = useNavigate();
-  function open() {
-    // Checklists are ordinary scouting forms — same page, same submit path.
-    // `template=` names the exact checklist, since several can be active.
-    navigate(
-      `/scout?match=${assignment.matchNumber}&prefix=qm&form=checklist&template=${assignment.templateId}`
-    );
-  }
-  return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={open}
-      onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } }}
-      title={`Open ${assignment.templateName} for match ${assignment.matchNumber}`}
-      style={{
-        display: "flex", alignItems: "center", gap: 12, padding: "11px 14px",
-        borderRadius: 12,
-        background: SURFACE,
-        border: `1px solid ${SURF_BORD}`,
-        transition: "transform 0.1s ease", cursor: "pointer",
-        opacity: assignment.isCompleted ? 0.62 : 1,
-      }}
-      onMouseEnter={e => (e.currentTarget.style.transform = "translateX(3px)")}
-      onMouseLeave={e => (e.currentTarget.style.transform = "none")}
-    >
-      {/* Icon */}
-      <div style={{
-        width: 36, height: 36, borderRadius: 9, flexShrink: 0,
-        background: assignment.isCompleted ? G : G_DIM,
-        border: `1.5px solid ${assignment.isCompleted ? G_STR : G_MED}`,
-        display: "flex", alignItems: "center", justifyContent: "center",
-        boxShadow: assignment.isCompleted ? `0 2px 10px ${G} / 35%` : "none",
-      }}>
-        {assignment.isCompleted
-          ? <CheckCircle2 size={16} color={G_TXT} />
-          : <ClipboardCheck size={16} style={{ color: G }} />}
-      </div>
-
-      {/* Info */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 800, fontSize: 14, color: FG, letterSpacing: "-0.01em",
-          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {assignment.templateName}
-        </div>
-        <div style={{ fontSize: 12, color: MUTED, marginTop: 1 }}>
-          For Match {assignment.matchNumber}
-          {" · "}
-          <span style={{ color: assignment.isCompleted ? G : MUTED, fontWeight: assignment.isCompleted ? 700 : 400 }}>
-            {assignment.isCompleted ? "Done" : "Pending"}
-          </span>
-        </div>
-      </div>
-
-      {/* Match badge */}
-      <div style={{ padding: "3px 10px", borderRadius: 8, flexShrink: 0,
-        background: G_DIM, border: `1px solid ${G_MED}` }}>
-        <div style={{ fontSize: 9, fontWeight: 700, color: G, textTransform: "uppercase", letterSpacing: "0.06em", lineHeight: 1 }}>Match</div>
-        <div style={{ fontSize: 18, fontWeight: 900, color: G, lineHeight: 1.1, letterSpacing: "-0.02em", textAlign: "center" }}>
-          {assignment.matchNumber}
-        </div>
-      </div>
-
-
-    </div>
-  );
-}
-
 // ── Unified schedule item type ────────────────────────────────────────────────
 
-// `done` drives the Upcoming/Completed split. Scouting, checklists and pit
+// `done` drives the Upcoming/Completed split. Scouting and pit
 // scouting complete on submission; pit duty and playoff shifts have no form
 // behind them, so they complete when the scout reports for the shift.
 type UnifiedItem =
   | { kind: "scout";    assignment: MatchAssignment;    match: TBAMatch | null; sortKey: number; ts: number | null; done: boolean }
-  | { kind: "checklist"; assignment: ChecklistAssignment; sortKey: number; ts: number | null; done: boolean }
   | { kind: "pit";      rotation: PitRotation;           sortKey: number; ts: number | null; done: boolean }
   | { kind: "elims";    rotation: PitRotation;           sortKey: number; ts: number | null; done: boolean };
 
@@ -937,13 +792,6 @@ export default function MySchedulePage() {
   ) as PitRotation[] | undefined;
   const myPitRotations = useCached(myPitRotationsLive, `my_pit_rotations_${eventKey || "none"}`) as PitRotation[] | undefined;
 
-  // All pit rotations (needed for checklist assignment computation)
-  const allPitRotationsLive = useQuery(
-    api.schedules.listPitRotations,
-    eventKey ? { eventKey } : "skip"
-  ) as PitRotation[] | undefined;
-  const allPitRotations = useCached(allPitRotationsLive, `pit_rotations_${eventKey || "none"}`) as PitRotation[] | undefined;
-
   // Pre-competition pit scouting assignments (one row per assigned team)
   const myPitScoutingTeamLive = useQuery(
     api.pitScouting.getMyPitScoutingTeam,
@@ -951,20 +799,13 @@ export default function MySchedulePage() {
   ) as PitScoutingAssignment[] | null | undefined;
   const myPitScoutingTeam = useCached(myPitScoutingTeamLive, `my_pit_scouting_team_${eventKey || "none"}`) as PitScoutingAssignment[] | null | undefined;
 
-  // Active checklist templates. Checklists are ordinary form templates now, so
-  // they come from the same query every other form uses and are filtered here
-  // rather than needing a checklist-specific endpoint.
+  // Active templates — used to resolve each local submission's formType.
   const activeTemplatesLive = useQuery(api.forms.listActiveTemplates);
   const activeTemplates = useCached(activeTemplatesLive, "active_templates") as
-    | (ChecklistTemplate & { formType?: string })[]
+    | { _id: string; formType?: string }[]
     | undefined;
-  const checklistTemplates = useMemo<ChecklistTemplate[] | undefined>(
-    () => activeTemplates?.filter((t) => t.formType === "checklist"),
-    [activeTemplates]
-  );
 
-  // My submissions for this event — a checklist counts as done once this scout
-  // has a submission for that match against that checklist template.
+  // My submissions for this event — drive which assignments show as done.
   const mySubmissionsLive = useQuery(
     api.forms.getMySubmissions,
     eventKey ? { eventKey } : "skip"
@@ -1017,7 +858,6 @@ export default function MySchedulePage() {
     return buildCompletion(keys);
   }, [mySubmissions, localSubs, activeTemplates, eventKey]);
 
-  const completedChecklistSet = completion.checklists;
 
   // ── Pit duty check-ins ──────────────────────────────────────────────────────
   const reportPitDuty   = useMutation(api.schedules.reportPitDuty);
@@ -1088,14 +928,6 @@ export default function MySchedulePage() {
       .finally(() => setTbaLoading(false));
   }, [eventKey]);
 
-  const myChecklistAssignments = useMemo(() => {
-    const myId = (viewer as { _id?: string } | null)?._id ?? "";
-    if (!myId || !checklistTemplates || !allPitRotations) return [];
-    return computeMyChecklistAssignments(
-      tbaMatches, allPitRotations, checklistTemplates, myId, completedChecklistSet
-    );
-  }, [tbaMatches, allPitRotations, checklistTemplates, viewer, completedChecklistSet]);
-
   const matchMap = useMemo(() => {
     const m: Record<number, TBAMatch> = {};
     // Only index qual matches — elim match numbers overlap with qual numbers
@@ -1129,10 +961,9 @@ export default function MySchedulePage() {
 
   const totalMatches   = tbaMatches.filter(m => m.comp_level === "qm").length;
   const scoutingCount  = assignments.length;
-  const checklistCount = myChecklistAssignments.length;
   const offCount       = Math.max(0, totalMatches - scoutingCount - pitMatchCount);
   const loading        = myAssignments === undefined || myPitRotations === undefined;
-  const hasAnything    = scoutingCount > 0 || pitRotations.length > 0 || checklistCount > 0 || (Array.isArray(myPitScoutingTeam) && myPitScoutingTeam.length > 0);
+  const hasAnything    = scoutingCount > 0 || pitRotations.length > 0 || (Array.isArray(myPitScoutingTeam) && myPitScoutingTeam.length > 0);
 
   // ── Build unified sorted item list, split upcoming vs completed ────────────
   const { upcomingDays, completedDays, upcomingCount, completedCount } = useMemo(() => {
@@ -1149,15 +980,6 @@ export default function MySchedulePage() {
         kind: "scout", assignment: a, match, sortKey: a.matchNumber, ts,
         done: isMatchDone(completion, a.matchNumber, compLevel, teamNumber),
       });
-    }
-
-    // Checklists — due at (matchNumber - 4), so sort there
-    for (const a of myChecklistAssignments) {
-      const dueMatchNum = Math.max(1, a.matchNumber - 4);
-      const dueMatch = matchMap[dueMatchNum] ?? null;
-      const ts = dueMatch ? (dueMatch.actual_time ?? dueMatch.predicted_time ?? dueMatch.time ?? null) : null;
-      // sortKey offset 0.3 so checklists appear after scouting at the same match slot
-      items.push({ kind: "checklist", assignment: a, sortKey: dueMatchNum + 0.3, ts, done: a.isCompleted });
     }
 
     // Qual pit rotations — sort by startMatch
@@ -1192,7 +1014,7 @@ export default function MySchedulePage() {
       upcomingCount: upcoming.length,
       completedCount: completed.length,
     };
-  }, [assignments, myChecklistAssignments, qualRotations, elimsRotation, matchMap, completion, pitDutyDone]);
+  }, [assignments, qualRotations, elimsRotation, matchMap, completion, pitDutyDone]);
 
   // Pre-competition pit scouting splits per team, same as everything else.
   const pitScoutingTeams = Array.isArray(myPitScoutingTeam) ? myPitScoutingTeam : [];
@@ -1362,7 +1184,6 @@ export default function MySchedulePage() {
             <div style={{ display: "flex", gap: 2, padding: 4, borderRadius: 14, background: SURFACE, border: `1px solid ${SURF_BORD}` }}>
               {([
                 { label: "Scouting",   count: scoutingCount,  icon: ClipboardList  },
-                { label: "Checklists", count: checklistCount, icon: ClipboardCheck },
                 { label: "Pit Duty",   count: qualRotations.length + (elimsRotation ? 1 : 0), icon: Wrench },
                 { label: "Off",        count: offCount,        icon: Coffee         },
               ] as const).map(({ label, count, icon: Icon }) => (
@@ -1442,24 +1263,6 @@ export default function MySchedulePage() {
                             Scouting
                           </div>
                           <ScoutingCard assignment={item.assignment} match={item.match} done={item.done} />
-                        </div>
-                      );
-                    }
-                    if (item.kind === "checklist") {
-                      return (
-                        <div key={`cl-${item.assignment.matchNumber}-${item.assignment.templateId}`} style={{ position: "relative" }}>
-                          <div style={{
-                            position: "absolute", top: -8, left: 12, zIndex: 1,
-                            padding: "1px 8px", borderRadius: 20, fontSize: 9, fontWeight: 800,
-                            background: G,
-                            color: G_TXT, textTransform: "uppercase", letterSpacing: "0.07em",
-                            boxShadow: "0 1px 4px rgba(0,0,0,0.3)",
-                          }}>
-                            Checklist
-                          </div>
-                          <ChecklistCard
-                            assignment={item.assignment}
-                          />
                         </div>
                       );
                     }

@@ -8,9 +8,6 @@ import type { Id } from "../../convex/_generated/dataModel";
 import {
   getOfflineQueue,
   dequeueOfflineSubmission,
-  getChecklistQueue,
-  dequeueOfflineChecklist,
-  legacyChecklistToForm,
   getKanbanQueue,
   dequeueKanbanOp,
   getPitDutyQueue,
@@ -86,30 +83,6 @@ export function useOfflineSync() {
           continue;
         }
         break; // stop on first transient failure; retry next cycle
-      }
-    }
-
-    // ── Drain the legacy checklist queue ─────────────────────────────────
-    // Nothing writes to this queue any more — checklists are ordinary form
-    // submissions. This only exists to rescue work a scout finished offline on
-    // the pre-merge build, by re-filing it through submitForm. Once a device's
-    // queue drains it stays empty.
-    for (const cl of getChecklistQueue()) {
-      const sub = legacyChecklistToForm(cl);
-      try {
-        await submitForm({
-          templateId:  sub.templateId as Id<"formTemplates">,
-          eventKey:    sub.eventKey,
-          matchNumber: sub.matchNumber,
-          compLevel:   sub.compLevel,
-          teamNumber:  sub.teamNumber,
-          data:        sub.data,
-          offlineId:   sub.offlineId,
-        });
-        dequeueOfflineChecklist(cl.id);
-        anySynced = true;
-      } catch {
-        break; // transient — retry next cycle
       }
     }
 

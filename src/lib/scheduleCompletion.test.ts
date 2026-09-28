@@ -40,15 +40,6 @@ describe("buildCompletion", () => {
     expect(isMatchDone(c, 7, "qm", 449)).toBe(true);
   });
 
-  test("checklists are keyed by match and template, not by team", () => {
-    const c = buildCompletion([
-      sub({ formType: "checklist", matchNumber: 3, templateId: "cl1", teamNumber: 0 }),
-    ]);
-    expect(c.checklists.has("3-cl1")).toBe(true);
-    expect(c.checklists.has("3-cl2")).toBe(false);
-    expect(c.checklists.has("4-cl1")).toBe(false);
-  });
-
   test("pit submissions are keyed by team only — they are not tied to a match", () => {
     const c = buildCompletion([
       sub({ formType: "pit", teamNumber: 9072, matchNumber: 0, templateId: "pit1" }),
@@ -57,15 +48,15 @@ describe("buildCompletion", () => {
     expect(c.pitTeams.has(449)).toBe(false);
   });
 
-  test("a pit or checklist submission never ticks off a match assignment", () => {
+  test("a pit or spying submission never ticks off a match assignment", () => {
     const c = buildCompletion([
       sub({ formType: "pit", matchNumber: 8, teamNumber: 449 }),
-      sub({ formType: "checklist", matchNumber: 8, teamNumber: 449 }),
+      sub({ formType: "spy", matchNumber: 8, teamNumber: 449 }),
     ]);
     expect(isMatchDone(c, 8, "qm", 449)).toBe(false);
   });
 
-  test("super scouting does not tick off a match scouting assignment", () => {
+  test("note scouting does not tick off a match scouting assignment", () => {
     const c = buildCompletion([sub({ formType: "super", matchNumber: 8, teamNumber: 449 })]);
     expect(isMatchDone(c, 8, "qm", 449)).toBe(false);
   });

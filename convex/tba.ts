@@ -24,7 +24,7 @@ const TBA_BASE = "https://www.thebluealliance.com/api/v3";
 
 // Exactly the endpoints src/lib/api.ts uses. Keep in sync when adding one.
 const ALLOWED_PATHS = [
-  /^\/event\/\d{4}[a-z0-9]{1,20}\/(teams|rankings|matches|insights)$/,
+  /^\/event\/\d{4}[a-z0-9]{1,20}\/(teams|rankings|matches|insights|alliances)$/,
   /^\/team\/frc\d{1,5}$/,
   /^\/team\/frc\d{1,5}\/media\/\d{4}$/,
 ];

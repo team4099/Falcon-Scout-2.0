@@ -155,8 +155,22 @@ export async function fetchTBAEventMatches(eventKey: string) {
   );
 }
 
+/** A playoff alliance. TBA returns null (or []) until alliance selection is done. */
+export interface TBAAlliance {
+  name?: string | null; // "Alliance 1" — can be null at some events
+  picks: string[];      // team keys, captain first
+}
+
+export async function fetchTBAEventAlliances(eventKey: string) {
+  return fetchTBAWithCache<TBAAlliance[] | null>(
+    `/event/${eventKey}/alliances`,
+    `tba_alliances_${eventKey}`,
+    TTL.SHORT   // empty until alliance selection, then fixed
+  );
+}
+
 export async function fetchTBATeamInfo(teamNumber: number) {
-  if (teamNumber <= 0) return null; // guard against invalid team numbers (e.g. checklist submissions)
+  if (teamNumber <= 0) return null; // guard against invalid team numbers (e.g. spying submissions)
   return fetchTBAWithCache<{
     nickname: string;
     school_name: string;

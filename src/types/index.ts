@@ -1,12 +1,25 @@
 // Shared TypeScript types across the app
 
-export type FieldType = "text" | "number" | "checkbox" | "select" | "counter" | "textarea" | "teamNumber" | "rating" | "photo";
+export type FieldType = "text" | "number" | "checkbox" | "select" | "radio" | "counter" | "textarea" | "teamNumber" | "rating" | "photo";
 
-export type FormType = "default" | "super" | "pit" | "checklist";
+/** "super" is shown as "Note Scout" — the stored value predates the rename and
+ *  stays so templates and cached clients at an event keep working. */
+export type FormType = "default" | "super" | "pit" | "spy";
 
-/** The order form types are presented in everywhere: match scouting first,
- *  then pit, then super scout, then checklists. */
-export const FORM_TYPE_ORDER: FormType[] = ["default", "pit", "super", "checklist"];
+/** The order form types are presented in everywhere. */
+export const FORM_TYPE_ORDER: FormType[] = ["default", "pit", "super", "spy"];
+
+export const FORM_TYPE_LABEL: Record<FormType, string> = {
+  default: "Default",
+  pit: "Pit Scout",
+  super: "Note Scout",
+  spy: "Spying",
+};
+
+/** Field types that pick one answer from `options`. */
+export function hasChoiceOptions(t: FieldType): boolean {
+  return t === "select" || t === "radio";
+}
 
 /** Sort key for a template's `formType` (missing/unknown → treated as default). */
 export function formTypeRank(t: string | undefined): number {
@@ -19,7 +32,7 @@ export interface FormField {
   type: FieldType;
   label: string;
   required: boolean;
-  options?: string[];    // for select fields; rating fields use options[0] as max (default "5")
+  options?: string[];    // for select/radio fields; rating fields use options[0] as max (default "5")
   section?: string;
 }
 

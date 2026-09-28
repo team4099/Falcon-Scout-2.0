@@ -167,7 +167,6 @@ export function lsEvictExpired(): void {
  */
 const NEVER_CLEAR = new Set([
   "falconscout_offline_queue",        // scouting submissions awaiting sync
-  "falconscout_checklist_queue",      // checklist submissions awaiting sync
   "falconscout_kanban_queue",         // picklist ops awaiting sync
   "falconscout_pit_duty_queue",       // pit duty check-ins awaiting sync
   "falconscout_my_submissions",       // local submissions backing My QR Codes

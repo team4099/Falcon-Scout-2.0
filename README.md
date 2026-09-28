@@ -177,6 +177,19 @@ Do these once, in order:
 
 ---
 
+### Rollout: Spying, Multiple Choice, checklist removal (2026-09-27)
+
+- **Update every scout device before using the new pieces.** A cached old
+  build doesn't know `spy` forms (no alliance picker) or `radio` fields (they
+  render blank, so a *required* multiple-choice field blocks submit). Don't
+  activate a Spying form or add a required Multiple Choice field mid-event
+  until devices have reloaded.
+- **After deploying**, run `forms:purgeLegacyChecklists` once per deployment
+  (Convex dashboard → Functions → forms → purgeLegacyChecklists → Run). It
+  deletes checklist templates, their submissions and the old
+  `checklistSubmissions` rows. Afterwards the `"checklist"` literal and that
+  table can be dropped from `convex/schema.ts`.
+
 ## Offline behaviour
 
 Worth knowing before changing any of it:

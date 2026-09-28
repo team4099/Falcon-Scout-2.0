@@ -1466,7 +1466,7 @@ export default function DashboardPage() {
     return unplayed[0] ?? null;
   }, [matchData, nowMs]);
 
-  // Build team list — exclude teamNumber === 0 (checklist submissions)
+  // Build team list — exclude teamNumber === 0 (spying submissions)
   const scoutedTeams = new Set(
     (allSubmissions ?? [])
       .map((s: { teamNumber: number }) => s.teamNumber)
@@ -1479,7 +1479,7 @@ export default function DashboardPage() {
   const submissionsByTeam = (allSubmissions ?? []).reduce<
     Record<number, Submission[]>
   >((acc, s: Submission) => {
-    // Exclude checklist submissions (teamNumber === 0) and pit submissions
+    // Exclude spying submissions (teamNumber === 0) and pit submissions
     if (s.teamNumber === 0) return acc;
     if (pitTemplate && s.templateId === pitTemplate._id) return acc;
     acc[s.teamNumber] = [...(acc[s.teamNumber] ?? []), s];

@@ -5,7 +5,7 @@ import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import type { FormField, FormData, FormType } from "@/types";
-import { FORM_TYPE_ORDER, formTypeRank } from "@/types";
+import { FORM_TYPE_ORDER, FORM_TYPE_LABEL, formTypeRank } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,7 +26,7 @@ import {
 } from "@/lib/offlineQueue";
 import { saveMySubmission } from "@/lib/submissionStore";
 import { useOfflineSync } from "@/hooks/useOfflineSync";
-import { fetchTBAEventTeams, type TBATeam } from "@/lib/api";
+import { fetchTBAEventTeams, fetchTBAEventAlliances, type TBATeam, type TBAAlliance } from "@/lib/api";
 import { compressImageFile } from "@/lib/imageCompress";
 
 // ──────────────────────────────────────────────
@@ -289,6 +289,33 @@ function FieldRenderer({
           </SelectContent>
         </Select>
       );
+    case "radio":
+      // Big tap targets — this is filled in on a phone mid-match. Tapping the
+      // chosen answer again clears it.
+      return (
+        <div role="radiogroup" aria-label={field.label} className="grid gap-2">
+          {(field.options ?? []).map((o) => {
+            const on = value === o;
+            return (
+              <button
+                key={o}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                onClick={() => onChange(on ? "" : o)}
+                className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 text-left text-sm transition-colors ${
+                  on ? "border-primary bg-primary/10 font-semibold" : "border-border hover:bg-muted/50"
+                }`}
+              >
+                <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ${on ? "border-primary" : "border-muted-foreground/50"}`}>
+                  {on && <span className="h-2 w-2 rounded-full bg-primary" />}
+                </span>
+                {o}
+              </button>
+            );
+          })}
+        </div>
+      );
     case "photo":
       return (
         <PhotoField
@@ -297,6 +324,62 @@ function FieldRenderer({
         />
       );
   }
+}
+
+// ──────────────────────────────────────────────
+// Alliance picker — Spying forms are tagged with a playoff alliance
+// ──────────────────────────────────────────────
+function AlliancePicker({
+  alliances,
+  value,
+  onChange,
+}: {
+  alliances: TBAAlliance[] | null;
+  value: number | null;
+  onChange: (n: number) => void;
+}) {
+  // Before alliance selection is posted there are no team lists, but the
+  // alliance numbers are still known (8 at a regional) — let the scout pick.
+  const count = alliances?.length || 8;
+  return (
+    <div className="space-y-1.5">
+      <Label>Alliance <span className="text-primary">*</span></Label>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {Array.from({ length: count }, (_, i) => i + 1).map((n) => {
+          const teams = allianceTeams(alliances, n);
+          const on = value === n;
+          return (
+            <button
+              key={n}
+              type="button"
+              aria-pressed={on}
+              onClick={() => onChange(n)}
+              className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+                on ? "border-primary bg-primary/10" : "border-border hover:bg-muted/50"
+              }`}
+            >
+              <p className={`text-sm font-semibold ${on ? "text-primary" : ""}`}>Alliance {n}</p>
+              <p className="text-[11px] text-muted-foreground font-mono truncate">
+                {teams.length ? teams.join(" · ") : "—"}
+              </p>
+            </button>
+          );
+        })}
+      </div>
+      {!alliances?.length && (
+        <p className="text-xs text-muted-foreground">
+          Alliance selection hasn't been posted yet — team numbers appear once it has.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Team numbers on alliance `n` (1-based), captain first. */
+function allianceTeams(alliances: TBAAlliance[] | null, n: number): number[] {
+  return (alliances?.[n - 1]?.picks ?? [])
+    .map((k) => Number(k.replace("frc", "")))
+    .filter((t) => t > 0);
 }
 
 // ──────────────────────────────────────────────
@@ -347,6 +430,8 @@ function FormPicker({
                   <p className="text-sm text-muted-foreground mt-0.5">{t.description}</p>
                 )}
                 <p className="text-xs text-muted-foreground mt-1">
+                  {FORM_TYPE_LABEL[((t as { formType?: FormType }).formType ?? "default")] ?? "Default"}
+                  {" · "}
                   {t.fields.length} field{t.fields.length !== 1 ? "s" : ""}
                   {t.fields.some((f) => f.type === "teamNumber") && " · includes team #"}
                 </p>
@@ -407,10 +492,8 @@ export default function ScoutMatchPage() {
       prefix: searchParams.get("prefix") === "elim" ? ("elim" as const) : null,
       team:   Number(searchParams.get("team")) || null,
       form:   FORM_TYPE_ORDER.includes(form as FormType) ? (form as FormType) : null,
-      // An exact template id. Only checklists need it: several checklist
-      // templates can be active at once and a scout is assigned a specific
-      // one, which `form=checklist` alone cannot name. Falls back to `form=`
-      // if the template has since been deactivated.
+      // An exact template id, for links that must name one specific form.
+      // Falls back to `form=` if the template has since been deactivated.
       template: searchParams.get("template"),
     };
   });
@@ -422,6 +505,9 @@ export default function ScoutMatchPage() {
   const [matchPrefix, setMatchPrefix] = useState<"qm" | "elim">(prefill.prefix ?? "qm");
   const [formData, setFormData] = useState<FormData>({});
   const [submitting, setSubmitting] = useState(false);
+  // Spying forms only: the playoff alliance being spied on.
+  const [alliance, setAlliance] = useState<number | null>(null);
+  const [alliances, setAlliances] = useState<TBAAlliance[] | null>(null);
 
   // Teams registered for the current event, used to validate the teamNumber
   // field on submit. Preloaded here so the check at submit time is instant;
@@ -501,16 +587,29 @@ export default function ScoutMatchPage() {
   const templateFormType =
     ((template as { formType?: FormType } | null)?.formType ?? "default") as FormType;
   const isPitForm = templateFormType === "pit";
-  const isChecklist = templateFormType === "checklist";
-  // Checklists are per-match but are never elimination-match work (the pit
-  // rotation that assigns them is quals-only), and they carry no team, so they
-  // need the match number and nothing else.
-  const heading = isPitForm ? "Scout Pit" : isChecklist ? "Checklist" : "Scout Match";
+  // Spying is unassigned and about a playoff alliance, not a team or a match:
+  // no match number, team numbers optional, an alliance required instead.
+  const isSpy = templateFormType === "spy";
+  const heading = isPitForm ? "Scout Pit" : isSpy ? "Spying" : "Scout Match";
   const submitLabel = isPitForm
     ? "Submit Pit Data"
-    : isChecklist
-      ? "Submit Checklist"
+    : isSpy
+      ? "Submit Spy Report"
       : "Submit Match Data";
+
+  // Playoff alliances for the Spying picker — cache-first, so this works
+  // offline once it has loaded once.
+  useEffect(() => {
+    const eventKey = currentEvent?.eventKey;
+    if (!isSpy || !eventKey) return;
+    let cancelled = false;
+    fetchTBAEventAlliances(eventKey).then((a) => {
+      if (!cancelled) setAlliances(Array.isArray(a) ? a : null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isSpy, currentEvent?.eventKey]);
 
   // Group fields by section
   const sections = fields.reduce<Record<string, FormField[]>>((acc, f) => {
@@ -529,10 +628,17 @@ export default function ScoutMatchPage() {
 
     // The primary team number comes from the first teamNumber field in the form.
     // If no teamNumber field, fall back to 0 (anonymous / not required).
-    const teamNumberFields = fields.filter((f) => f.type === "teamNumber");
+    // Spying rows are never attributed to a team (teamNumber 0 keeps them out
+    // of the per-team rollups); any team# field on a spy form is just data.
+    const teamNumberFields = isSpy ? [] : fields.filter((f) => f.type === "teamNumber");
     const primaryTeamNumber = teamNumberFields.length > 0
       ? (Number(formData[teamNumberFields[0].id]) || 0)
       : 0;
+
+    if (isSpy && alliance == null) {
+      toast.error("Pick the alliance you're spying on.");
+      return;
+    }
 
     // Validate: if form has teamNumber fields, at least the first must be filled
     if (teamNumberFields.length > 0 && primaryTeamNumber <= 0) {
@@ -577,7 +683,7 @@ export default function ScoutMatchPage() {
     // rating ("scored nothing" is an observation, not a blank). A required
     // checkbox is the one type that must actually be ticked.
     const missing = fields.filter((f) => {
-      if (f.type === "teamNumber") return !formData[f.id] || Number(formData[f.id]) <= 0;
+      if (f.type === "teamNumber" && !isSpy) return !formData[f.id] || Number(formData[f.id]) <= 0;
       if (!f.required) return false;
       if (f.type === "checkbox") return formData[f.id] !== true;
       const v = formData[f.id];
@@ -594,17 +700,26 @@ export default function ScoutMatchPage() {
     // local QR copy all store the identical shape. Previously the queued payload
     // omitted _matchPrefix/_matchNumber, so a row's shape depended on whether the
     // network happened to be up when the scout hit submit.
-    const submittedData = {
-      _matchPrefix: matchPrefix,
-      _matchNumber: matchNumber,
-      ...formData,
-    };
+    // Spying has no match: it is filed under match 0 of the playoffs.
+    const subMatch = isSpy ? 0 : matchNumber;
+    const subLevel = isSpy ? ("elim" as const) : matchPrefix;
+    const submittedData = isSpy
+      ? {
+          _alliance: alliance!,
+          _allianceTeams: allianceTeams(alliances, alliance!).join(", "),
+          ...formData,
+        }
+      : {
+          _matchPrefix: matchPrefix,
+          _matchNumber: matchNumber,
+          ...formData,
+        };
 
     const payload = {
       templateId: template._id,
       eventKey: currentEvent.eventKey,
-      matchNumber,
-      compLevel: matchPrefix,
+      matchNumber: subMatch,
+      compLevel: subLevel,
       teamNumber: primaryTeamNumber,
       data: JSON.stringify(submittedData),
     };
@@ -612,17 +727,19 @@ export default function ScoutMatchPage() {
     // Always save locally so QR codes are available offline
     const localSub = {
       id: offlineId,
-      matchNumber,
+      matchNumber: subMatch,
       teamNumber: primaryTeamNumber,
       templateId: template._id,
       templateName: template.name,
       eventKey: currentEvent.eventKey,
-      compLevel: matchPrefix,
+      compLevel: subLevel,
       data: submittedData as Record<string, unknown>,
       // Build a fieldId → label map so the QR viewer shows real names
       fieldLabels: {
         _matchPrefix: "Match Prefix",
         _matchNumber: "Match Number",
+        _alliance: "Alliance",
+        _allianceTeams: "Alliance Teams",
         ...Object.fromEntries(fields.map((f) => [f.id, f.label])),
       },
       submittedAt: Date.now(),
@@ -639,16 +756,19 @@ export default function ScoutMatchPage() {
         await submitForm({
           templateId: template._id as Id<"formTemplates">,
           eventKey: currentEvent.eventKey,
-          matchNumber,
-          compLevel: matchPrefix,
+          matchNumber: subMatch,
+          compLevel: subLevel,
           teamNumber: primaryTeamNumber,
           data: payload.data,
           offlineId,
         });
         // Tell the scout what they earned — the payout is the point of the
         // change, and a silent credit teaches nobody that scouting pays.
-        const reward = (template as { coinReward?: number } | null)?.coinReward ?? 50;
-        const what = isChecklist ? "Checklist done!" : isPitForm ? "Pit scouted!" : "Match scouted!";
+        // Only match and pit scouting pay (see forms.submitForm); note scouting
+        // and spying are unassigned and never do.
+        const pays = templateFormType === "default" || isPitForm;
+        const reward = pays ? ((template as { coinReward?: number } | null)?.coinReward ?? 50) : 0;
+        const what = isSpy ? "Spy report sent!" : isPitForm ? "Pit scouted!" : "Match scouted!";
         toast.success(reward > 0 ? `${what} +${reward} coins 🪙` : `${what} ✅`);
       }
       // Reset for next scout entry — bump match number, keep same form
@@ -754,11 +874,15 @@ export default function ScoutMatchPage() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Match prefix + number — hidden for pit scouting forms */}
-        {!isPitForm && (
+        {isSpy && (
+          <div className="bg-card border border-border rounded-xl p-4">
+            <AlliancePicker alliances={alliances} value={alliance} onChange={setAlliance} />
+          </div>
+        )}
+
+        {/* Match prefix + number — hidden for pit scouting and spying forms */}
+        {!isPitForm && !isSpy && (
         <div className="bg-card border border-border rounded-xl p-4 space-y-4">
-          {/* Match Prefix — checklists are quals-only, so there is nothing to pick */}
-          {!isChecklist && (
           <div className="space-y-1.5">
             <Label>Match Prefix <span className="text-primary">*</span></Label>
             <div className="flex rounded-lg overflow-hidden border border-border w-fit">
@@ -781,7 +905,6 @@ export default function ScoutMatchPage() {
               {matchPrefix === "qm" ? "Qualification match" : "Elimination match"}
             </p>
           </div>
-          )}
 
           {/* Match Number */}
           <div className="space-y-1.5">
@@ -809,8 +932,8 @@ export default function ScoutMatchPage() {
                   {field.type !== "checkbox" && (
                     <Label>
                       {field.label}
-                      {/* teamNumber fields are always required when present */}
-                      {(field.required || field.type === "teamNumber") && (
+                      {/* teamNumber fields are always required when present (except on spy forms) */}
+                      {(field.required || (field.type === "teamNumber" && !isSpy)) && (
                         <span className="text-primary ml-1">*</span>
                       )}
                     </Label>
