@@ -78,7 +78,7 @@ function QRViewer({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-sm w-full p-0 overflow-hidden bg-background">
+      <DialogContent className="max-w-sm w-full p-0 bg-background max-h-[90dvh] overflow-y-auto overscroll-contain">
         <DialogHeader className="px-4 pt-4 pb-2">
           <DialogTitle className="flex items-center gap-2 text-base">
             <QrCode className="h-4 w-4 text-primary shrink-0" />
@@ -162,10 +162,9 @@ function QRViewer({
             )}
             {Object.entries(sub.data)
               .filter(([k]) => k !== "_matchPrefix" && k !== "_matchNumber")
-              .slice(0, 12)
               .map(([k, v]) => (
                 <div key={k} className="flex items-start justify-between gap-2 px-3 py-1.5">
-                  <span className="text-muted-foreground truncate max-w-[140px]">
+                  <span className="text-muted-foreground shrink-0 max-w-[45%] break-words">
                     {sub.fieldLabels?.[k] ?? k}
                   </span>
                   {typeof v === "string" && v.startsWith("data:image/") ? (
@@ -174,15 +173,10 @@ function QRViewer({
                       <span className="text-muted-foreground italic text-[10px]">not in QR</span>
                     </span>
                   ) : (
-                    <span className="font-medium text-right break-all">{String(v ?? "—")}</span>
+                    <span className="font-medium text-right break-words min-w-0 whitespace-pre-wrap">{String(v ?? "—")}</span>
                   )}
                 </div>
               ))}
-            {Object.keys(sub.data).filter(k => k !== "_matchPrefix" && k !== "_matchNumber").length > 12 && (
-              <div className="px-3 py-1.5 text-muted-foreground italic">
-                +{Object.keys(sub.data).filter(k => k !== "_matchPrefix" && k !== "_matchNumber").length - 12} more fields
-              </div>
-            )}
           </div>
         </div>
       </DialogContent>

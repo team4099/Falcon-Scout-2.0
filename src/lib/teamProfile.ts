@@ -53,6 +53,39 @@ export function isEmptyValue(v: unknown): boolean {
 
 export const isNoteField = (type: string) => type === "text" || type === "textarea";
 
+interface FieldLike {
+  id: string;
+  type: string;
+  label: string;
+  section?: string;
+}
+
+/** A report's fields plus any answer its template no longer describes (the
+ *  form was edited or deleted after submitting). Those are labelled from any
+ *  template that still has the field, else typed from the value, so nothing a
+ *  scout wrote is dropped. `_`-prefixed keys are app metadata, not answers. */
+export function fieldsForData<F extends FieldLike>(
+  fields: F[],
+  data: Record<string, unknown>,
+  known: Map<string, F>,
+): F[] {
+  const have = new Set(fields.map((f) => f.id));
+  const extra: F[] = [];
+  for (const [id, v] of Object.entries(data)) {
+    if (have.has(id) || id.startsWith("_")) continue;
+    const k = known.get(id);
+    if (k) { extra.push(k); continue; }
+    const type =
+      typeof v === "boolean" ? "checkbox"
+      : typeof v === "number" ? "number"
+      : typeof v === "string" && v.startsWith("data:image/") ? "photo"
+      : typeof v === "string" && v.length > 25 ? "textarea"
+      : "select"; // short strings are usually choice answers, not notes
+    extra.push({ id, type, label: "Unlabeled answer", section: "Other" } as F);
+  }
+  return extra.length ? [...fields, ...extra] : fields;
+}
+
 /** Newest report first: latest match (elims after quals), then latest sync. */
 export function newestFirst<T extends RankedSub>(subs: T[]): T[] {
   return [...subs].sort(

@@ -7,6 +7,7 @@ import {
   parseSubData,
   isEmptyValue,
   isNoteField,
+  fieldsForData,
   newestFirst,
   latestPit,
   type Rank,
@@ -1016,6 +1017,13 @@ export default function TeamDetailPanel({
   }, [teamNumber]);
 
   const templateById = useMemo(() => new Map(templates.map((t) => [t._id, t])), [templates]);
+  // Every field any template defines — labels answers whose own form was
+  // edited or deleted after the report was submitted.
+  const knownFields = useMemo(() => {
+    const m = new Map<string, FormField>();
+    for (const t of templates) for (const f of t.fields) if (!m.has(f.id)) m.set(f.id, f);
+    return m;
+  }, [templates]);
 
   const statFields = useMemo(
     () => fields.filter((f) => ["number", "counter", "rating", "checkbox"].includes(f.type)),
@@ -1047,12 +1055,13 @@ export default function TeamDetailPanel({
   const pit = latestPit(pitSubmissions);
   const pitFormFields = (pit && templateById.get(pit.templateId)?.fields) || pitFields;
   const pitData = pit ? parseData(pit) : {};
+  const pitAllFields = fieldsForData(pitFormFields, pitData, knownFields);
   // Prefer a photo-type field; fall back to any image answer on the report.
   const robotPhoto =
-    pitFormFields.filter((f) => f.type === "photo").map((f) => pitData[f.id]).find(isPhoto) ??
+    pitAllFields.filter((f) => f.type === "photo").map((f) => pitData[f.id]).find(isPhoto) ??
     Object.values(pitData).find(isPhoto) ??
     null;
-  const pitAnswerFields = pitFormFields.filter(
+  const pitAnswerFields = pitAllFields.filter(
     (f) => f.type !== "photo" && f.type !== "teamNumber" && !isPhoto(pitData[f.id]),
   );
   const pitHasAnswers = pitAnswerFields.some((f) => !isEmptyValue(pitData[f.id]));
@@ -1064,10 +1073,11 @@ export default function TeamDetailPanel({
         .map((sub) => {
           const tpl = templateById.get(sub.templateId);
           const data = parseData(sub);
-          return { sub, tpl, data, shown: reportFields(tpl?.fields ?? fields, data, reportMode) };
+          const all = fieldsForData(tpl?.fields ?? fields, data, knownFields);
+          return { sub, tpl, data, shown: reportFields(all, data, reportMode) };
         })
         .filter((r) => reportMode === "full" || r.shown.length > 0),
-    [submissions, templateById, fields, reportMode],
+    [submissions, templateById, knownFields, fields, reportMode],
   );
 
   const rank = tbaRank ? (tbaRank as { rank?: number }).rank ?? null : null;

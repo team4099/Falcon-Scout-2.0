@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isEmptyValue, isLowerBetter, isNoteField, latestPit, newestFirst, rankIn } from "./teamProfile";
+import { fieldsForData, isEmptyValue, isLowerBetter, isNoteField, latestPit, newestFirst, rankIn } from "./teamProfile";
 
 const sub = (id: string, matchNumber: number, extra: Partial<{ compLevel: "qm" | "elim"; syncedAt: number }> = {}) => ({
   _id: id, templateId: "t", matchNumber, data: "{}", ...extra,
@@ -64,5 +64,24 @@ describe("isLowerBetter", () => {
   it("flags stats a team wants less of", () => {
     for (const l of ["Teleop Pieces Missed", "Robot Died / Disabled", "Fouls", "Penalties"]) expect(isLowerBetter(l)).toBe(true);
     for (const l of ["Auto Pieces Scored", "Driver Skill", "Defense Played", "Left Starting Zone"]) expect(isLowerBetter(l)).toBe(false);
+  });
+});
+
+describe("fieldsForData", () => {
+  const tele = { id: "tele", type: "textarea", label: "Tele-op Notes" };
+  const auto = { id: "auto", type: "textarea", label: "Autonomous Notes", section: "Auto" };
+  it("keeps answers the report's template no longer lists", () => {
+    const data = { _matchPrefix: "qm", tele: "ok", auto: "slow start", side: true, zzz: "Climb - Low" };
+    const out = fieldsForData([tele], data, new Map([["auto", auto]]));
+    expect(out.map((f) => [f.id, f.type, f.label])).toEqual([
+      ["tele", "textarea", "Tele-op Notes"],
+      ["auto", "textarea", "Autonomous Notes"], // labelled from another template
+      ["side", "checkbox", "Unlabeled answer"],
+      ["zzz", "select", "Unlabeled answer"],
+    ]);
+  });
+  it("returns the same array when nothing is missing", () => {
+    const fields = [tele];
+    expect(fieldsForData(fields, { tele: "x" }, new Map())).toBe(fields);
   });
 });
