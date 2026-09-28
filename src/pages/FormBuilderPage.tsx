@@ -247,6 +247,9 @@ function FieldEditor({
         {field.required && (
           <span className="text-xs px-1.5 py-0.5 rounded-sm bg-primary/20 text-primary font-mono">req</span>
         )}
+        {field.showInRankings && (
+          <span className="text-xs px-1.5 py-0.5 rounded-sm bg-muted text-muted-foreground font-mono" title="Available as a Dashboard rankings column">col</span>
+        )}
         <button onClick={() => setOpen(true)} className="p-1 rounded opacity-100 sm:opacity-0 group-hover:opacity-100 hover:bg-muted text-muted-foreground hover:text-foreground">
           <Settings className="h-4 w-4" />
         </button>
@@ -310,6 +313,23 @@ function FieldEditor({
             <Checkbox id="required" checked={draft.required} onCheckedChange={(c) => setDraft({ ...draft, required: !!c })} />
             <Label htmlFor="required">Required field</Label>
           </div>
+
+          {/* Photos and team numbers don't aggregate into a meaningful column. */}
+          {draft.type !== "photo" && draft.type !== "teamNumber" && (
+            <div className="flex items-start gap-2">
+              <Checkbox
+                id="showInRankings"
+                checked={!!draft.showInRankings}
+                onCheckedChange={(c) => setDraft({ ...draft, showInRankings: c ? true : undefined })}
+              />
+              <div className="space-y-0.5">
+                <Label htmlFor="showInRankings">Rankings column</Label>
+                <p className="text-xs text-muted-foreground">
+                  Adds this field to the Dashboard's column picker (hidden until someone turns it on).
+                </p>
+              </div>
+            </div>
+          )}
 
           {draft.type === "rating" && (
             <div className="space-y-2">

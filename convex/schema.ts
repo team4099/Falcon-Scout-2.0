@@ -64,6 +64,8 @@ export default defineSchema({
       required: v.boolean(),
       options: v.optional(v.array(v.string())),
       section: v.optional(v.string()),
+      // Dashboard rankings: offer this field as an (off-by-default) column.
+      showInRankings: v.optional(v.boolean()),
     })),
     isActive: v.boolean(),
     // Coins paid to the scout for each accepted submission of this form.

@@ -9,6 +9,11 @@ interface UIState {
   // Admin mode — persisted to localStorage so it survives page reloads
   isAdminMode: boolean;
   setAdminMode: (enabled: boolean) => void;
+  // Dashboard rankings column visibility: explicit per-device overrides only,
+  // so columns keep their defaults (built-ins on, tagged form fields off).
+  rankingColumns: Record<string, boolean>;
+  setRankingColumn: (id: string, visible: boolean) => void;
+  resetRankingColumns: () => void;
 }
 
 export const useUIStore = create<UIState>()(
@@ -20,11 +25,15 @@ export const useUIStore = create<UIState>()(
       setSidebarOpen: (isOpen) => set({ isSidebarOpen: isOpen }),
       isAdminMode: false,
       setAdminMode: (enabled) => set({ isAdminMode: enabled }),
+      rankingColumns: {},
+      setRankingColumn: (id, visible) =>
+        set((s) => ({ rankingColumns: { ...s.rankingColumns, [id]: visible } })),
+      resetRankingColumns: () => set({ rankingColumns: {} }),
     }),
     {
       name: "falconscout_ui",
-      // Only persist admin mode — tab and sidebar should reset naturally
-      partialize: (state) => ({ isAdminMode: state.isAdminMode }),
+      // Persist admin mode + column prefs — tab and sidebar should reset naturally
+      partialize: (state) => ({ isAdminMode: state.isAdminMode, rankingColumns: state.rankingColumns }),
     }
   )
 );

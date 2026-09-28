@@ -111,6 +111,7 @@ const fieldValidator = v.object({
   required: v.boolean(),
   options: v.optional(v.array(v.string())),
   section: v.optional(v.string()),
+  showInRankings: v.optional(v.boolean()),
 });
 
 // ──────────────────────────────────────────────

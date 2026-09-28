@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useUIStore } from "@/store/uiStore";
 import { useQuery } from "convex/react";
-import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { useCached } from "@/hooks/useCached";
 import { api } from "../../convex/_generated/api";
 import { Input } from "@/components/ui/input";
@@ -27,20 +26,28 @@ import {
 import type { TBAMatch } from "@/lib/api";
 import { EMPTY_TEAM_EPA, parseEpaComponents, totalEpa } from "@/lib/epa";
 import type { TeamEpa } from "@/lib/epa";
-import { ExternalLink, Search, FileText, TrendingUp, ClipboardList, Trash2, AlertTriangle, ChevronDown, ChevronUp, Clock, CalendarCheck, Trophy, CalendarDays, Rows3, Table2 } from "lucide-react";
+import { ExternalLink, Search, FileText, TrendingUp, Clock, CalendarCheck, Trophy, CalendarDays, Rows3, Table2, Columns3 } from "lucide-react";
 import TeamDetailPanel from "@/pages/TeamDetailPanel";
 import { useMutation } from "convex/react";
-import type { Id } from "../../convex/_generated/dataModel";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  BUILTIN_COLUMNS,
+  REPORTS_COLUMN_ID,
+  aggregateField,
+  taggedFieldColumns,
+  visibleColumns,
+} from "@/lib/rankingColumns";
+import type { FieldCell, RankingColumn } from "@/lib/rankingColumns";
+import type { FormField as TemplateField } from "@/types";
 import { idbGet, lsGetStale, lsSet, TTL } from "@/lib/persistentCache";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -95,7 +102,7 @@ function TextSubmissionsDialog({
       <DialogContent className="max-w-2xl flex flex-col overflow-hidden" style={{ maxHeight: "80vh" }}>
         <DialogHeader className="shrink-0">
           <DialogTitle>
-            Text submissions — {teamNumber}
+            Scouting Reports — {teamNumber}
           </DialogTitle>
         </DialogHeader>
 
@@ -145,275 +152,6 @@ function TextSubmissionsDialog({
   );
 }
 
-// ── Scouting Reports Review Dialog ────────────────────────────────────────────
-
-function SubmissionsReviewDialog({
-  open,
-  onClose,
-  teamNumber,
-  submissions,
-  fields,
-  isAdminMode,
-}: {
-  open: boolean;
-  onClose: () => void;
-  teamNumber: number;
-  submissions: Submission[];
-  fields: FormField[];
-  isAdminMode: boolean;
-}) {
-  const deleteSubmission = useAdminMutation(api.forms.deleteSubmission);
-  const allUsersLive = useQuery(api.users.listUsers);
-  const allUsers = useCached(allUsersLive, "all_users");
-  const [confirmId, setConfirmId] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-
-  // Build userId → profile lookup from Google OAuth data
-  const userMap = useMemo(() => {
-    const map: Record<string, { name?: string; email?: string; image?: string }> = {};
-    for (const u of allUsers ?? []) {
-      if (u._id) map[u._id] = { name: u.name as string | undefined, email: u.email as string | undefined, image: u.image as string | undefined };
-    }
-    return map;
-  }, [allUsers]);
-
-  // Sort oldest → newest match for reading chronologically
-  const sorted = [...submissions].sort((a, b) => a.matchNumber - b.matchNumber);
-
-  function toggleExpand(id: string) {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  async function handleDelete() {
-    if (!confirmId) return;
-    setDeleting(true);
-    try {
-      await deleteSubmission({ id: confirmId as Id<"formSubmissions"> });
-    } finally {
-      setDeleting(false);
-      setConfirmId(null);
-    }
-  }
-
-  function renderValue(field: FormField, raw: unknown): React.ReactNode {
-    if (raw === undefined || raw === null || raw === "") {
-      return <span className="text-muted-foreground/50 italic">—</span>;
-    }
-    if (field.type === "checkbox") {
-      const checked = raw === true || raw === "true";
-      return (
-        <span className={`font-semibold ${checked ? "text-green-500" : "text-muted-foreground"}`}>
-          {checked ? "✓ Yes" : "✗ No"}
-        </span>
-      );
-    }
-    return <span>{String(raw)}</span>;
-  }
-
-  return (
-    <>
-      <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-        <DialogContent
-          className="max-w-2xl flex flex-col overflow-hidden"
-          style={{ maxHeight: "85vh" }}
-        >
-          <DialogHeader className="shrink-0">
-            <DialogTitle className="flex items-center gap-2">
-              <ClipboardList className="h-4 w-4 text-primary" />
-              Scouting Reports — Team {teamNumber}
-            </DialogTitle>
-            <p className="text-xs text-muted-foreground">
-              {submissions.length} report{submissions.length !== 1 ? "s" : ""} submitted
-              {submissions.length > 0 && (
-                <> · Click a report to expand · <span className="text-destructive">Delete removes it permanently</span></>
-              )}
-            </p>
-          </DialogHeader>
-
-          <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-2 py-1">
-            {sorted.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 gap-2 text-muted-foreground">
-                <ClipboardList className="h-8 w-8 opacity-30" />
-                <p className="text-sm">No scouting reports for this team yet.</p>
-              </div>
-            ) : (
-              sorted.map((sub) => {
-                const data: Record<string, unknown> = (() => {
-                  try { return JSON.parse(sub.data); } catch { return {}; }
-                })();
-                const isExpanded = expandedIds.has(sub._id);
-                const date = sub.syncedAt
-                  ? new Date(sub.syncedAt).toLocaleString(undefined, {
-                      month: "short", day: "numeric",
-                      hour: "2-digit", minute: "2-digit",
-                    })
-                  : null;
-
-                // Quick text preview for collapsed state
-                const textFields = fields.filter((f) => f.type === "text" || f.type === "textarea");
-                const preview = textFields
-                  .map((f) => String(data[f.id] ?? "").trim())
-                  .filter(Boolean)[0];
-
-                return (
-                  <div
-                    key={sub._id}
-                    className="border border-border rounded-lg overflow-hidden"
-                  >
-                    {/* Header row — always visible */}
-                    <div
-                      className="flex items-center gap-3 px-3 py-2.5 bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors select-none"
-                      onClick={() => toggleExpand(sub._id)}
-                    >
-                      <div className="flex-1 flex items-center gap-3 min-w-0">
-                        <span className="font-bold text-sm shrink-0">
-                          Match {sub.matchNumber}
-                        </span>
-                        {date && (
-                          <span className="text-[10px] text-muted-foreground shrink-0">{date}</span>
-                        )}
-                        {/* Scouter identity */}
-                        {sub.scoutId && userMap[sub.scoutId] && (() => {
-                          const u = userMap[sub.scoutId];
-                          const displayName = u.name ?? u.email ?? "Unknown scout";
-                          return (
-                            <span className="flex items-center gap-1 shrink-0">
-                              {u.image
-                                ? <img src={u.image} alt={displayName} referrerPolicy="no-referrer" className="h-4 w-4 rounded-full object-cover" />
-                                : <span className="h-4 w-4 rounded-full bg-primary/20 text-primary text-[9px] flex items-center justify-center font-bold">
-                                    {displayName.charAt(0).toUpperCase()}
-                                  </span>
-                              }
-                              <span className="text-[10px] text-muted-foreground">{displayName}</span>
-                            </span>
-                          );
-                        })()}
-                        {!isExpanded && preview && (
-                          <span className="text-xs text-muted-foreground truncate italic">
-                            "{preview}"
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        {isAdminMode ? (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setConfirmId(sub._id);
-                            }}
-                            className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                            title="Delete this report"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        ) : (
-                          <span
-                            className="p-1.5 rounded text-muted-foreground/30 cursor-not-allowed"
-                            title="Enable admin mode to delete reports"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </span>
-                        )}
-                        {isExpanded
-                          ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
-                          : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-                        }
-                      </div>
-                    </div>
-
-                    {/* Expanded field values */}
-                    {isExpanded && (
-                      <div className="px-3 pb-3 pt-2">
-                        {fields.length === 0 ? (
-                          <p className="text-xs text-muted-foreground italic">No active form template.</p>
-                        ) : (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
-                            {fields
-                              .filter((f) => f.type === "number" || f.type === "counter" || f.type === "checkbox")
-                              .map((f) => (
-                              <div key={f.id} className="flex items-start gap-2 min-w-0">
-                                <span className="text-xs text-muted-foreground shrink-0 pt-px w-32 truncate" title={f.label}>
-                                  {f.label}
-                                </span>
-                                <span className="text-xs font-medium leading-snug" style={{ overflowWrap: "anywhere" }}>
-                                  {renderValue(f, data[f.id])}
-                                </span>
-                              </div>
-                            ))}</div>
-                        )}
-                        {/* Raw match info */}
-                        <div className="mt-2 pt-2 border-t border-border/50 flex gap-4 text-[10px] text-muted-foreground/70">
-                          <span>Match #{sub.matchNumber}</span>
-                          {date && <span>Submitted {date}</span>}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete confirmation */}
-      <AlertDialog open={confirmId !== null} onOpenChange={(o) => !o && setConfirmId(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-destructive" />
-              Delete scouting report?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently remove Match{" "}
-              {sorted.find((s) => s._id === confirmId)?.matchNumber ?? "?"} for team{" "}
-              {teamNumber}. This cannot be undone.
-            </AlertDialogDescription>
-            {(() => {
-              const sub = sorted.find((s) => s._id === confirmId);
-              if (!sub?.scoutId) return null;
-              const u = userMap[sub.scoutId];
-              if (!u) return null;
-              const displayName = u.name ?? u.email ?? "Unknown scout";
-              return (
-                <div className="flex items-center gap-2 pt-2 mt-1 border-t border-border/50 text-sm">
-                  <span className="text-xs text-muted-foreground">Scouted by:</span>
-                  {u.image
-                    ? <img src={u.image} alt={displayName} referrerPolicy="no-referrer" className="h-5 w-5 rounded-full object-cover" />
-                    : <span className="h-5 w-5 rounded-full bg-primary/20 text-primary text-[10px] flex items-center justify-center font-bold shrink-0">
-                        {displayName.charAt(0).toUpperCase()}
-                      </span>
-                  }
-                  <span className="text-xs font-medium text-foreground">{displayName}</span>
-                  {u.email && u.name && (
-                    <span className="text-xs text-muted-foreground">({u.email})</span>
-                  )}
-                </div>
-              );
-            })()}
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              disabled={deleting}
-              className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
-            >
-              {deleting ? "Deleting…" : "Delete Report"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
-  );
-}
-
 // ── Team row ──────────────────────────────────────────────────────────────────
 
 /** Reusable avatar — same logic as Kanban TeamAvatar */
@@ -446,6 +184,13 @@ async function primeAvatar(teamNumber: number, year: number) {
   }
 }
 
+/** Grid template shared by the header and every row so cells always line up. */
+function gridTemplate(columns: RankingColumn[]): string {
+  return columns.map((c) => `minmax(${c.width}px, 1fr)`).join(" ");
+}
+
+type StatColor = "default" | "primary" | "success" | "muted";
+
 function TeamRow({
   teamNumber,
   eventYear,
@@ -454,6 +199,8 @@ function TeamRow({
   avgScore,
   tbaRank,
   fields,
+  columns,
+  fieldCells,
   onOpenDetail,
   forceTable = false,
 }: {
@@ -464,14 +211,16 @@ function TeamRow({
   avgScore: number | null;
   tbaRank: Record<string, unknown> | null;
   fields: FormField[];
+  /** Visible columns, in display order. */
+  columns: RankingColumn[];
+  /** This team's aggregated values for tagged form-field columns. */
+  fieldCells: Record<string, FieldCell>;
   onOpenDetail: () => void;
   /** When true, always render the column-table row layout, even below the
    *  sm breakpoint — used for the mobile "table view" toggle. */
   forceTable?: boolean;
 }) {
   const [textOpen, setTextOpen] = useState(false);
-  const [reportsOpen, setReportsOpen] = useState(false);
-  const { isAdminMode } = useUIStore();
   // Read from the in-memory avatar cache synchronously to avoid the
   // "loading" flash when this component remounts (e.g. after tbaTeams loads).
   const memKey = `${teamNumber}_${eventYear}`;
@@ -511,58 +260,47 @@ function TeamRow({
 
   const parsed = parseSubmissions(submissions);
 
-  // Text fields drive the "view notes" shortcut; the table itself has a fixed
-  // set of columns and never renders per-field aggregates.
+  // Text fields feed the "Scouting Reports" notes popup.
   const textFields = fields.filter((f) => f.type === "text" || f.type === "textarea");
   const hasTextData = textFields.some((f) =>
     parsed.some((d) => d[f.id] && String(d[f.id]).trim() !== "")
   );
 
-  // Build the ordered stat chips data (shared between mobile + desktop)
-  const allStats: { label: string; value: string; color: "default" | "primary" | "success" | "muted" }[] = [
-    { label: "Rank", value: rank !== null ? `#${rank}` : "—", color: rank !== null ? "default" : "muted" },
-    { label: "Avg Score", value: avgScore !== null ? Number(avgScore.toFixed(0)).toString() : "—", color: avgScore !== null ? "default" : "muted" },
-    { label: "Event EPA", value: epa.event !== null ? String(epa.event) : "—", color: epa.event !== null ? "primary" : "muted" },
-    { label: "Season EPA", value: epa.overall !== null ? String(epa.overall) : "—", color: epa.overall !== null ? "primary" : "muted" },
-    { label: "Auto", value: epa.auto !== null ? String(epa.auto) : "—", color: epa.auto !== null ? "default" : "muted" },
-    { label: "Teleop", value: epa.teleop !== null ? String(epa.teleop) : "—", color: epa.teleop !== null ? "default" : "muted" },
-    { label: "Endgame", value: epa.endgame !== null ? String(epa.endgame) : "—", color: epa.endgame !== null ? "default" : "muted" },
-  ];
+  const num = (v: number | null, color: StatColor = "default") =>
+    ({ value: v !== null ? String(v) : "—", color: v !== null ? color : ("muted" as StatColor) });
+  const builtin: Record<string, { value: string; color: StatColor }> = {
+    rank: { value: rank !== null ? `#${rank}` : "—", color: rank !== null ? "default" : "muted" },
+    avgScore: { value: avgScore !== null ? Number(avgScore.toFixed(0)).toString() : "—", color: avgScore !== null ? "default" : "muted" },
+    epaEvent: num(epa.event, "primary"),
+    epaOverall: num(epa.overall, "primary"),
+    epaAuto: num(epa.auto),
+    epaTeleop: num(epa.teleop),
+    epaEndgame: num(epa.endgame),
+  };
+  const statFor = (c: RankingColumn): { value: string; color: StatColor } => {
+    if (builtin[c.id]) return builtin[c.id];
+    const cell = fieldCells[c.id];
+    return cell && cell.sort !== null
+      ? { value: cell.display, color: "default" }
+      : { value: "—", color: "muted" };
+  };
 
-  const actionButtons = (
-    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-      {submissions.length > 0 && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 text-muted-foreground hover:text-primary"
-          title="View & manage scouting reports"
-          onClick={() => setReportsOpen(true)}
-        >
-          <ClipboardList className="h-3.5 w-3.5" />
-        </Button>
-      )}
-      {hasTextData && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 text-muted-foreground hover:text-foreground"
-          title="View text notes"
-          onClick={() => setTextOpen(true)}
-        >
-          <FileText className="h-3.5 w-3.5" />
-        </Button>
-      )}
-      <a
-        href={`https://www.statbotics.io/team/${teamNumber}`}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-primary hover:bg-muted transition-colors"
-        title="View on Statbotics"
-      >
-        <ExternalLink className="h-3.5 w-3.5" />
-      </a>
-    </div>
+  const showReports = columns.some((c) => c.id === REPORTS_COLUMN_ID);
+  const statColumns = columns.filter((c) => c.id !== REPORTS_COLUMN_ID);
+
+  const reportsButton = hasTextData ? (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="h-7 px-2 gap-1.5 text-muted-foreground hover:text-foreground"
+      title="View scouting reports"
+      onClick={(e) => { e.stopPropagation(); setTextOpen(true); }}
+    >
+      <FileText className="h-3.5 w-3.5" />
+      <span className="text-xs">View</span>
+    </Button>
+  ) : (
+    <span className="text-xs text-muted-foreground">—</span>
   );
 
   return (
@@ -572,7 +310,7 @@ function TeamRow({
         className={`${forceTable ? "hidden" : "block"} sm:hidden border-b border-border px-3 py-3 hover:bg-muted/20 active:bg-muted/30 transition-colors cursor-pointer`}
         onClick={onOpenDetail}
       >
-        {/* Top row: avatar + team info + actions */}
+        {/* Top row: avatar + team info + reports */}
         <div className="flex items-start gap-3">
           <TeamAvatar teamNumber={teamNumber} avatar={avatar} size={36} />
           <div className="flex-1 min-w-0">
@@ -589,15 +327,16 @@ function TeamRow({
               <p className="text-xs text-muted-foreground truncate leading-snug mt-0.5">{nickname}</p>
             )}
           </div>
-          {actionButtons}
+          {showReports && hasTextData && reportsButton}
         </div>
 
         {/* Stats chips — wrap freely, no fixed columns */}
         <div className="mt-2.5 flex flex-wrap gap-x-2 gap-y-1.5">
-          {allStats
-            .filter((s) => s.value !== "—")
-            .map((s) => (
-              <StatChip key={s.label} label={s.label} value={s.value} color={s.color} />
+          {statColumns
+            .map((c) => ({ c, s: statFor(c) }))
+            .filter(({ s }) => s.value !== "—")
+            .map(({ c, s }) => (
+              <StatChip key={c.id} label={c.label} value={s.value} color={s.color} />
             ))}
         </div>
       </div>
@@ -626,44 +365,18 @@ function TeamRow({
           </div>
         </div>
 
-        {/* Stats columns — fixed grid so every cell always occupies the same slot */}
-        <div className="flex-1 grid gap-x-4 gap-y-1 min-w-0 items-start"
-          style={{
-            gridTemplateColumns: [
-              "minmax(56px, 1fr)",   // Matches
-              "minmax(72px, 1fr)",   // Avg Score
-              "minmax(72px, 1fr)",   // Event EPA
-              "minmax(84px, 1fr)",   // Season EPA — widest header label ("Season EPA")
-              "minmax(48px, 1fr)",   // Auto
-              "minmax(56px, 1fr)",   // Teleop
-              "minmax(64px, 1fr)",   // Endgame
-            ].join(" "),
-          }}
+        {/* Stats columns — same grid template as the header */}
+        <div className="flex-1 grid gap-x-4 gap-y-1 min-w-0 items-center"
+          style={{ gridTemplateColumns: gridTemplate(columns) }}
         >
-          {allStats.map((s) => (
-            <StatChip key={s.label} label={s.label} value={s.value} color={s.color} />
-          ))}
-        </div>
-
-        {/* Actions — fixed width matching the header's Links column so every
-            row occupies the same total width, regardless of how many action
-            icons it has, keeping columns aligned across all rows. */}
-        <div className="w-24 shrink-0 flex items-center justify-end">
-          {actionButtons}
+          {columns.map((c) => {
+            if (c.id === REPORTS_COLUMN_ID) return <div key={c.id}>{reportsButton}</div>;
+            const s = statFor(c);
+            return <StatChip key={c.id} label={c.label} value={s.value} color={s.color} />;
+          })}
         </div>
       </div>
 
-      {/* Scouting reports viewer & delete */}
-      <SubmissionsReviewDialog
-        open={reportsOpen}
-        onClose={() => setReportsOpen(false)}
-        teamNumber={teamNumber}
-        submissions={submissions}
-        fields={fields}
-        isAdminMode={isAdminMode}
-      />
-
-      {/* Text notes shortcut dialog */}
       {hasTextData && (
         <TextSubmissionsDialog
           open={textOpen}
@@ -707,62 +420,50 @@ function StatChip({
 
 // ── Column header row ───────────────────────────────────────────────────────────────────
 
+/** A header cell that sorts. The caret only renders on the active column, so
+ *  the header stays quiet until you actually sort by something. */
+function SortHeader({ id, label, title, sortKey, sortDir, onSort }: {
+  id: string; label: string; title?: string;
+  sortKey: string | null; sortDir: "asc" | "desc"; onSort: (key: string) => void;
+}) {
+  const active = sortKey === id;
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(id)}
+      title={title ?? `Sort by ${label}`}
+      aria-sort={active ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+      className={`flex items-center gap-0.5 text-left uppercase tracking-wider font-semibold transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-sm min-w-0 ${
+        active ? "text-foreground" : ""
+      }`}
+    >
+      <span className="truncate">{label}</span>
+      {active && <span aria-hidden className="shrink-0">{sortDir === "asc" ? "▲" : "▼"}</span>}
+    </button>
+  );
+}
+
 function ColumnHeader({
-  sortKey, sortDir, onSort,
+  columns, sortKey, sortDir, onSort,
 }: {
+  columns: RankingColumn[];
   sortKey: string | null;
   sortDir: "asc" | "desc";
   onSort: (key: string) => void;
 }) {
-  // A header cell that sorts. The caret only renders on the active column, so
-  // the header stays quiet until you actually sort by something.
-  const Th = ({ id, label, title, className = "" }: {
-    id: string; label: string; title?: string; className?: string;
-  }) => {
-    const active = sortKey === id;
-    return (
-      <button
-        type="button"
-        onClick={() => onSort(id)}
-        title={title ?? `Sort by ${label}`}
-        aria-sort={active ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
-        className={`flex items-center gap-0.5 text-left uppercase tracking-wider font-semibold transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-sm ${
-          active ? "text-foreground" : ""
-        } ${className}`}
-      >
-        <span className="truncate">{label}</span>
-        {active && <span aria-hidden className="shrink-0">{sortDir === "asc" ? "▲" : "▼"}</span>}
-      </button>
-    );
-  };
-
+  const sort = { sortKey, sortDir, onSort };
   return (
     <div className="flex items-center gap-3 px-4 py-2 bg-muted/40 border-b border-border text-[10px] font-semibold text-muted-foreground uppercase tracking-wider sticky top-0">
       <div className="w-36 shrink-0 sticky left-0 z-10 -ml-4 pl-4 bg-card">
-        <Th id="team" label="Team" />
+        <SortHeader id="team" label="Team" {...sort} />
       </div>
-      <div className="flex-1 grid gap-x-4"
-        style={{
-          gridTemplateColumns: [
-            "minmax(56px, 1fr)",   // Rank
-            "minmax(72px, 1fr)",   // Avg Score
-            "minmax(72px, 1fr)",   // Event EPA
-            "minmax(84px, 1fr)",   // Season EPA — widest header label ("Season EPA")
-            "minmax(48px, 1fr)",   // Auto
-            "minmax(56px, 1fr)",   // Teleop
-            "minmax(64px, 1fr)",   // Endgame
-          ].join(" "),
-        }}
-      >
-        <Th id="rank"       label="Rank" title="Sort by event ranking" />
-        <Th id="avgScore"   label="Avg Score" />
-        <Th id="epaEvent"   label="Event EPA" />
-        <Th id="epaOverall" label="Season EPA" />
-        <Th id="epaAuto"    label="Auto" />
-        <Th id="epaTeleop"  label="Teleop" />
-        <Th id="epaEndgame" label="Endgame" />
+      <div className="flex-1 grid gap-x-4" style={{ gridTemplateColumns: gridTemplate(columns) }}>
+        {columns.map((c) =>
+          c.sortable
+            ? <SortHeader key={c.id} id={c.id} label={c.label} title={c.id === "rank" ? "Sort by event ranking" : undefined} {...sort} />
+            : <span key={c.id} className="truncate">{c.label}</span>
+        )}
       </div>
-      <div className="w-24 text-right">Links</div>
     </div>
   );
 }
@@ -1258,15 +959,30 @@ export default function DashboardPage() {
   const [selectedTeam, setSelectedTeam] = useState<number | null>(null);
   const eventYear = eventKey ? Number(eventKey.slice(0, 4)) : new Date().getFullYear();
 
-  // The rankings table has a fixed column set (Team / Rank / Avg Score / Event
-  // EPA / Season EPA / Auto / Teleop / Endgame / Links) — no per-form columns,
-  // so there is nothing to show or hide.
   // Active sort column, or null for the natural (team-number) order.
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   // Mobile only: lets scouts flip from the stacked card list to the same
   // scrollable column table desktop sees, so they can sort by rank/EPA/etc.
   const [mobileTableView, setMobileTableView] = useState(false);
+
+  // Columns: built-ins (on by default) + form fields an admin tagged
+  // "Rankings column" in the form builder (off by default). Visibility is a
+  // per-device preference persisted in the UI store.
+  const columnPrefs = useUIStore((s) => s.rankingColumns);
+  const setRankingColumn = useUIStore((s) => s.setRankingColumn);
+  const resetRankingColumns = useUIStore((s) => s.resetRankingColumns);
+  const fieldColumns = useMemo(
+    () => taggedFieldColumns(
+      (activeTemplates ?? []) as Array<{ _id: string; name: string; formType?: string; fields: TemplateField[] }>
+    ),
+    [activeTemplates]
+  );
+  const allColumns = useMemo(() => [...BUILTIN_COLUMNS, ...fieldColumns], [fieldColumns]);
+  const shownColumns = useMemo(() => visibleColumns(allColumns, columnPrefs), [allColumns, columnPrefs]);
+  // Team column (144) + per-column min widths + 16px gaps + row padding, so
+  // the header and rows scroll together at one shared width.
+  const tableMinWidth = 144 + 12 + 32 + shownColumns.reduce((w, c) => w + c.width + 16, 0);
 
   // First click on a column sorts it descending (highest EPA, best rank first,
   // which is what you almost always want); clicking the active column flips it;
@@ -1496,12 +1212,44 @@ export default function DashboardPage() {
     }, {});
   }, [allSubmissions, pitTemplate]);
 
+  // Per team, per tagged column: the aggregated value across that form's
+  // submissions (oldest match first, so "latest note" is really the latest).
+  const fieldCellsByTeam = useMemo(() => {
+    const out: Record<number, Record<string, FieldCell>> = {};
+    if (fieldColumns.length === 0) return out;
+    const byTeamTpl = new Map<string, Record<string, unknown>[]>();
+    const subs = [...((allSubmissions ?? []) as Submission[])]
+      .filter((s) => s.teamNumber > 0)
+      .sort((a, b) => a.matchNumber - b.matchNumber || (a.syncedAt ?? 0) - (b.syncedAt ?? 0));
+    for (const s of subs) {
+      const key = `${s.teamNumber}|${s.templateId}`;
+      let data: Record<string, unknown>;
+      try { data = JSON.parse(s.data) as Record<string, unknown>; } catch { continue; }
+      const list = byTeamTpl.get(key);
+      if (list) list.push(data); else byTeamTpl.set(key, [data]);
+    }
+    for (const [key, rows] of byTeamTpl) {
+      const [team, tpl] = key.split("|");
+      for (const col of fieldColumns) {
+        if (col.templateId !== tpl) continue;
+        (out[Number(team)] ??= {})[col.id] = aggregateField(col.field, rows.map((d) => d[col.field.id]));
+      }
+    }
+    return out;
+  }, [allSubmissions, fieldColumns]);
+
   const filtered = allTeams.filter((t) =>
     search ? String(t).includes(search) : true
   );
 
-  // Sorting — one resolver per fixed column.
+  // Hiding the sorted column drops back to team order rather than sorting by
+  // something no longer on screen.
+  const activeSortKey =
+    sortKey && (sortKey === "team" || shownColumns.some((c) => c.id === sortKey)) ? sortKey : null;
+
+  // Sorting — built-in resolvers, then tagged form-field aggregates.
   const sorted = useMemo(() => {
+    const sortKey = activeSortKey;
     if (!sortKey) return filtered;
 
     const rank = (tn: number) => {
@@ -1518,7 +1266,7 @@ export default function DashboardPage() {
       if (sortKey === "epaAuto")    return epaMap[tn]?.auto ?? null;
       if (sortKey === "epaTeleop")  return epaMap[tn]?.teleop ?? null;
       if (sortKey === "epaEndgame") return epaMap[tn]?.endgame ?? null;
-      return null;
+      return fieldCellsByTeam[tn]?.[sortKey]?.sort ?? null;
     };
 
     // Teams with no value for the active column sort to the bottom in BOTH
@@ -1535,7 +1283,7 @@ export default function DashboardPage() {
         : (va as number) - (vb as number);
       return sortDir === "asc" ? cmp : -cmp;
     });
-  }, [filtered, sortKey, sortDir, tbaRankings, avgScoreByTeam, epaMap]);
+  }, [filtered, activeSortKey, sortDir, tbaRankings, avgScoreByTeam, epaMap, fieldCellsByTeam]);
 
   const totalScouted = (allSubmissions ?? []).length;
   const scoutedUniqueTeams = scoutedTeams.size;
@@ -1635,6 +1383,38 @@ export default function DashboardPage() {
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={<Button variant="outline" className="shrink-0 gap-1.5 px-2.5 sm:px-3" title="Show / hide columns" />}
+              >
+                <Columns3 className="h-4 w-4" />
+                <span className="hidden sm:inline">Columns</span>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                {Array.from(new Set(allColumns.map((c) => c.group))).map((group, gi) => (
+                  <DropdownMenuGroup key={group}>
+                    {gi > 0 && <DropdownMenuSeparator />}
+                    <DropdownMenuLabel>{group}</DropdownMenuLabel>
+                    {allColumns.filter((c) => c.group === group).map((c) => (
+                      <DropdownMenuCheckboxItem
+                        key={c.id}
+                        checked={shownColumns.includes(c)}
+                        onCheckedChange={(v) => setRankingColumn(c.id, !!v)}
+                      >
+                        <span className="truncate">{c.label}</span>
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                  </DropdownMenuGroup>
+                ))}
+                {fieldColumns.length === 0 && (
+                  <p className="px-1.5 py-1.5 text-xs text-muted-foreground">
+                    Tag a form field as a "Rankings column" in the Form Builder to add it here.
+                  </p>
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={resetRankingColumns}>Reset to default</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             {/* Mobile-only: flip between stacked cards and the full column
                 table (horizontally scrollable) so rank/EPA sorting works on phone. */}
             <Button
@@ -1673,8 +1453,8 @@ export default function DashboardPage() {
               <div className={`${mobileTableView ? "block overflow-x-auto overflow-y-visible" : "hidden"} sm:block sm:overflow-x-auto sm:overflow-y-visible`}>
                 {/* Shared min-width: header and every row size to the same
                     width, so columns (and Links) line up when the phone scrolls. */}
-                <div className="min-w-[840px]">
-                <ColumnHeader sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                <div style={{ minWidth: tableMinWidth }}>
+                <ColumnHeader columns={shownColumns} sortKey={activeSortKey} sortDir={sortDir} onSort={toggleSort} />
                 {loadingExternal && tbaTeams.length === 0 ? (
                   <div className="divide-y divide-border">
                     {Array.from({ length: 8 }).map((_, i) => (
@@ -1712,6 +1492,8 @@ export default function DashboardPage() {
                         avgScore={avgScoreByTeam[teamNumber as number] ?? null}
                         tbaRank={tbaRankings[teamNumber as number] ?? null}
                         fields={fields}
+                        columns={shownColumns}
+                        fieldCells={fieldCellsByTeam[teamNumber as number] ?? {}}
                         onOpenDetail={() => setSelectedTeam(teamNumber as number)}
                         forceTable={mobileTableView}
                       />
@@ -1759,6 +1541,8 @@ export default function DashboardPage() {
                         avgScore={avgScoreByTeam[teamNumber as number] ?? null}
                         tbaRank={tbaRankings[teamNumber as number] ?? null}
                         fields={fields}
+                        columns={shownColumns}
+                        fieldCells={fieldCellsByTeam[teamNumber as number] ?? {}}
                         onOpenDetail={() => setSelectedTeam(teamNumber as number)}
                       />
                     );

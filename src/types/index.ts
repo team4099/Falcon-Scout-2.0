@@ -34,6 +34,7 @@ export interface FormField {
   required: boolean;
   options?: string[];    // for select/radio fields; rating fields use options[0] as max (default "5")
   section?: string;
+  showInRankings?: boolean; // offered as a hidden-by-default Dashboard rankings column
 }
 
 export interface FormTemplate {
