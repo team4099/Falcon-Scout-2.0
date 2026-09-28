@@ -284,7 +284,8 @@ describe("scout-level mutations stay usable by non-admins", () => {
 
     const { boardId, cardId } = await t.run(async (ctx) => {
       const boardId = await ctx.db.insert("kanbanBoards", {
-        name: "Picklist", type: "central", eventKey: "2025chcmp",
+        // Their own board — the shared (central) picklist is admin-only now.
+        name: "Picklist", type: "personal", ownerId: userId, eventKey: "2025chcmp",
         columns: [{ id: "unsorted", title: "Unsorted" }, { id: "a", title: "A" }],
       });
       const cardId = await ctx.db.insert("kanbanCards", {

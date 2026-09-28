@@ -30,7 +30,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
-import { Plus, X, Pencil, Users, RefreshCw, SlidersHorizontal, LayoutGrid, LayoutList, Check, GripVertical } from "lucide-react";
+import { Plus, X, Pencil, Users, RefreshCw, SlidersHorizontal, LayoutGrid, LayoutList, Check, GripVertical, ChevronDown, Lock } from "lucide-react";
 import {
   fetchStatboticsEventTeams,
   fetchTBAEventRankings,
@@ -421,19 +421,10 @@ function TeamAvatar({
   );
 }
 
-// ── Stat Chip ─────────────────────────────────────────────────────────────────
-
-function StatChip({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col min-w-0">
-      <span className="text-[9px] text-muted-foreground truncate leading-tight">{label}</span>
-      <span className="text-xs font-bold font-mono leading-tight">{value}</span>
-    </div>
-  );
-}
-
 // ── Team Card ─────────────────────────────────────────────────────────────────
 
+/** Compact card: one header line (avatar · number · name · rank · record) and
+ *  one stats line, so a column shows ~4x more teams than the old tall card. */
 function TeamCard({
   card,
   eventKey,
@@ -444,6 +435,7 @@ function TeamCard({
   fields,
   cardPrefs,
   isDragging,
+  readOnly,
   onEdit,
   onRemove,
   onDragStart,
@@ -460,6 +452,7 @@ function TeamCard({
   fields: FormField[];
   cardPrefs: string[];
   isDragging: boolean;
+  readOnly: boolean;
   onEdit: (card: KanbanCard) => void;
   onRemove: (cardId: string) => void;
   onDragStart: (e: React.DragEvent, cardId: string) => void;
@@ -474,29 +467,29 @@ function TeamCard({
 
   const visibleStats: Array<{ key: string; label: string; value: string }> = [];
 
-  // Determine EPA chip value based on fetch status
+  // Determine EPA stat value based on fetch status
   function epaVal(v: number | null | undefined): string {
     if (epaStatus === "loading") return "…";
     if (epaStatus === "error")   return "N/A";
     return v !== null && v !== undefined ? Number(v.toFixed(1)).toString() : "—";
   }
 
-  // EPA chips — always show when configured
+  // EPA stats — always show when configured
   if (cardPrefs.includes("epa")) {
-    visibleStats.push({ key: "epa",      label: "Event EPA",   value: epaVal(epa?.event)   });
+    visibleStats.push({ key: "epa",      label: "EPA",     value: epaVal(epa?.event)   });
   }
   if (cardPrefs.includes("epa_auto")) {
-    visibleStats.push({ key: "epa_auto", label: "Auto EPA",    value: epaVal(epa?.auto)    });
+    visibleStats.push({ key: "epa_auto", label: "Auto",    value: epaVal(epa?.auto)    });
   }
   if (cardPrefs.includes("epa_teleop")) {
-    visibleStats.push({ key: "epa_teleop", label: "Teleop EPA", value: epaVal(epa?.teleop) });
+    visibleStats.push({ key: "epa_teleop", label: "Teleop", value: epaVal(epa?.teleop) });
   }
   if (cardPrefs.includes("epa_endgame")) {
-    visibleStats.push({ key: "epa_endgame", label: "Endgame EPA", value: epaVal(epa?.endgame) });
+    visibleStats.push({ key: "epa_endgame", label: "Endgame", value: epaVal(epa?.endgame) });
   }
   if (cardPrefs.includes("epa_overall")) {
     // Season EPA: fall back to event EPA since team_year data may not be available yet.
-    visibleStats.push({ key: "epa_overall", label: "Season EPA", value: epaVal(epa?.event) });
+    visibleStats.push({ key: "epa_overall", label: "Season", value: epaVal(epa?.event) });
   }
 
   for (const f of fields) {
@@ -509,95 +502,80 @@ function TeamCard({
 
   return (
     <div
-      draggable
+      draggable={!readOnly}
       onDragStart={(e) => onDragStart(e, card._id)}
       onDragEnd={onDragEnd}
       onDragOver={onDragOver}
       onDrop={onDrop}
-      className={`group bg-card border border-border rounded-lg overflow-hidden cursor-grab active:cursor-grabbing transition-all select-none ${
-        isDragging
-          ? "opacity-40 scale-95"
-          : "hover:border-primary/50 hover:shadow-md hover:shadow-primary/5"
-      }`}
+      className={`group relative bg-card border border-border border-l-[3px] rounded-md transition-all select-none ${
+        readOnly ? "" : "cursor-grab active:cursor-grabbing"
+      } ${isDragging ? "opacity-40 scale-95" : "hover:border-primary/50"}`}
+      style={{ borderLeftColor: color }}
     >
-      {/* Color accent bar */}
-      <div className="h-0.5" style={{ background: color }} />
-
-      <div className="p-3 space-y-2">
-        {/* Header: avatar + number + name + actions */}
-        <div className="flex items-start gap-2">
-          <TeamAvatar teamNumber={card.teamNumber} avatar={avatar} size={36} />
-
-          <div className="flex-1 min-w-0">
-            <p className="font-bold text-base leading-tight">{card.teamNumber}</p>
-            {nickname ? (
-              <p className="text-xs text-muted-foreground truncate leading-tight">{nickname}</p>
-            ) : (
-              <p className="text-xs text-muted-foreground/50 truncate leading-tight">Loading…</p>
-            )}
-          </div>
-
-          {/* Actions — visible on hover */}
-          <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-            <button
-              onClick={(e) => { e.stopPropagation(); onEdit(card); }}
-              className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-              title="Edit notes"
+      <div className="px-2 py-1.5 space-y-0.5">
+        {/* Header: avatar · number · name · rank · record */}
+        <div className="flex items-center gap-1.5 min-w-0">
+          <TeamAvatar teamNumber={card.teamNumber} avatar={avatar} size={22} />
+          <span className="font-bold text-sm leading-none tabular-nums shrink-0">{card.teamNumber}</span>
+          <span className={`text-xs truncate flex-1 min-w-0 ${nickname ? "text-muted-foreground" : "text-muted-foreground/50"}`}>
+            {nickname ?? "Loading…"}
+          </span>
+          {rank !== null && (
+            <span
+              className="px-1 rounded font-mono text-[10px] font-semibold shrink-0"
+              style={{ background: `${color}20`, color }}
             >
-              <Pencil className="h-3.5 w-3.5" />
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); onRemove(card._id); }}
-              className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
-              title="Remove"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
+              #{rank}
+            </span>
+          )}
+          {record !== null && (
+            <span className="font-mono text-[10px] text-muted-foreground shrink-0">
+              {record.w}-{record.l}-{record.t}
+            </span>
+          )}
         </div>
 
-        {/* Rank + record */}
-        {(rank !== null || record !== null) && (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            {rank !== null && (
-              <span
-                className="px-1.5 py-0.5 rounded font-mono text-[11px] font-semibold"
-                style={{ background: `${color}20`, color }}
-              >
-                #{rank}
-              </span>
-            )}
-            {record !== null && (
-              <span className="font-mono text-[11px]">
-                {record.w}-{record.l}-{record.t}
-              </span>
-            )}
-          </div>
-        )}
-
-        {/* Configurable stats */}
-        {visibleStats.length > 0 && (
-          <div className="flex flex-wrap gap-x-3 gap-y-1 pt-0.5 border-t border-border">
+        {/* Stats line: configurable stats + matches scouted */}
+        {(visibleStats.length > 0 || submissions.length > 0) && (
+          <div className="flex flex-wrap items-baseline gap-x-2.5 text-[11px] leading-tight pl-[28px]">
             {visibleStats.map((s) => (
-              <StatChip key={s.key} label={s.label} value={s.value} />
+              <span key={s.key} className="whitespace-nowrap">
+                <span className="text-muted-foreground">{s.label} </span>
+                <span className="font-mono font-semibold">{s.value}</span>
+              </span>
             ))}
+            {submissions.length > 0 && (
+              <span className="ml-auto text-[10px] text-muted-foreground/60 whitespace-nowrap">
+                {submissions.length} scouted
+              </span>
+            )}
           </div>
         )}
 
-        {/* Notes preview */}
         {card.notes && (
-          <p className="text-xs text-muted-foreground italic line-clamp-2 border-t border-border pt-1.5">
-            {card.notes}
-          </p>
-        )}
-
-        {/* Match count */}
-        {submissions.length > 0 && (
-          <p className="text-[10px] text-muted-foreground/60">
-            {submissions.length} match{submissions.length !== 1 ? "es" : ""} scouted
-          </p>
+          <p className="text-[11px] text-muted-foreground italic truncate pl-[28px]">{card.notes}</p>
         )}
       </div>
+
+      {/* Actions — overlay on hover so they don't cost a row of height */}
+      {!readOnly && (
+        <div className="absolute top-1 right-1 flex gap-0.5 rounded bg-card opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            onClick={(e) => { e.stopPropagation(); onEdit(card); }}
+            className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+            title="Edit notes"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onRemove(card._id); }}
+            className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+            title="Remove"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -607,29 +585,16 @@ function TeamCard({
 function KanbanCol({
   column,
   cards,
-  eventKey,
-  eventYear,
-  epaByTeam,
-  epaStatus,
-  submissionsByTeam,
-  fields,
-  cardPrefs,
-  draggingCardId,
+  renderCard,
+  readOnly,
   isDragTarget,
   isColDragging,
   isColDropTarget,
-  cardDropInfo,
   onDragOver,
   onDragLeave,
   onDrop,
-  onEditCard,
-  onRemoveCard,
   onRemoveColumn,
   onRenameColumn,
-  onDragStart,
-  onDragEnd,
-  onCardDragOver,
-  onCardDrop,
   onColDragStart,
   onColDragOver,
   onColDrop,
@@ -637,41 +602,28 @@ function KanbanCol({
 }: {
   column: KanbanColumn;
   cards: KanbanCard[];
-  eventKey: string;
-  eventYear: number;
-  epaByTeam: Record<number, { event: number | null; auto: number | null; teleop: number | null; endgame: number | null }>;
-  epaStatus: "loading" | "ok" | "error";
-  submissionsByTeam: Record<number, Submission[]>;
-  fields: FormField[];
-  cardPrefs: string[];
-  draggingCardId: string | null;
+  renderCard: (card: KanbanCard) => React.ReactNode;
+  readOnly: boolean;
   isDragTarget: boolean;
   isColDragging: boolean;
   isColDropTarget: boolean;
-  cardDropInfo: { cardId: string; before: boolean } | null;
   onDragOver: (colId: string) => void;
   onDragLeave: () => void;
   onDrop: (colId: string) => void;
-  onEditCard: (card: KanbanCard) => void;
-  onRemoveCard: (cardId: string) => void;
   onRemoveColumn: (colId: string) => void;
   onRenameColumn: (colId: string, title: string) => void;
-  onDragStart: (e: React.DragEvent, cardId: string) => void;
-  onDragEnd: () => void;
-  onCardDragOver: (e: React.DragEvent, cardId: string) => void;
-  onCardDrop: (e: React.DragEvent, cardId: string) => void;
   onColDragStart: (e: React.DragEvent, colId: string) => void;
   onColDragOver: (e: React.DragEvent, colId: string) => void;
   onColDrop: (e: React.DragEvent, colId: string) => void;
   onColDragEnd: () => void;
 }) {
   const sorted = [...cards].sort((a, b) => a.position - b.position);
-  const isUnsorted = column.id === "unsorted";
 
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState(column.title);
 
   function startEditingTitle() {
+    if (readOnly) return;
     setTitleDraft(column.title);
     setIsEditingTitle(true);
   }
@@ -696,7 +648,7 @@ function KanbanCol({
           : "border-border bg-muted/30"
       }`}
       style={{
-        width: "clamp(260px, 85vw, 288px)",
+        width: "clamp(250px, 85vw, 280px)",
         scrollSnapAlign: "start",
         borderTopColor: column.color ?? undefined,
         borderTopWidth: column.color ? 3 : undefined,
@@ -722,17 +674,15 @@ function KanbanCol({
     >
       {/* Column header — draggable to reorder */}
       <div
-        draggable={!isUnsorted}
-        onDragStart={(e) => !isUnsorted && onColDragStart(e, column.id)}
+        draggable={!readOnly}
+        onDragStart={(e) => onColDragStart(e, column.id)}
         onDragEnd={onColDragEnd}
         className={`flex items-center justify-between px-3 py-2 border-b border-border bg-card ${
-          !isUnsorted ? "cursor-grab active:cursor-grabbing" : "cursor-default"
+          readOnly ? "cursor-default" : "cursor-grab active:cursor-grabbing"
         }`}
       >
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
-          {!isUnsorted && (
-            <GripVertical className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0" />
-          )}
+          {!readOnly && <GripVertical className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0" />}
           {isEditingTitle ? (
             <input
               autoFocus
@@ -750,19 +700,16 @@ function KanbanCol({
             />
           ) : (
             <span
-              className="font-semibold text-sm truncate cursor-text"
+              className={`font-semibold text-sm truncate ${readOnly ? "" : "cursor-text"}`}
               onDoubleClick={startEditingTitle}
             >
               {column.title}
             </span>
           )}
-          {isUnsorted && (
-            <span className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground/50 ml-1 shrink-0">pinned</span>
-          )}
         </div>
         <div className="flex items-center gap-1 text-muted-foreground shrink-0">
           <span className="text-xs font-mono">{sorted.length}</span>
-          {!isEditingTitle && (
+          {!readOnly && !isEditingTitle && (
             <button
               onClick={startEditingTitle}
               className="p-0.5 rounded hover:bg-primary/10 hover:text-primary"
@@ -771,10 +718,11 @@ function KanbanCol({
               <Pencil className="h-3.5 w-3.5" />
             </button>
           )}
-          {!isUnsorted && (
+          {!readOnly && (
             <button
               onClick={() => onRemoveColumn(column.id)}
               className="p-0.5 rounded hover:bg-destructive/10 hover:text-destructive"
+              title="Delete column"
             >
               <X className="h-3.5 w-3.5" />
             </button>
@@ -783,41 +731,11 @@ function KanbanCol({
       </div>
 
       {/* Cards */}
-      <ScrollArea className="flex-1" style={{ maxHeight: "calc(100vh - 220px)" }}>
-        <div className="p-2 space-y-2">
-          {sorted.map((card) => {
-            const showAbove = cardDropInfo?.cardId === card._id && cardDropInfo.before  && draggingCardId !== card._id;
-            const showBelow = cardDropInfo?.cardId === card._id && !cardDropInfo.before && draggingCardId !== card._id;
-            return (
-              <div key={card._id} className="relative">
-                {showAbove && (
-                  <div className="absolute -top-1.5 left-0 right-0 h-0.5 bg-primary z-20 pointer-events-none" />
-                )}
-                <TeamCard
-                  card={card}
-                  eventKey={eventKey}
-                  eventYear={eventYear}
-                  epa={epaByTeam[card.teamNumber] ?? null}
-                  epaStatus={epaStatus}
-                  submissions={submissionsByTeam[card.teamNumber] ?? []}
-                  fields={fields}
-                  cardPrefs={cardPrefs}
-                  isDragging={draggingCardId === card._id}
-                  onEdit={onEditCard}
-                  onRemove={onRemoveCard}
-                  onDragStart={onDragStart}
-                  onDragEnd={onDragEnd}
-                  onDragOver={(e) => onCardDragOver(e, card._id)}
-                  onDrop={(e) => onCardDrop(e, card._id)}
-                />
-                {showBelow && (
-                  <div className="absolute -bottom-1.5 left-0 right-0 h-0.5 bg-primary z-20 pointer-events-none" />
-                )}
-              </div>
-            );
-          })}
+      <ScrollArea className="flex-1" style={{ maxHeight: "max(260px, calc(100vh - 340px))" }}>
+        <div className="p-1.5 space-y-1.5">
+          {sorted.map(renderCard)}
           {sorted.length === 0 && (
-            <div className={`rounded-lg border-2 border-dashed py-8 text-center text-xs text-muted-foreground transition-colors ${
+            <div className={`rounded-lg border-2 border-dashed py-6 text-center text-xs text-muted-foreground transition-colors ${
               isDragTarget ? "border-primary/40 text-primary/60" : "border-border"
             }`}>
               {isDragTarget ? "Drop here" : "Empty"}
@@ -838,6 +756,7 @@ function ListTeamRow({
   columnColor,
   isPicked,
   isDragging,
+  readOnly,
   onTogglePick,
   onEdit,
   onRemove,
@@ -852,6 +771,7 @@ function ListTeamRow({
   columnColor?: string;
   isPicked: boolean;
   isDragging: boolean;
+  readOnly: boolean;
   onTogglePick: () => void;
   onEdit: (card: KanbanCard) => void;
   onRemove: (cardId: string) => void;
@@ -865,21 +785,23 @@ function ListTeamRow({
 
   return (
     <div
-      draggable
+      draggable={!readOnly}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onDragOver={onDragOver}
       onDrop={onDrop}
-      className={`group flex items-center gap-3 px-3 py-2.5 border-b border-border transition-all select-none ${
+      className={`group flex items-center gap-3 px-3 py-2 border-b border-border transition-all select-none ${
         isDragging
           ? "opacity-40 bg-primary/5"
           : isPicked
           ? "opacity-35 bg-muted/20"
           : "hover:bg-muted/40"
-      } ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
+      } ${readOnly ? "" : isDragging ? "cursor-grabbing" : "cursor-grab"}`}
     >
       {/* Drag handle */}
-      <GripVertical className="h-4 w-4 text-muted-foreground/30 group-hover:text-muted-foreground/60 shrink-0 transition-colors" />
+      {!readOnly && (
+        <GripVertical className="h-4 w-4 text-muted-foreground/30 group-hover:text-muted-foreground/60 shrink-0 transition-colors" />
+      )}
 
       {/* Pick toggle */}
       <button
@@ -934,7 +856,7 @@ function ListTeamRow({
       )}
 
       {/* Actions */}
-      <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+      {!readOnly && <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
         <button
           onClick={(e) => { e.stopPropagation(); onEdit(card); }}
           className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
@@ -949,7 +871,7 @@ function ListTeamRow({
         >
           <X className="h-3.5 w-3.5" />
         </button>
-      </div>
+      </div>}
     </div>
   );
 }
@@ -962,6 +884,7 @@ function ListView({
   eventYear,
   epaByTeam,
   pickedTeams,
+  readOnly,
   onTogglePick,
   onClearPicked,
   onMoveCard,
@@ -973,6 +896,7 @@ function ListView({
   eventYear: number;
   epaByTeam: Record<number, { event: number | null; auto: number | null; teleop: number | null; endgame: number | null }>;
   pickedTeams: Set<number>;
+  readOnly: boolean;
   onTogglePick: (teamNumber: number) => void;
   onClearPicked: () => void;
   onMoveCard: (cardId: string, columnId: string, position: number) => void;
@@ -1011,6 +935,7 @@ function ListView({
   // ── DnD handlers ─────────────────────────────────────────────────────────
 
   function handleDragStart(e: React.DragEvent, cardId: string) {
+    if (readOnly) { e.preventDefault(); return; }
     setListDragId(cardId);
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", cardId);
@@ -1177,6 +1102,7 @@ function ListView({
                     columnColor={column.color}
                     isPicked={pickedTeams.has(card.teamNumber)}
                     isDragging={listDragId === card._id}
+                    readOnly={readOnly}
                     onTogglePick={() => onTogglePick(card.teamNumber)}
                     onEdit={onEditCard}
                     onRemove={onRemoveCard}
@@ -1273,6 +1199,11 @@ function BoardView({
   const [viewMode, setViewMode]         = useState<"board" | "list">("board");
   const [pickedTeams, setPickedTeams]   = useState<Set<number>>(() => getPickedTeams(String(boardId)));
   const { isAdminMode } = useUIStore();
+  // The shared board is admin-only to edit (enforced in convex/kanban.ts);
+  // a personal board is always editable by its owner. This only hides the
+  // controls — the server is the real gate.
+  const canEdit = boardType === "personal" || isAdminMode;
+  const [unsortedOpen, setUnsortedOpen] = useState(true);
   // Distinguishes "TBA had nothing for us" from "you aren't an admin, so the
   // board can't be populated" — the latter used to be swallowed, leaving a
   // scout staring at an empty picklist with no explanation. Only the failure
@@ -1384,10 +1315,10 @@ function BoardView({
   useEffect(() => {
     if (!board || rawCardsCached === undefined || seededRef.current) return;
     if (!navigator.onLine) return; // skip seeding when offline
-    // seedTeams is an admin-only mutation. Calling it as a regular scout always
-    // threw, and the empty catch below hid that — so the shared board only ever
-    // filled if an admin happened to open this page first.
-    if (!isAdminMode) return;
+    // seedTeams is admin-only on the shared board. Calling it as a regular scout
+    // always threw, and the empty catch below hid that — so the shared board only
+    // ever filled if an admin happened to open this page first.
+    if (!canEdit) return;
     seededRef.current = true;
 
     const unsortedCol = columns.find((c) => c.id === "unsorted") ?? columns[columns.length - 1];
@@ -1397,7 +1328,7 @@ function BoardView({
       setSeeding(true);
       try {
         const tbaData = await fetchTBAEventTeams(eventKey);
-        if (!Array.isArray(tbaData)) return;
+        if (!Array.isArray(tbaData)) { setSeedFailed(true); return; }
         const teamNumbers = (tbaData as Array<{ team_number: number }>).map((t) => t.team_number);
         if (!teamNumbers.length) return;
         const added = await seedTeamsMutation({ boardId, eventKey, columnId: unsortedCol!.id, teamNumbers });
@@ -1412,7 +1343,7 @@ function BoardView({
     }
     seed();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [board?._id, rawCardsCached !== undefined, isAdminMode]);
+  }, [board?._id, rawCardsCached !== undefined, canEdit]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
@@ -1423,7 +1354,7 @@ function BoardView({
     setSeeding(true);
     try {
       const tbaData = await fetchTBAEventTeams(eventKey);
-      if (!Array.isArray(tbaData)) return;
+      if (!Array.isArray(tbaData)) { toast.error("Couldn't reach TBA — try again shortly."); return; }
       const teamNumbers = (tbaData as Array<{ team_number: number }>).map((t) => t.team_number);
       const added = await seedTeamsMutation({ boardId, eventKey, columnId: unsortedCol.id, teamNumbers });
       toast.success(added > 0 ? `Added ${added} new teams` : "All teams already on board");
@@ -1492,6 +1423,7 @@ function BoardView({
   // ── Column drag-to-reorder handlers ─────────────────────────────────────
 
   function handleColDragStart(e: React.DragEvent, colId: string) {
+    if (!canEdit) { e.preventDefault(); return; }
     setDraggingColId(colId);
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("application/kanban-col", colId);
@@ -1548,6 +1480,7 @@ function BoardView({
   // ── Drag handlers ─────────────────────────────────────────────────────────
 
   function handleDragStart(e: React.DragEvent, cardId: string) {
+    if (!canEdit) { e.preventDefault(); return; }
     draggingCardId.current = cardId;
     setActiveDragCardId(cardId);
     e.dataTransfer.effectAllowed = "move";
@@ -1734,6 +1667,47 @@ function BoardView({
     }
   }
 
+  // Unsorted lives in its own panel above the board; tiers are the columns.
+  const unsortedCol   = columns.find((c) => c.id === "unsorted");
+  const tierColumns   = columns.filter((c) => c.id !== "unsorted");
+  const unsortedCards = cards
+    .filter((c) => c.columnId === "unsorted")
+    .sort((a, b) => a.position - b.position);
+
+  function openNotes(card: KanbanCard) {
+    setEditingCard(card);
+    setEditNotes(card.notes ?? "");
+  }
+
+  function renderCard(card: KanbanCard) {
+    const showAbove = cardDropInfo?.cardId === card._id && cardDropInfo.before  && activeDragCardId !== card._id;
+    const showBelow = cardDropInfo?.cardId === card._id && !cardDropInfo.before && activeDragCardId !== card._id;
+    return (
+      <div key={card._id} className="relative">
+        {showAbove && <div className="absolute -top-1 left-0 right-0 h-0.5 bg-primary z-20 pointer-events-none" />}
+        <TeamCard
+          card={card}
+          eventKey={eventKey}
+          eventYear={eventYear}
+          epa={epaByTeam[card.teamNumber] ?? null}
+          epaStatus={epaStatus}
+          submissions={submissionsByTeam[card.teamNumber] ?? []}
+          fields={fields}
+          cardPrefs={cardPrefs}
+          isDragging={activeDragCardId === card._id}
+          readOnly={!canEdit}
+          onEdit={openNotes}
+          onRemove={handleRemoveCard}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+          onDragOver={(e) => handleCardDragOver(e, card._id)}
+          onDrop={(e) => handleCardDrop(e, card._id)}
+        />
+        {showBelow && <div className="absolute -bottom-1 left-0 right-0 h-0.5 bg-primary z-20 pointer-events-none" />}
+      </div>
+    );
+  }
+
   // Show cached board skeleton while loading; never fully block on Convex
   if (!board && rawCardsCached === undefined) {
     return <div className="text-muted-foreground text-sm">Loading board…</div>;
@@ -1745,6 +1719,7 @@ function BoardView({
       <div className="flex items-center gap-2 flex-wrap">
         {/* Add column — available on mobile too; it used to be hidden below sm,
             which read as the feature being broken on a phone. */}
+        {canEdit ? (
         <div className="flex items-center gap-2">
           <Input
             className="w-36 h-8 text-sm"
@@ -1757,6 +1732,12 @@ function BoardView({
             <Plus className="h-3.5 w-3.5 mr-1" /> Add Column
           </Button>
         </div>
+        ) : (
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Lock className="h-3.5 w-3.5" />
+            <span>View only — admins edit the shared picklist</span>
+          </div>
+        )}
 
         <div className="flex items-center gap-2 ml-auto">
           {/* View mode toggle */}
@@ -1796,26 +1777,29 @@ function BoardView({
             <SlidersHorizontal className="h-3.5 w-3.5" />
             <span className="hidden sm:inline ml-1">Configure Cards</span>
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleResync}
-            disabled={seeding}
-            className="h-8"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${seeding ? "animate-spin" : ""}`} />
-            <span className="hidden sm:inline ml-1">Sync Teams</span>
-          </Button>
+          {canEdit && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleResync}
+              disabled={seeding}
+              className="h-8"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${seeding ? "animate-spin" : ""}`} />
+              <span className="hidden sm:inline ml-1">Sync Teams</span>
+            </Button>
+          )}
         </div>
       </div>
 
       {/* Picklist could not be auto-populated (non-admin, or TBA had nothing) */}
-      {(!isAdminMode || seedFailed) && cards.length === 0 && (
+      {(!canEdit || seedFailed) && cards.length === 0 && (
         <div className="flex items-center gap-2 px-3 py-1.5 mb-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs">
           <span className="shrink-0">⚠</span>
           <span>
-            This board is empty and couldn't be filled automatically. Adding the event's
-            teams requires admin — turn on Admin Mode in Settings, then press "Sync Teams".
+            {canEdit
+              ? "This board is empty — couldn't load the event's teams from TBA. Press \"Sync Teams\" to retry."
+              : "This board is empty and couldn't be filled automatically. Adding the event's teams requires admin — turn on Admin Mode in Settings, then press \"Sync Teams\"."}
           </span>
         </div>
       )}
@@ -1861,51 +1845,86 @@ function BoardView({
 
       {/* Board or List view */}
       {viewMode === "board" ? (
-        /* Board — always scrolls horizontally; columns have min-width for portrait mobile */
-        <div className="flex gap-3 overflow-x-auto pb-4 flex-1" style={{ scrollSnapType: "x mandatory" }}>
-          {columns.map((col) => (
-            <KanbanCol
-              key={col.id}
-              column={col}
-              cards={cards.filter((c) => c.columnId === col.id)}
-              eventKey={eventKey}
-              eventYear={eventYear}
-              epaByTeam={epaByTeam}
-              epaStatus={epaStatus}
-              submissionsByTeam={submissionsByTeam}
-              fields={fields}
-              cardPrefs={cardPrefs}
-              draggingCardId={activeDragCardId}
-              isDragTarget={dragOverColId === col.id}
-              isColDragging={draggingColId === col.id}
-              isColDropTarget={colDropTargetId === col.id}
-              cardDropInfo={cardDropInfo}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              onEditCard={(card) => {
-                setEditingCard(card);
-                setEditNotes(card.notes ?? "");
+        <div className="flex flex-col gap-3 flex-1 min-h-0">
+          {/* Unsorted — a wrapping, scrollable pool above the tiers */}
+          {unsortedCol && (
+            <div
+              className={`rounded-xl border transition-all ${
+                dragOverColId === unsortedCol.id
+                  ? "border-primary bg-primary/5 ring-2 ring-primary/30"
+                  : "border-border bg-muted/30"
+              }`}
+              onDragOver={(e) => {
+                if (e.dataTransfer.types.includes("application/kanban-col")) return;
+                e.preventDefault();
+                handleDragOver(unsortedCol.id);
               }}
-              onRemoveCard={handleRemoveCard}
-              onRemoveColumn={handleRemoveColumn}
-              onRenameColumn={handleRenameColumn}
-              onDragStart={handleDragStart}
-              onDragEnd={handleDragEnd}
-              onCardDragOver={handleCardDragOver}
-              onCardDrop={handleCardDrop}
-              onColDragStart={handleColDragStart}
-              onColDragOver={handleColDragOver}
-              onColDrop={handleColDrop}
-              onColDragEnd={handleColDragEnd}
-            />
-          ))}
-
-          {columns.length === 0 && (
-            <div className="flex items-center justify-center h-48 w-full border-2 border-dashed border-border rounded-xl text-muted-foreground text-sm">
-              No columns yet — add one above.
+              onDragLeave={handleDragLeave}
+              onDrop={(e) => {
+                if (e.dataTransfer.types.includes("application/kanban-col")) return;
+                e.preventDefault();
+                handleDrop(unsortedCol.id);
+              }}
+            >
+              <button
+                onClick={() => setUnsortedOpen((o) => !o)}
+                className={`flex w-full items-center gap-2 px-3 py-2 text-left ${unsortedOpen ? "border-b border-border" : ""}`}
+              >
+                <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${unsortedOpen ? "" : "-rotate-90"}`} />
+                <span className="font-semibold text-sm">{unsortedCol.title}</span>
+                <span className="text-xs font-mono text-muted-foreground">{unsortedCards.length}</span>
+                {canEdit && unsortedCards.length > 0 && (
+                  <span className="ml-auto text-xs text-muted-foreground hidden sm:inline">
+                    Drag teams into a tier below
+                  </span>
+                )}
+              </button>
+              {unsortedOpen && (
+                <div
+                  className="max-h-[152px] overflow-y-auto p-1.5 grid gap-1.5"
+                  style={{ gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))" }}
+                >
+                  {unsortedCards.map(renderCard)}
+                  {unsortedCards.length === 0 && (
+                    <div className="col-span-full py-3 text-center text-xs text-muted-foreground">
+                      {activeDragCardId ? "Drop here to unsort" : "Every team is sorted into a tier."}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
+
+          {/* Tiers — always scroll horizontally; columns have min-width for portrait mobile */}
+          <div className="flex gap-3 overflow-x-auto pb-4 flex-1" style={{ scrollSnapType: "x mandatory" }}>
+            {tierColumns.map((col) => (
+              <KanbanCol
+                key={col.id}
+                column={col}
+                cards={cards.filter((c) => c.columnId === col.id)}
+                renderCard={renderCard}
+                readOnly={!canEdit}
+                isDragTarget={dragOverColId === col.id}
+                isColDragging={draggingColId === col.id}
+                isColDropTarget={colDropTargetId === col.id}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onRemoveColumn={handleRemoveColumn}
+                onRenameColumn={handleRenameColumn}
+                onColDragStart={handleColDragStart}
+                onColDragOver={handleColDragOver}
+                onColDrop={handleColDrop}
+                onColDragEnd={handleColDragEnd}
+              />
+            ))}
+
+            {tierColumns.length === 0 && (
+              <div className="flex items-center justify-center h-48 w-full border-2 border-dashed border-border rounded-xl text-muted-foreground text-sm">
+                {canEdit ? "No tiers yet — add a column above." : "No tiers yet."}
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         /* List view — flat ordered list with pick toggles */
@@ -1915,13 +1934,11 @@ function BoardView({
           eventYear={eventYear}
           epaByTeam={epaByTeam}
           pickedTeams={pickedTeams}
+          readOnly={!canEdit}
           onTogglePick={handleTogglePick}
           onClearPicked={handleClearPicked}
           onMoveCard={handleMoveInList}
-          onEditCard={(card) => {
-            setEditingCard(card);
-            setEditNotes(card.notes ?? "");
-          }}
+          onEditCard={openNotes}
           onRemoveCard={handleRemoveCard}
         />
       )}
@@ -2040,6 +2057,7 @@ export default function KanbanPage() {
   const currentEventLive = useQuery(api.events.getCurrentEvent);
   const currentEvent = useCached(currentEventLive, "current_event");
   const createBoard = useMutation(api.kanban.createBoard);
+  const { isAdminMode } = useUIStore();
 
   const eventKey = currentEvent?.eventKey ?? "";
 
@@ -2070,15 +2088,18 @@ export default function KanbanPage() {
     // undefined = still loading, null = loaded + not found → create it
     if (!eventKey || centralBoard !== null || creatingCentral) return;
     if (centralBoard === undefined) return; // still loading
+    if (!isAdminMode) return; // creating the shared board is admin-only
     setCreatingCentral(true);
     createBoard({
       name: "Central Board",
       type: "central",
       eventKey,
       columns: DEFAULT_COLUMNS,
-    }).finally(() => setCreatingCentral(false));
+    })
+      .catch(() => toast.error("Couldn't set up the shared picklist."))
+      .finally(() => setCreatingCentral(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventKey, centralBoard]);
+  }, [eventKey, centralBoard, isAdminMode]);
 
   async function ensurePersonalBoard() {
     if (!eventKey) { toast.error("Set an event in settings first."); return; }
@@ -2097,7 +2118,7 @@ export default function KanbanPage() {
         </div>
         <div className="hidden sm:flex items-center gap-2 text-xs text-muted-foreground">
           <Users className="h-4 w-4" />
-          <span>Shared picklist is visible to all scouts</span>
+          <span>Shared picklist: everyone views, admins edit</span>
         </div>
       </div>
 
@@ -2125,8 +2146,13 @@ export default function KanbanPage() {
                 eventYear={eventYear}
                 boardType="central"
               />
-            ) : (
+            ) : isAdminMode ? (
               <p className="text-muted-foreground text-sm">Creating board…</p>
+            ) : (
+              <p className="text-muted-foreground text-sm">
+                The shared picklist hasn't been set up for this event yet — an admin
+                needs to open this page with Admin Mode on.
+              </p>
             )}
           </TabsContent>
 

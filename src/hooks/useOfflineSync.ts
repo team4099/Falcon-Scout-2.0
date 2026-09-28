@@ -105,7 +105,13 @@ export function useOfflineSync() {
         }
         dequeueKanbanOp(op.id);
         anySynced = true;
-      } catch {
+      } catch (err) {
+        // A rejection that retrying can't fix (card deleted, or the shared
+        // picklist is admin-only) would otherwise wedge the queue forever.
+        if (err instanceof Error && /Admin access required|someone else's board|not found/i.test(err.message)) {
+          dequeueKanbanOp(op.id);
+          continue;
+        }
         break;
       }
     }

@@ -70,15 +70,19 @@ import {
   Camera,
   CircleDot,
   Eye,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
   DndContext,
-  closestCenter,
+  closestCorners,
   PointerSensor,
+  useDroppable,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragOverEvent,
 } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -87,6 +91,10 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { moveFieldToSection, moveSection, orderFieldsBySection, sectionOf } from "@/lib/formSections";
+
+// Droppable id prefix for a section's field list (lets fields drop into empty sections).
+const SECTION_DROP = "section::";
 
 // ──────────────────────────────────────────────
 // Field type metadata
@@ -398,13 +406,12 @@ function FieldEditor({
 // Section Block — groups fields under a named section header
 // ──────────────────────────────────────────────
 function SectionBlock({
-  sectionName, fields, allSections, sensors, fieldTypeMeta, canDelete,
-  onRename, onDelete, onUpdateField, onDeleteField, onAddField, onDragEnd,
+  sectionName, fields, allSections, fieldTypeMeta, canDelete,
+  onRename, onDelete, onUpdateField, onDeleteField, onAddField, onMoveUp, onMoveDown,
 }: {
   sectionName: string;
   fields: FormField[];
   allSections: string[];
-  sensors: ReturnType<typeof useSensors>;
   fieldTypeMeta: typeof FIELD_TYPES;
   canDelete: boolean;
   onRename: (newName: string) => void;
@@ -412,8 +419,11 @@ function SectionBlock({
   onUpdateField: (field: FormField, updated: FormField) => void;
   onDeleteField: (field: FormField) => void;
   onAddField: (type: FieldType) => void;
-  onDragEnd: (event: DragEndEvent) => void;
+  /** Undefined when the section is already first/last. */
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
 }) {
+  const { setNodeRef: setDropRef, isOver } = useDroppable({ id: SECTION_DROP + sectionName });
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState(sectionName);
   const [showAddField, setShowAddField] = useState(false);
@@ -444,6 +454,24 @@ function SectionBlock({
           <span className="flex-1 text-sm font-semibold text-primary">{sectionName}</span>
         )}
         <span className="text-xs text-muted-foreground font-mono">{fields.length} field{fields.length !== 1 ? "s" : ""}</span>
+        <button
+          onClick={onMoveUp}
+          disabled={!onMoveUp}
+          className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-30 disabled:pointer-events-none"
+          title="Move section up"
+          aria-label={`Move section ${sectionName} up`}
+        >
+          <ArrowUp className="h-3.5 w-3.5" />
+        </button>
+        <button
+          onClick={onMoveDown}
+          disabled={!onMoveDown}
+          className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-30 disabled:pointer-events-none"
+          title="Move section down"
+          aria-label={`Move section ${sectionName} down`}
+        >
+          <ArrowDown className="h-3.5 w-3.5" />
+        </button>
         <button
           onClick={() => setEditing(true)}
           className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
@@ -487,23 +515,21 @@ function SectionBlock({
       </div>
 
       {/* Fields within section */}
-      <div className="p-2 space-y-2">
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-          <SortableContext items={fields.map((f) => f.id)} strategy={verticalListSortingStrategy}>
-            {fields.map((field) => (
-              <SortableField
-                key={field.id}
-                field={field}
-                onUpdate={(updated) => onUpdateField(field, updated)}
-                onDelete={() => onDeleteField(field)}
-                sections={allSections}
-              />
-            ))}
-          </SortableContext>
-        </DndContext>
+      <div ref={setDropRef} className={`p-2 space-y-2 transition-colors ${isOver ? "bg-primary/5" : ""}`}>
+        <SortableContext items={fields.map((f) => f.id)} strategy={verticalListSortingStrategy}>
+          {fields.map((field) => (
+            <SortableField
+              key={field.id}
+              field={field}
+              onUpdate={(updated) => onUpdateField(field, updated)}
+              onDelete={() => onDeleteField(field)}
+              sections={allSections}
+            />
+          ))}
+        </SortableContext>
         {fields.length === 0 && (
           <p className="text-xs text-muted-foreground/60 italic text-center py-3">
-            No fields yet — add one below
+            No fields yet — add one or drag one here
           </p>
         )}
       </div>
@@ -766,7 +792,10 @@ function FormBuilderContent() {
     setSaving(true);
     try {
       // Every form but spying gets the pinned team# field prepended
-      const savedFields = hasPinnedTeam ? [AUTO_TEAM_FIELD, ...fields] : fields;
+      // Sections render in first-appearance order, so persist fields grouped
+      // by the builder's section order.
+      const ordered = orderFieldsBySection(fields, sectionNames);
+      const savedFields = hasPinnedTeam ? [AUTO_TEAM_FIELD, ...ordered] : ordered;
 
       if (selectedId) {
         // Deduplicate name against all other templates (excluding self)
@@ -861,9 +890,26 @@ function FormBuilderContent() {
     setFields((prev) => prev.filter((f) => f.id !== field.id));
   }
 
+  // Where a drag is pointing: a field (drop at its slot) or a section's list (append).
+  function dropTarget(overId: string): { section: string; fieldId: string | null } | null {
+    if (overId.startsWith(SECTION_DROP)) return { section: overId.slice(SECTION_DROP.length), fieldId: null };
+    const f = fields.find((x) => x.id === overId);
+    return f ? { section: sectionOf(f, sectionNames), fieldId: f.id } : null;
+  }
+
+  // Crossing into another section re-homes the field live, so the target
+  // list opens a gap for it while dragging.
+  function handleDragOver({ active, over }: DragOverEvent) {
+    if (!over) return;
+    const dragged = fields.find((f) => f.id === active.id);
+    const target = dropTarget(String(over.id));
+    if (!dragged || !target || sectionOf(dragged, sectionNames) === target.section) return;
+    setFields((prev) => moveFieldToSection(prev, sectionNames, String(active.id), target.section, target.fieldId));
+  }
+
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
-    if (over && active.id !== over.id) {
+    if (over && active.id !== over.id && !String(over.id).startsWith(SECTION_DROP)) {
       setFields((prev) => {
         const oldIndex = prev.findIndex((f) => f.id === active.id);
         const newIndex = prev.findIndex((f) => f.id === over.id);
@@ -873,7 +919,8 @@ function FormBuilderContent() {
   }
 
   // Group fields by section for preview
-  const previewFields = hasPinnedTeam ? [AUTO_TEAM_FIELD, ...fields] : fields;
+  const orderedFields = orderFieldsBySection(fields, sectionNames);
+  const previewFields = hasPinnedTeam ? [AUTO_TEAM_FIELD, ...orderedFields] : orderedFields;
   const previewSections = previewFields.reduce<Record<string, FormField[]>>((acc, f) => {
     const key = f.section ?? "General";
     acc[key] = [...(acc[key] ?? []), f];
@@ -1122,7 +1169,8 @@ function FormBuilderContent() {
 
               {/* Section-grouped field canvas */}
               <div className="space-y-3">
-                {sectionNames.map((sec) => {
+                <DndContext sensors={sensors} collisionDetection={closestCorners} onDragOver={handleDragOver} onDragEnd={handleDragEnd}>
+                {sectionNames.map((sec, i) => {
                   const secFields = fields.filter((f) => (f.section ?? sectionNames[0]) === sec);
                   return (
                     <SectionBlock
@@ -1130,7 +1178,6 @@ function FormBuilderContent() {
                       sectionName={sec}
                       fields={secFields}
                       allSections={sectionNames}
-                      sensors={sensors}
                       fieldTypeMeta={FIELD_TYPES}
                       canDelete={sectionNames.length > 1}
                       onRename={(newName) => renameSection(sec, newName)}
@@ -1138,10 +1185,12 @@ function FormBuilderContent() {
                       onUpdateField={updateField}
                       onDeleteField={deleteField}
                       onAddField={(type) => addField(type, sec)}
-                      onDragEnd={handleDragEnd}
+                      onMoveUp={i > 0 ? () => setSectionNames((p) => moveSection(p, i, -1)) : undefined}
+                      onMoveDown={i < sectionNames.length - 1 ? () => setSectionNames((p) => moveSection(p, i, 1)) : undefined}
                     />
                   );
                 })}
+                </DndContext>
                 <AddSectionButton onAdd={addSection} existing={sectionNames} />
               </div>
             </TabsContent>

@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { getApprovedUserId, isSignedIn, requireAdmin, requireUser } from "./adminAuth";
 
 // ──────────────────────────────────────────────
@@ -34,6 +34,26 @@ export const getPersonalBoard = query({
   },
 });
 
+/**
+ * The one write gate for picklist boards. The shared (central) board is a team
+ * artefact that only admins may change — scouts can view it but not move,
+ * annotate or remove cards, nor edit its columns. A personal board is writable
+ * by its owner only.
+ */
+async function requireBoardWrite(ctx: MutationCtx, board: Doc<"kanbanBoards">) {
+  if (board.type === "central") return await requireAdmin(ctx);
+  const userId = await requireUser(ctx);
+  if (board.ownerId !== userId) throw new Error("That is someone else's board.");
+  return userId;
+}
+
+async function getBoardForWrite(ctx: MutationCtx, boardId: Id<"kanbanBoards">) {
+  const board = await ctx.db.get(boardId);
+  if (!board) throw new Error("Board not found");
+  await requireBoardWrite(ctx, board);
+  return board;
+}
+
 export const createBoard = mutation({
   args: {
     name: v.string(),
@@ -48,11 +68,18 @@ export const createBoard = mutation({
     ),
   },
   handler: async (ctx, args) => {
+    if (args.type === "central") {
+      await requireAdmin(ctx);
+      // Two admins opening the page at once would otherwise both create one.
+      const existing = await ctx.db
+        .query("kanbanBoards")
+        .withIndex("by_type_event", (q) => q.eq("type", "central").eq("eventKey", args.eventKey))
+        .first();
+      if (existing) return existing._id;
+      return await ctx.db.insert("kanbanBoards", { ...args, ownerId: undefined });
+    }
     const userId = await requireUser(ctx);
-    return await ctx.db.insert("kanbanBoards", {
-      ...args,
-      ownerId: args.type === "personal" && userId ? userId : undefined,
-    });
+    return await ctx.db.insert("kanbanBoards", { ...args, ownerId: userId });
   },
 });
 
@@ -68,9 +95,23 @@ export const updateBoardColumns = mutation({
     ),
     adminKey: v.optional(v.string()),
   },
-  handler: async (ctx, { boardId, columns, adminKey }) => {
-    await requireAdmin(ctx, adminKey);
+  handler: async (ctx, { boardId, columns }) => {
+    await getBoardForWrite(ctx, boardId);
     await ctx.db.patch(boardId, { columns });
+    // Deleting a column used to orphan its cards (invisible, and re-sync skips
+    // them as already present). Send them back to Unsorted instead.
+    if (!columns.some((c) => c.id === "unsorted")) return;
+    const kept = new Set(columns.map((c) => c.id));
+    const cards = await ctx.db
+      .query("kanbanCards")
+      .withIndex("by_board", (q) => q.eq("boardId", boardId))
+      .collect();
+    let position = cards.filter((c) => c.columnId === "unsorted").length;
+    for (const card of cards) {
+      if (!kept.has(card.columnId)) {
+        await ctx.db.patch(card._id, { columnId: "unsorted", position: position++ });
+      }
+    }
   },
 });
 
@@ -99,33 +140,16 @@ export const addCard = mutation({
     position: v.number(),
   },
   handler: async (ctx, args) => {
-    const userId = await requireUser(ctx);
-    const board = await ctx.db.get(args.boardId);
-    if (!board) throw new Error("Board not found");
-    if (board.type === "personal" && board.ownerId !== userId) {
-      throw new Error("That is someone else's board.");
-    }
+    await getBoardForWrite(ctx, args.boardId);
     return await ctx.db.insert("kanbanCards", args);
   },
 });
 
-/**
- * Confirm the caller may write to the board a card sits on, and return the card.
- *
- * Personal boards carry an ownerId and getPersonalBoard filters on it, but the
- * card mutations took a bare cardId and only checked that the caller was signed
- * in — so any scout could move, edit or delete cards on someone else's personal
- * board. Central boards stay shared: the picklist is a team artefact.
- */
+/** Confirm the caller may write to the board a card sits on, and return the card. */
 async function requireCardAccess(ctx: MutationCtx, cardId: Id<"kanbanCards">) {
-  const userId = await requireUser(ctx);
   const card = await ctx.db.get(cardId);
   if (!card) throw new Error("Card not found");
-  const board = await ctx.db.get(card.boardId);
-  if (!board) throw new Error("Board not found");
-  if (board.type === "personal" && board.ownerId !== userId) {
-    throw new Error("That card is on someone else's board.");
-  }
+  await getBoardForWrite(ctx, card.boardId);
   return card;
 }
 
@@ -172,8 +196,8 @@ export const seedTeams = mutation({
     teamNumbers: v.array(v.number()),
     adminKey: v.optional(v.string()),
   },
-  handler: async (ctx, { boardId, eventKey, columnId, teamNumbers, adminKey }) => {
-    await requireAdmin(ctx, adminKey);
+  handler: async (ctx, { boardId, eventKey, columnId, teamNumbers }) => {
+    await getBoardForWrite(ctx, boardId);
     // Fetch all existing cards on this board to avoid duplicates
     const existing = await ctx.db
       .query("kanbanCards")

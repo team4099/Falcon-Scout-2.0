@@ -26,7 +26,7 @@ import {
 import type { TBAMatch } from "@/lib/api";
 import { EMPTY_TEAM_EPA, parseEpaComponents, totalEpa } from "@/lib/epa";
 import type { TeamEpa } from "@/lib/epa";
-import { ExternalLink, Search, FileText, TrendingUp, Clock, CalendarCheck, Trophy, CalendarDays, Rows3, Table2, Columns3 } from "lucide-react";
+import { ExternalLink, Search, FileText, TrendingUp, Clock, CalendarCheck, Trophy, CalendarDays, Rows3, Table2, Columns3, EyeOff, Eye } from "lucide-react";
 import TeamDetailPanel from "@/pages/TeamDetailPanel";
 import { useMutation } from "convex/react";
 import {
@@ -202,6 +202,7 @@ function TeamRow({
   columns,
   fieldCells,
   onOpenDetail,
+  onHide,
   forceTable = false,
 }: {
   teamNumber: number;
@@ -216,6 +217,8 @@ function TeamRow({
   /** This team's aggregated values for tagged form-field columns. */
   fieldCells: Record<string, FieldCell>;
   onOpenDetail: () => void;
+  /** Moves this team to the "Hidden teams" section below the list. */
+  onHide: () => void;
   /** When true, always render the column-table row layout, even below the
    *  sm breakpoint — used for the mobile "table view" toggle. */
   forceTable?: boolean;
@@ -303,6 +306,19 @@ function TeamRow({
     <span className="text-xs text-muted-foreground">—</span>
   );
 
+  const hideButton = (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+      title={`Hide team ${teamNumber}`}
+      aria-label={`Hide team ${teamNumber}`}
+      onClick={(e) => { e.stopPropagation(); onHide(); }}
+    >
+      <EyeOff className="h-3.5 w-3.5" />
+    </Button>
+  );
+
   return (
     <>
       {/* ── Mobile card layout (hidden on sm+, and hidden below sm when forceTable is on) ── */}
@@ -328,6 +344,7 @@ function TeamRow({
             )}
           </div>
           {showReports && hasTextData && reportsButton}
+          {hideButton}
         </div>
 
         {/* Stats chips — wrap freely, no fixed columns */}
@@ -375,6 +392,7 @@ function TeamRow({
             return <StatChip key={c.id} label={c.label} value={s.value} color={s.color} />;
           })}
         </div>
+        {hideButton}
       </div>
 
       {hasTextData && (
@@ -464,6 +482,8 @@ function ColumnHeader({
             : <span key={c.id} className="truncate">{c.label}</span>
         )}
       </div>
+      {/* Spacer matching each row's hide button */}
+      <div className="w-8 shrink-0" />
     </div>
   );
 }
@@ -980,9 +1000,15 @@ export default function DashboardPage() {
   );
   const allColumns = useMemo(() => [...BUILTIN_COLUMNS, ...fieldColumns], [fieldColumns]);
   const shownColumns = useMemo(() => visibleColumns(allColumns, columnPrefs), [allColumns, columnPrefs]);
+  // Per-device hidden teams for this event: dropped from the ranked list and
+  // listed separately under it so they can be brought back.
+  const hiddenForEvent = useUIStore((s) => s.hiddenTeams[eventKey]);
+  const setTeamHidden = useUIStore((s) => s.setTeamHidden);
+  const unhideAllTeams = useUIStore((s) => s.unhideAllTeams);
+  const hiddenSet = useMemo(() => new Set(hiddenForEvent ?? []), [hiddenForEvent]);
   // Team column (144) + per-column min widths + 16px gaps + row padding, so
   // the header and rows scroll together at one shared width.
-  const tableMinWidth = 144 + 12 + 32 + shownColumns.reduce((w, c) => w + c.width + 16, 0);
+  const tableMinWidth = 144 + 12 + 32 + 44 + shownColumns.reduce((w, c) => w + c.width + 16, 0);
 
   // First click on a column sorts it descending (highest EPA, best rank first,
   // which is what you almost always want); clicking the active column flips it;
@@ -1285,6 +1311,14 @@ export default function DashboardPage() {
     });
   }, [filtered, activeSortKey, sortDir, tbaRankings, avgScoreByTeam, epaMap, fieldCellsByTeam]);
 
+  const visibleTeams = sorted.filter((t) => !hiddenSet.has(t as number));
+  const hiddenTeams = filtered.filter((t) => hiddenSet.has(t as number)) as number[];
+  const emptyListMessage = search
+    ? "No teams match your search."
+    : filtered.length > 0
+      ? "All teams are hidden."
+      : "No teams found for this event.";
+
   const totalScouted = (allSubmissions ?? []).length;
   const scoutedUniqueTeams = scoutedTeams.size;
 
@@ -1475,12 +1509,10 @@ export default function DashboardPage() {
                       </div>
                     ))}
                   </div>
-                ) : filtered.length === 0 ? (
-                  <p className="text-center py-12 text-muted-foreground text-sm">
-                    {search ? "No teams match your search." : "No teams found for this event."}
-                  </p>
+                ) : visibleTeams.length === 0 ? (
+                  <p className="text-center py-12 text-muted-foreground text-sm">{emptyListMessage}</p>
                 ) : (
-                  sorted.map((teamNumber) => {
+                  visibleTeams.map((teamNumber) => {
                     const teamEpa = epaMap[teamNumber as number] ?? EMPTY_TEAM_EPA;
                     return (
                       <TeamRow
@@ -1495,6 +1527,7 @@ export default function DashboardPage() {
                         columns={shownColumns}
                         fieldCells={fieldCellsByTeam[teamNumber as number] ?? {}}
                         onOpenDetail={() => setSelectedTeam(teamNumber as number)}
+                        onHide={() => setTeamHidden(eventKey, teamNumber as number, true)}
                         forceTable={mobileTableView}
                       />
                     );
@@ -1524,12 +1557,10 @@ export default function DashboardPage() {
                       </div>
                     ))}
                   </div>
-                ) : filtered.length === 0 ? (
-                  <p className="text-center py-12 text-muted-foreground text-sm px-4">
-                    {search ? "No teams match your search." : "No teams found for this event."}
-                  </p>
+                ) : visibleTeams.length === 0 ? (
+                  <p className="text-center py-12 text-muted-foreground text-sm px-4">{emptyListMessage}</p>
                 ) : (
-                  sorted.map((teamNumber) => {
+                  visibleTeams.map((teamNumber) => {
                     const teamEpa = epaMap[teamNumber as number] ?? EMPTY_TEAM_EPA;
                     return (
                       <TeamRow
@@ -1544,6 +1575,7 @@ export default function DashboardPage() {
                         columns={shownColumns}
                         fieldCells={fieldCellsByTeam[teamNumber as number] ?? {}}
                         onOpenDetail={() => setSelectedTeam(teamNumber as number)}
+                        onHide={() => setTeamHidden(eventKey, teamNumber as number, true)}
                       />
                     );
                   })
@@ -1551,6 +1583,43 @@ export default function DashboardPage() {
               </div>
             </ScrollArea>
           </div>
+
+          {/* Hidden teams — kept out of the ranked list above, one tap to restore. */}
+          {hiddenTeams.length > 0 && (
+            <div className="shrink-0 bg-card border border-border rounded-xl p-3">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Hidden teams ({hiddenTeams.length})
+                </p>
+                <Button variant="ghost" size="sm" className="h-8 gap-1.5" onClick={() => unhideAllTeams(eventKey)}>
+                  <Eye className="h-3.5 w-3.5" /> Unhide all
+                </Button>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {hiddenTeams.map((t) => (
+                  <div key={t} className="flex items-center rounded-md border border-border bg-muted/30">
+                    <button
+                      type="button"
+                      className="h-8 pl-2.5 pr-1.5 text-sm font-semibold font-mono hover:text-primary"
+                      title={`Open team ${t}`}
+                      onClick={() => setSelectedTeam(t)}
+                    >
+                      {t}
+                    </button>
+                    <button
+                      type="button"
+                      className="h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-foreground border-l border-border"
+                      title={`Unhide team ${t}`}
+                      aria-label={`Unhide team ${t}`}
+                      onClick={() => setTeamHidden(eventKey, t, false)}
+                    >
+                      <Eye className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </>
       )}
 

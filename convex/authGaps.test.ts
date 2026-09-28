@@ -327,23 +327,94 @@ describe("personal kanban boards are private", () => {
     expect(card?.columnId).toBe("b");
   });
 
-  test("the central board stays shared", async () => {
+  test("the owner can fill their own board from TBA without admin", async () => {
     const t = convexTest(schema, modules);
-    const { cardId } = await t.run(async (ctx) => {
-      await ctx.db.insert("users", { name: "Owner", email: "owner@team4099.com" });
+    const { owner, intruder, boardId } = await setupBoards(t);
+    const args = { boardId, eventKey: EVENT, columnId: "a", teamNumbers: [4099, 254] };
+    await expect(t.withIdentity({ subject: intruder, issuer: "test" })
+      .mutation(api.kanban.seedTeams, args)).rejects.toThrow(/someone else's board/);
+    // 4099 is already on the board, so only 254 is added.
+    expect(await t.withIdentity({ subject: owner, issuer: "test" })
+      .mutation(api.kanban.seedTeams, args)).toBe(1);
+  });
+
+  test("the owner can edit their own board's columns without admin", async () => {
+    const t = convexTest(schema, modules);
+    const { owner, intruder, boardId } = await setupBoards(t);
+    const columns = [{ id: "a", title: "Renamed" }, { id: "b", title: "B" }];
+    await expect(t.withIdentity({ subject: intruder, issuer: "test" })
+      .mutation(api.kanban.updateBoardColumns, { boardId, columns })).rejects.toThrow(/someone else's board/);
+    await t.withIdentity({ subject: owner, issuer: "test" })
+      .mutation(api.kanban.updateBoardColumns, { boardId, columns });
+    expect((await t.run((ctx) => ctx.db.get(boardId)))?.columns[0].title).toBe("Renamed");
+  });
+});
+
+describe("the shared picklist is admin-only to edit", () => {
+  async function setupCentral(t: ReturnType<typeof convexTest>) {
+    const ids = await t.run(async (ctx) => {
+      const scout = await ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" });
+      const chief = await ctx.db.insert("users", { name: "Chief", email: "czhao@team4099.com" });
       const boardId = await ctx.db.insert("kanbanBoards", {
         name: "Picklist", type: "central", eventKey: EVENT,
-        columns: [{ id: "a", title: "A" }, { id: "b", title: "B" }],
+        columns: [{ id: "a", title: "A" }, { id: "unsorted", title: "Unsorted" }],
       });
-      return { cardId: await ctx.db.insert("kanbanCards", {
+      const cardId = await ctx.db.insert("kanbanCards", {
         boardId, columnId: "a", teamNumber: 4099, eventKey: EVENT, position: 0,
-      }) };
+      });
+      return { scout, chief, boardId, cardId };
     });
-    const other = await t.run(async (ctx) => ctx.db.insert("users", { name: "Other", email: "other@team4099.com" }));
-    const as = t.withIdentity({ subject: other, issuer: "test" });
-    await as.mutation(api.kanban.moveCard, { cardId, columnId: "b", position: 0 });
-    const card = await t.run(async (ctx) => await ctx.db.get(cardId));
-    expect(card?.columnId).toBe("b");
+    return {
+      ...ids,
+      asScout: t.withIdentity({ subject: ids.scout, issuer: "test", email: "scout@team4099.com" }),
+      asChief: t.withIdentity({ subject: ids.chief, issuer: "test", email: "czhao@team4099.com" }),
+    };
+  }
+
+  test("a scout can read it but every write is rejected", async () => {
+    const t = convexTest(schema, modules);
+    const { boardId, cardId, asScout } = await setupCentral(t);
+    expect(await asScout.query(api.kanban.getBoardCards, { boardId })).toHaveLength(1);
+    const denied = /Admin access required/;
+    await expect(asScout.mutation(api.kanban.moveCard, { cardId, columnId: "unsorted", position: 0 })).rejects.toThrow(denied);
+    await expect(asScout.mutation(api.kanban.updateCard, { cardId, notes: "hi" })).rejects.toThrow(denied);
+    await expect(asScout.mutation(api.kanban.removeCard, { cardId })).rejects.toThrow(denied);
+    await expect(asScout.mutation(api.kanban.addCard, {
+      boardId, columnId: "a", teamNumber: 1, eventKey: EVENT, position: 1,
+    })).rejects.toThrow(denied);
+    await expect(asScout.mutation(api.kanban.updateBoardColumns, { boardId, columns: [] })).rejects.toThrow(denied);
+    await expect(asScout.mutation(api.kanban.seedTeams, {
+      boardId, eventKey: EVENT, columnId: "unsorted", teamNumbers: [1],
+    })).rejects.toThrow(denied);
+    await expect(asScout.mutation(api.kanban.createBoard, {
+      name: "x", type: "central", eventKey: "2099xx", columns: [],
+    })).rejects.toThrow(denied);
+    expect((await t.run((ctx) => ctx.db.get(cardId)))?.columnId).toBe("a");
+  });
+
+  test("an admin can move cards", async () => {
+    const t = convexTest(schema, modules);
+    const { cardId, asChief } = await setupCentral(t);
+    await asChief.mutation(api.kanban.moveCard, { cardId, columnId: "unsorted", position: 0 });
+    expect((await t.run((ctx) => ctx.db.get(cardId)))?.columnId).toBe("unsorted");
+  });
+
+  test("deleting a column sends its cards back to Unsorted", async () => {
+    const t = convexTest(schema, modules);
+    const { boardId, cardId, asChief } = await setupCentral(t);
+    await asChief.mutation(api.kanban.updateBoardColumns, {
+      boardId, columns: [{ id: "unsorted", title: "Unsorted" }],
+    });
+    expect((await t.run((ctx) => ctx.db.get(cardId)))?.columnId).toBe("unsorted");
+  });
+
+  test("creating the central board twice returns the existing one", async () => {
+    const t = convexTest(schema, modules);
+    const { boardId, asChief } = await setupCentral(t);
+    const again = await asChief.mutation(api.kanban.createBoard, {
+      name: "Picklist", type: "central", eventKey: EVENT, columns: [],
+    });
+    expect(again).toBe(boardId);
   });
 });
 
