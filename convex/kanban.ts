@@ -3,6 +3,7 @@ import { mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { getApprovedUserId, isSignedIn, requireAdmin, requireUser } from "./adminAuth";
+import { planMove } from "./kanbanOrder";
 
 // ──────────────────────────────────────────────
 // Kanban Boards
@@ -160,8 +161,14 @@ export const moveCard = mutation({
     position: v.number(),
   },
   handler: async (ctx, { cardId, columnId, position }) => {
-    await requireCardAccess(ctx, cardId);
-    await ctx.db.patch(cardId, { columnId, position });
+    const card = await requireCardAccess(ctx, cardId);
+    const cards = await ctx.db
+      .query("kanbanCards")
+      .withIndex("by_board", (q) => q.eq("boardId", card.boardId))
+      .collect();
+    for (const m of planMove(cards, cardId, columnId, position)) {
+      await ctx.db.patch(m.card._id, { columnId: m.columnId, position: m.position });
+    }
   },
 });
 

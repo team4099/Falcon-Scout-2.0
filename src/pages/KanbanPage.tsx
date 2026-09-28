@@ -5,6 +5,7 @@ import { useUIStore } from "@/store/uiStore";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import type { KanbanColumn, KanbanCard } from "@/types";
+import { byPosition, planMove } from "../../convex/kanbanOrder";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -440,8 +441,6 @@ function TeamCard({
   onRemove,
   onDragStart,
   onDragEnd,
-  onDragOver,
-  onDrop,
 }: {
   card: KanbanCard;
   eventKey: string;
@@ -457,8 +456,6 @@ function TeamCard({
   onRemove: (cardId: string) => void;
   onDragStart: (e: React.DragEvent, cardId: string) => void;
   onDragEnd: () => void;
-  onDragOver?: (e: React.DragEvent) => void;
-  onDrop?: (e: React.DragEvent) => void;
 }) {
   const { nickname, avatar } = useTeamInfo(card.teamNumber, eventYear);
   const { rank, record } = useTeamRanking(card.teamNumber, eventKey);
@@ -505,8 +502,6 @@ function TeamCard({
       draggable={!readOnly}
       onDragStart={(e) => onDragStart(e, card._id)}
       onDragEnd={onDragEnd}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
       className={`group relative bg-card border border-border border-l-[3px] rounded-md transition-all select-none ${
         readOnly ? "" : "cursor-grab active:cursor-grabbing"
       } ${isDragging ? "opacity-40 scale-95" : "hover:border-primary/50"}`}
@@ -617,7 +612,7 @@ function KanbanCol({
   onColDrop: (e: React.DragEvent, colId: string) => void;
   onColDragEnd: () => void;
 }) {
-  const sorted = [...cards].sort((a, b) => a.position - b.position);
+  const sorted = [...cards].sort(byPosition);
 
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState(column.title);
@@ -732,7 +727,7 @@ function KanbanCol({
 
       {/* Cards */}
       <ScrollArea className="flex-1" style={{ maxHeight: "max(260px, calc(100vh - 340px))" }}>
-        <div className="p-1.5 space-y-1.5">
+        <div className="px-1.5 py-[3px]">
           {sorted.map(renderCard)}
           {sorted.length === 0 && (
             <div className={`rounded-lg border-2 border-dashed py-6 text-center text-xs text-muted-foreground transition-colors ${
@@ -909,7 +904,7 @@ function ListView({
       const ai = columns.findIndex((c) => c.id === a.columnId);
       const bi = columns.findIndex((c) => c.id === b.columnId);
       if (ai !== bi) return ai - bi;
-      return a.position - b.position;
+      return byPosition(a, b);
     });
 
   const [orderedCards, setOrderedCards] = useState<KanbanCard[]>(() => defaultSort(cards));
@@ -1266,7 +1261,7 @@ function BoardView({
         const ai = columns.findIndex((c) => c.id === a.columnId);
         const bi = columns.findIndex((c) => c.id === b.columnId);
         if (ai !== bi) return ai - bi;
-        return a.position - b.position;
+        return byPosition(a, b);
       }),
     [cards, columns]
   );
@@ -1494,36 +1489,49 @@ function BoardView({
     setCardDropInfo(null);
   }
 
-  function handleDragOver(colId: string) { setDragOverColId(colId); }
+  // Over empty column space (cards stop propagation), so no card indicator.
+  function handleDragOver(colId: string) { setDragOverColId(colId); setCardDropInfo(null); }
   function handleDragLeave() { setTimeout(() => setDragOverColId((p) => p), 50); }
 
+  /** Optimistically apply a move (renumbering the affected columns exactly as
+   *  the server's moveCard will), then persist it or queue it offline. */
+  async function commitMove(cardId: string, columnId: string, position: number) {
+    const changes = planMove(cards, cardId, columnId, position);
+    if (changes.length === 0) return;
+    setLocalMoves((prev) => {
+      const next = { ...prev };
+      for (const m of changes) next[m.card._id] = { columnId: m.columnId, position: m.position };
+      return next;
+    });
+
+    if (navigator.onLine) {
+      try {
+        await moveCardMutation({ cardId: cardId as Id<"kanbanCards">, columnId, position });
+      } catch {
+        // Revert on failure
+        setLocalMoves((prev) => {
+          const next = { ...prev };
+          for (const m of changes) delete next[m.card._id];
+          return next;
+        });
+        toast.error("Failed to move card");
+      }
+    } else {
+      enqueueKanbanOp({ type: "moveCard", cardId, columnId, position });
+      toast.info("Move saved — will sync when online", { duration: 2000 });
+    }
+  }
+
+  /** Dropped on a column's empty space (not on a card): send it to the end. */
   async function handleDrop(targetColId: string) {
     const cardId = draggingCardId.current;
     setDragOverColId(null);
     setActiveDragCardId(null);
+    setCardDropInfo(null);
     draggingCardId.current = null;
     if (!cardId) return;
-
-    const card = cards.find((c) => c._id === cardId);
-    if (!card || card.columnId === targetColId) return;
-
-    const position = cards.filter((c) => c.columnId === targetColId).length;
-
-    // Optimistic: move card in local state immediately
-    setLocalMoves((prev) => ({ ...prev, [cardId]: { columnId: targetColId, position } }));
-
-    if (navigator.onLine) {
-      try {
-        await moveCardMutation({ cardId: cardId as Id<"kanbanCards">, columnId: targetColId, position });
-      } catch {
-        // Revert on failure
-        setLocalMoves((prev) => { const p = { ...prev }; delete p[cardId]; return p; });
-        toast.error("Failed to move card");
-      }
-    } else {
-      enqueueKanbanOp({ type: "moveCard", cardId, columnId: targetColId, position });
-      toast.info("Move saved — will sync when online", { duration: 2000 });
-    }
+    const others = cards.filter((c) => c.columnId === targetColId && c._id !== cardId);
+    await commitMove(cardId, targetColId, others.length);
   }
 
   /** Drag-over indicator for reordering within (or across) a board column —
@@ -1575,20 +1583,7 @@ function BoardView({
 
     const newColCards = newOrder.filter((c) => c.columnId === targetCard.columnId);
     const position = Math.max(0, newColCards.findIndex((c) => c._id === cardId));
-
-    setLocalMoves((prev) => ({ ...prev, [cardId]: { columnId: targetCard.columnId, position } }));
-
-    if (navigator.onLine) {
-      try {
-        await moveCardMutation({ cardId: cardId as Id<"kanbanCards">, columnId: targetCard.columnId, position });
-      } catch {
-        setLocalMoves((prev) => { const p = { ...prev }; delete p[cardId]; return p; });
-        toast.error("Failed to move card");
-      }
-    } else {
-      enqueueKanbanOp({ type: "moveCard", cardId, columnId: targetCard.columnId, position });
-      toast.info("Move saved — will sync when online", { duration: 2000 });
-    }
+    await commitMove(cardId, targetCard.columnId, position);
   }
 
   async function handleSaveCardEdit() {
@@ -1672,7 +1667,7 @@ function BoardView({
   const tierColumns   = columns.filter((c) => c.id !== "unsorted");
   const unsortedCards = cards
     .filter((c) => c.columnId === "unsorted")
-    .sort((a, b) => a.position - b.position);
+    .sort(byPosition);
 
   function openNotes(card: KanbanCard) {
     setEditingCard(card);
@@ -1683,8 +1678,13 @@ function BoardView({
     const showAbove = cardDropInfo?.cardId === card._id && cardDropInfo.before  && activeDragCardId !== card._id;
     const showBelow = cardDropInfo?.cardId === card._id && !cardDropInfo.before && activeDragCardId !== card._id;
     return (
-      <div key={card._id} className="relative">
-        {showAbove && <div className="absolute -top-1 left-0 right-0 h-0.5 bg-primary z-20 pointer-events-none" />}
+      <div
+        key={card._id}
+        className="relative py-[3px]"
+        onDragOver={(e) => handleCardDragOver(e, card._id)}
+        onDrop={(e) => handleCardDrop(e, card._id)}
+      >
+        {showAbove && <div className="absolute top-0 left-0 right-0 h-0.5 bg-primary z-20 pointer-events-none" />}
         <TeamCard
           card={card}
           eventKey={eventKey}
@@ -1700,10 +1700,8 @@ function BoardView({
           onRemove={handleRemoveCard}
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
-          onDragOver={(e) => handleCardDragOver(e, card._id)}
-          onDrop={(e) => handleCardDrop(e, card._id)}
         />
-        {showBelow && <div className="absolute -bottom-1 left-0 right-0 h-0.5 bg-primary z-20 pointer-events-none" />}
+        {showBelow && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary z-20 pointer-events-none" />}
       </div>
     );
   }
@@ -1881,7 +1879,7 @@ function BoardView({
               </button>
               {unsortedOpen && (
                 <div
-                  className="max-h-[152px] overflow-y-auto p-1.5 grid gap-1.5"
+                  className="max-h-[152px] overflow-y-auto px-1.5 py-[3px] grid gap-x-1.5"
                   style={{ gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))" }}
                 >
                   {unsortedCards.map(renderCard)}

@@ -73,6 +73,7 @@ export interface KanbanCard {
   eventKey: string;
   notes?: string;
   position: number;
+  _creationTime?: number;
 }
 
 // Statbotics EPA data shape
