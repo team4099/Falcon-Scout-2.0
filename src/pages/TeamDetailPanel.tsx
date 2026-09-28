@@ -1,5 +1,23 @@
-import React, { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { matchLabel, matchSortValue } from "@/lib/utils";
+import { aggregateField } from "@/lib/rankingColumns";
+import {
+  rankIn,
+  isLowerBetter,
+  parseSubData,
+  isEmptyValue,
+  isNoteField,
+  newestFirst,
+  latestPit,
+  type Rank,
+} from "@/lib/teamProfile";
+import type { FieldType } from "@/types";
+import { useUIStore } from "@/store/uiStore";
+import { useAdminMutation } from "@/hooks/useAdminMutation";
+import { api } from "../../convex/_generated/api";
+import type { Id } from "../../convex/_generated/dataModel";
+import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
+import { toast } from "sonner";
 import {
   fetchTBATeamInfo,
   fetchTBATeamAvatar,
@@ -29,19 +47,18 @@ import {
   TrendingUp,
   BarChart2,
   ClipboardList,
-  ChevronDown,
-  ChevronUp,
   Search,
   CheckCircle2,
   XCircle,
   Star,
+  Trash2,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface FormField {
   id: string;
-  type: "text" | "number" | "checkbox" | "select" | "counter" | "textarea" | "teamNumber" | "rating";
+  type: FieldType;
   label: string;
   required: boolean;
   options?: string[];
@@ -61,9 +78,16 @@ interface Submission {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function parseData(s: Submission): Record<string, unknown> {
-  try { return JSON.parse(s.data) as Record<string, unknown>; } catch { return {}; }
+const parseData = parseSubData;
+
+interface Template {
+  _id: string;
+  name: string;
+  formType?: string;
+  fields: FormField[];
 }
+
+type TeamEpa = { event: number | null; overall: number | null; auto: number | null; teleop: number | null; endgame: number | null };
 
 function getNumericVals(submissions: Submission[], fieldId: string): number[] {
   return submissions
@@ -748,109 +772,197 @@ function TeamAvatar({ teamNumber, size = 40 }: { teamNumber: number; size?: numb
 
 // ── Stat tile ─────────────────────────────────────────────────────────────────
 
-function StatTile({ label, value, sub }: { label: string; value: string | null; sub?: string }) {
+function StatTile({ label, value, sub, rank }: { label: string; value: string | null; sub?: string; rank?: Rank | null }) {
   return (
-    <div className="bg-muted/30 border border-border rounded-xl p-3 flex flex-col gap-0.5">
-      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>
-      <span className="text-xl font-bold font-mono">{value ?? "—"}</span>
+    <div className="bg-muted/30 border border-border rounded-xl p-3 flex flex-col gap-0.5 min-w-0">
+      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground truncate" title={label}>{label}</span>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-xl font-bold font-mono">{value ?? "—"}</span>
+        {rank && (
+          <span
+            className={`text-[11px] font-mono font-semibold shrink-0 ${rank.rank <= 3 ? "text-primary" : "text-muted-foreground"}`}
+            title={`Ranked ${rank.rank} of ${rank.total} teams at this event`}
+          >
+            #{rank.rank}<span className="opacity-60">/{rank.total}</span>
+          </span>
+        )}
+      </div>
       {sub && <span className="text-[10px] text-muted-foreground">{sub}</span>}
     </div>
   );
 }
 
-// ── Raw report row ────────────────────────────────────────────────────────────
+const fmt = (n: number) => String(Math.round(n * 10) / 10);
 
-function ReportRow({ sub, fields }: { sub: Submission; fields: FormField[] }) {
-  const [open, setOpen] = useState(false);
-  const data = parseData(sub);
+// ── Field answers (reports + pit) ─────────────────────────────────────────────
+
+const isPhoto = (v: unknown): v is string => typeof v === "string" && v.startsWith("data:image/");
+
+function AnswerValue({ field, raw, onPhoto }: { field: FormField; raw: unknown; onPhoto: (src: string) => void }) {
+  if (field.type === "photo" || isPhoto(raw)) {
+    if (!isPhoto(raw)) return <span className="text-xs text-muted-foreground italic">Photo not available</span>;
+    return (
+      <button type="button" onClick={() => onPhoto(raw)} className="block">
+        <img src={raw} alt={field.label} loading="lazy" className="max-h-48 rounded-lg border border-border object-contain" />
+      </button>
+    );
+  }
+  if (field.type === "checkbox") {
+    const yes = raw === true || raw === "true";
+    return yes ? (
+      <span className="inline-flex items-center gap-1 text-green-400 text-sm font-medium"><CheckCircle2 className="h-3.5 w-3.5" /> Yes</span>
+    ) : (
+      <span className="inline-flex items-center gap-1 text-muted-foreground text-sm"><XCircle className="h-3.5 w-3.5" /> No</span>
+    );
+  }
+  if (field.type === "rating") {
+    const max = Number(field.options?.[0] ?? "5");
+    return (
+      <span className="inline-flex items-center gap-1 text-sm font-semibold font-mono">
+        <Star className="h-3.5 w-3.5 text-yellow-400 fill-yellow-400" />{String(raw)}<span className="text-muted-foreground font-normal">/{max}</span>
+      </span>
+    );
+  }
+  if (isNoteField(field.type)) {
+    return <p className="text-sm whitespace-pre-wrap leading-relaxed break-words">{String(raw)}</p>;
+  }
+  return <span className="text-sm font-semibold break-words">{Array.isArray(raw) ? raw.join(", ") : String(raw)}</span>;
+}
+
+/** Answered fields grouped by section, in form order. Blank answers are
+ *  omitted entirely; notes and photos span the full width. */
+function AnswerList({ fields, data, onPhoto }: { fields: FormField[]; data: Record<string, unknown>; onPhoto: (src: string) => void }) {
+  const sections: Array<[string, FormField[]]> = [];
+  for (const f of fields) {
+    if (isEmptyValue(data[f.id])) continue;
+    const name = f.section ?? "";
+    const last = sections[sections.length - 1];
+    if (last && last[0] === name) last[1].push(f);
+    else sections.push([name, [f]]);
+  }
+  return (
+    <div className="space-y-3">
+      {sections.map(([name, fs], i) => (
+        <div key={`${name}-${i}`}>
+          {name && <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">{name}</p>}
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+            {fs.map((f) => (
+              <div key={f.id} className={isNoteField(f.type) || f.type === "photo" ? "col-span-2" : "min-w-0"}>
+                <p className="text-[11px] text-muted-foreground mb-0.5">{f.label}</p>
+                <AnswerValue field={f} raw={data[f.id]} onPhoto={onPhoto} />
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Scouting report card ──────────────────────────────────────────────────────
+
+type ReportMode = "full" | "notes" | "data";
+
+/** The answered fields a report shows under the current filter. */
+function reportFields(fields: FormField[], data: Record<string, unknown>, mode: ReportMode): FormField[] {
+  return fields.filter(
+    (f) =>
+      f.type !== "teamNumber" &&
+      !isEmptyValue(data[f.id]) &&
+      (mode === "full" || (mode === "notes") === isNoteField(f.type)),
+  );
+}
+
+function ReportCard({
+  sub,
+  shown,
+  data,
+  formName,
+  canDelete,
+  onDelete,
+  onPhoto,
+}: {
+  sub: Submission;
+  shown: FormField[];
+  data: Record<string, unknown>;
+  formName: string | null;
+  canDelete: boolean;
+  onDelete: () => void;
+  onPhoto: (src: string) => void;
+}) {
   const date = sub.syncedAt
     ? new Date(sub.syncedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
     : null;
-  const numericFields = fields.filter((f) => ["number", "counter", "rating"].includes(f.type));
-  const textFields = fields.filter((f) => ["text", "textarea"].includes(f.type));
-  const checkboxFields = fields.filter((f) => f.type === "checkbox");
-  const selectFields = fields.filter((f) => f.type === "select");
 
   return (
     <div className="border border-border rounded-xl overflow-hidden">
-      <button
-        className="w-full flex items-center gap-3 px-4 py-3 bg-muted/20 hover:bg-muted/40 transition-colors text-left"
-        onClick={() => setOpen((o) => !o)}
-      >
-        <span className="font-bold text-sm">Match {sub.matchNumber}</span>
+      <div className="flex items-center gap-2 px-4 py-2.5 bg-muted/20">
+        <span className="font-bold text-sm">
+          {sub.compLevel === "elim" ? "Elim" : "Match"} {sub.matchNumber}
+        </span>
+        {formName && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{formName}</span>
+        )}
         {date && <span className="text-[10px] text-muted-foreground">{date}</span>}
-        <div className="flex-1 flex gap-2 flex-wrap">
-          {numericFields.slice(0, 4).map((f) => {
-            const v = data[f.id];
-            if (typeof v !== "number") return null;
-            return (
-              <span key={f.id} className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-mono">
-                {f.label}: {v}
-              </span>
-            );
-          })}
-        </div>
-        {open ? <ChevronUp className="h-4 w-4 text-muted-foreground shrink-0" /> : <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />}
-      </button>
-      {open && (
-        <div className="px-4 py-3 space-y-3 bg-background/50">
-          {numericFields.length > 0 && (
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Numeric</p>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {numericFields.map((f) => (
-                  <div key={f.id} className="text-xs">
-                    <span className="text-muted-foreground">{f.label}: </span>
-                    <span className="font-semibold font-mono">{String(data[f.id] ?? "—")}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {checkboxFields.length > 0 && (
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Checkboxes</p>
-              <div className="flex flex-wrap gap-2">
-                {checkboxFields.map((f) => {
-                  const checked = data[f.id] === true || data[f.id] === "true";
-                  return (
-                    <span key={f.id} className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${checked ? "border-green-500/50 text-green-400 bg-green-500/10" : "border-border text-muted-foreground"}`}>
-                      {checked ? "✓" : "✗"} {f.label}
-                    </span>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-          {selectFields.length > 0 && (
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Selections</p>
-              <div className="flex flex-wrap gap-2">
-                {selectFields.map((f) => (
-                  <span key={f.id} className="text-[10px] px-2 py-0.5 rounded border border-border text-muted-foreground">
-                    {f.label}: <strong className="text-foreground">{String(data[f.id] ?? "—")}</strong>
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-          {textFields.map((f) => {
-            const val = String(data[f.id] ?? "").trim();
-            if (!val) return null;
-            return (
-              <div key={f.id}>
-                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-0.5">{f.label}</p>
-                <p className="text-sm whitespace-pre-wrap leading-relaxed">{val}</p>
-              </div>
-            );
-          })}
-        </div>
-      )}
+        <div className="flex-1" />
+        {canDelete && (
+          <button
+            type="button"
+            onClick={onDelete}
+            className="inline-flex items-center justify-center h-8 w-8 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+            title="Delete report"
+            aria-label={`Delete match ${sub.matchNumber} report`}
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+      <div className="px-4 py-3 bg-background/50">
+        {shown.length === 0 ? (
+          <p className="text-xs text-muted-foreground italic">No answers recorded.</p>
+        ) : (
+          <AnswerList fields={shown} data={data} onPhoto={onPhoto} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Photo lightbox ────────────────────────────────────────────────────────────
+
+function PhotoLightbox({ src, onClose }: { src: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/85 flex items-center justify-center p-4" onClick={onClose}>
+      <img src={src} alt="Robot" className="max-w-full max-h-full rounded-lg object-contain" />
+      <Button variant="ghost" size="icon" className="absolute top-3 right-3 h-9 w-9 text-white" onClick={onClose} aria-label="Close photo">
+        <X className="h-5 w-5" />
+      </Button>
     </div>
   );
 }
 
 // ── Team Detail Panel ─────────────────────────────────────────────────────────
+
+const EPA_TILES: Array<{ key: keyof TeamEpa; label: string }> = [
+  { key: "event", label: "Event EPA" },
+  { key: "overall", label: "Season EPA" },
+];
+const EPA_PARTS: Array<{ key: keyof TeamEpa; label: string }> = [
+  { key: "auto", label: "Auto EPA" },
+  { key: "teleop", label: "Teleop EPA" },
+  { key: "endgame", label: "Endgame EPA" },
+];
+
+const REPORT_MODES: ReadonlyArray<readonly [ReportMode, string]> = [
+  ["full", "Full report"],
+  ["notes", "Notes"],
+  ["data", "Data"],
+];
 
 export interface TeamDetailProps {
   teamNumber: number;
@@ -858,11 +970,17 @@ export interface TeamDetailProps {
   eventYear: number;
   submissions: Submission[];
   fields: FormField[];
-  epa: { event: number | null; overall: number | null; auto: number | null; teleop: number | null; endgame: number | null };
+  epa: TeamEpa;
   avgScore: number | null;
   tbaRank: Record<string, unknown> | null;
   pitSubmissions: Submission[];
   pitFields: FormField[];
+  /** Every live template, so each report renders with its own form's fields. */
+  templates: Template[];
+  /** Event-wide data for the per-stat rankings. */
+  epaByTeam: Record<number, TeamEpa>;
+  avgScoreByTeam: Record<number, number>;
+  submissionsByTeam: Record<number, Submission[]>;
   onClose: () => void;
 }
 
@@ -877,10 +995,19 @@ export default function TeamDetailPanel({
   tbaRank,
   pitSubmissions,
   pitFields,
+  templates,
+  epaByTeam,
+  avgScoreByTeam,
+  submissionsByTeam,
   onClose,
 }: TeamDetailProps) {
   const [teamInfo, setTeamInfo] = useState<{ nickname?: string; city?: string } | null>(null);
   const [tab, setTab] = useState("overview");
+  const [reportMode, setReportMode] = useState<ReportMode>("full");
+  const [photo, setPhoto] = useState<string | null>(null);
+  const [toDelete, setToDelete] = useState<Submission | null>(null);
+  const { isAdminMode } = useUIStore();
+  const deleteSubmission = useAdminMutation(api.forms.deleteSubmission);
 
   useEffect(() => {
     fetchTBATeamInfo(teamNumber).then((d) => {
@@ -888,15 +1015,64 @@ export default function TeamDetailPanel({
     }).catch(() => {});
   }, [teamNumber]);
 
-  const numericFields = fields.filter((f) => ["number", "counter", "rating"].includes(f.type));
-  const checkboxFields = fields.filter((f) => f.type === "checkbox");
-  const parsed = submissions.map(parseData);
-  function fieldAvg(id: string) {
-    const vals = parsed.map((d) => d[id]).filter((v): v is number => typeof v === "number");
-    return avg(vals);
-  }
+  const templateById = useMemo(() => new Map(templates.map((t) => [t._id, t])), [templates]);
+
+  const statFields = useMemo(
+    () => fields.filter((f) => ["number", "counter", "rating", "checkbox"].includes(f.type)),
+    [fields],
+  );
+
+  // Scouted value per stat field for every team: this team's tile and its
+  // event rank use the same aggregation as the Dashboard's field columns.
+  const scoutedByField = useMemo(() => {
+    const out: Record<string, Record<number, number | null>> = {};
+    const rowsByTeam = Object.entries(submissionsByTeam).map(
+      ([tn, subs]) => [Number(tn), subs.map(parseData)] as const,
+    );
+    for (const f of statFields) {
+      const vals: Record<number, number | null> = {};
+      for (const [tn, rows] of rowsByTeam) {
+        const sort = aggregateField(f, rows.map((d) => d[f.id])).sort;
+        vals[tn] = typeof sort === "number" ? sort : null;
+      }
+      out[f.id] = vals;
+    }
+    return out;
+  }, [statFields, submissionsByTeam]);
+
+  const epaRank = (key: keyof TeamEpa) =>
+    rankIn(Object.fromEntries(Object.entries(epaByTeam).map(([tn, e]) => [tn, e[key]])), teamNumber);
+
+  // One pit report per team: the latest. Deleting it falls back to the one before.
+  const pit = latestPit(pitSubmissions);
+  const pitFormFields = (pit && templateById.get(pit.templateId)?.fields) || pitFields;
+  const pitData = pit ? parseData(pit) : {};
+  // Prefer a photo-type field; fall back to any image answer on the report.
+  const robotPhoto =
+    pitFormFields.filter((f) => f.type === "photo").map((f) => pitData[f.id]).find(isPhoto) ??
+    Object.values(pitData).find(isPhoto) ??
+    null;
+  const pitAnswerFields = pitFormFields.filter(
+    (f) => f.type !== "photo" && f.type !== "teamNumber" && !isPhoto(pitData[f.id]),
+  );
+  const pitHasAnswers = pitAnswerFields.some((f) => !isEmptyValue(pitData[f.id]));
+
+  // Newest first; in Notes/Data view a report with nothing of that kind is skipped.
+  const reports = useMemo(
+    () =>
+      newestFirst(submissions)
+        .map((sub) => {
+          const tpl = templateById.get(sub.templateId);
+          const data = parseData(sub);
+          return { sub, tpl, data, shown: reportFields(tpl?.fields ?? fields, data, reportMode) };
+        })
+        .filter((r) => reportMode === "full" || r.shown.length > 0),
+    [submissions, templateById, fields, reportMode],
+  );
+
   const rank = tbaRank ? (tbaRank as { rank?: number }).rank ?? null : null;
   const record = tbaRank ? (tbaRank as { record?: { wins: number; losses: number; ties: number } }).record ?? null : null;
+  const hasStats = epa.event !== null || epa.overall !== null || avgScore !== null;
 
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -907,7 +1083,18 @@ export default function TeamDetailPanel({
       <div className="w-full max-w-2xl bg-background border-l border-border flex flex-col h-full overflow-hidden shadow-2xl animate-in slide-in-from-right duration-300">
         {/* Header */}
         <div className="flex items-center gap-4 px-5 py-4 border-b border-border shrink-0">
-          <TeamAvatar teamNumber={teamNumber} size={48} />
+          {robotPhoto ? (
+            <button
+              type="button"
+              onClick={() => setPhoto(robotPhoto)}
+              className="shrink-0 rounded-lg overflow-hidden border border-border bg-muted hover:ring-2 hover:ring-primary/50 transition"
+              title="View robot photo"
+            >
+              <img src={robotPhoto} alt={`Team ${teamNumber} robot`} className="h-20 w-20 object-cover" />
+            </button>
+          ) : (
+            <TeamAvatar teamNumber={teamNumber} size={48} />
+          )}
           <div className="flex-1 min-w-0">
             <div className="flex items-baseline gap-2">
               <h2 className="text-xl font-bold">Team {teamNumber}</h2>
@@ -944,53 +1131,46 @@ export default function TeamDetailPanel({
             <TabsTrigger value="reports" className="gap-1.5">
               <ClipboardList className="h-3.5 w-3.5" /> Reports
             </TabsTrigger>
-            {pitFields.length > 0 && (
-              <TabsTrigger value="pit" className="gap-1.5">
-                <Search className="h-3.5 w-3.5" /> Pit Report
-                {pitSubmissions.length > 0 && (
-                  <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-400 font-bold">
-                    {pitSubmissions.length}
-                  </span>
-                )}
-              </TabsTrigger>
-            )}
           </TabsList>
 
           {/* ── OVERVIEW ── */}
           <TabsContent value="overview" className="flex-1 min-h-0 mt-0">
             <ScrollArea className="h-full">
               <div className="px-5 py-4 space-y-5 pb-8">
-                {(epa.event !== null || epa.overall !== null) && (
+                {hasStats && (
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">EPA (Statbotics)</p>
-                    <div className="grid grid-cols-3 gap-2">
-                      {epa.event !== null && <StatTile label="Event EPA" value={String(epa.event)} />}
-                      {epa.overall !== null && <StatTile label="Season EPA" value={String(epa.overall)} />}
-                      {avgScore !== null && <StatTile label="Avg TBA Score" value={String(avgScore)} />}
-                      {epa.auto !== null && <StatTile label="Auto EPA" value={String(epa.auto)} />}
-                      {epa.teleop !== null && <StatTile label="Teleop EPA" value={String(epa.teleop)} />}
-                      {epa.endgame !== null && <StatTile label="Endgame EPA" value={String(epa.endgame)} />}
+                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Statistics</p>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {EPA_TILES.map(({ key, label }) =>
+                        epa[key] !== null && <StatTile key={key} label={label} value={String(epa[key])} rank={epaRank(key)} />,
+                      )}
+                      {avgScore !== null && (
+                        <StatTile label="Avg TBA Score" value={String(avgScore)} rank={rankIn(avgScoreByTeam, teamNumber)} />
+                      )}
+                      {EPA_PARTS.map(({ key, label }) =>
+                        epa[key] !== null && <StatTile key={key} label={label} value={String(epa[key])} rank={epaRank(key)} />,
+                      )}
                     </div>
                   </div>
                 )}
                 {submissions.length > 0 ? (
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                      Scouted Averages ({submissions.length} match{submissions.length !== 1 ? "es" : ""})
+                      Scouting Data ({submissions.length} report{submissions.length !== 1 ? "s" : ""})
                     </p>
-                    <div className="grid grid-cols-3 gap-2">
-                      {numericFields.map((f) => {
-                        const a = fieldAvg(f.id);
-                        return <StatTile key={f.id} label={f.label} value={a === null ? null : (Number.isInteger(a) ? String(a) : a.toFixed(1))} />;
-                      })}
-                      {checkboxFields.map((f) => {
-                        const vals = parsed.map((d) => d[f.id]).filter((v) => v !== undefined);
-                        if (!vals.length) return null;
-                        const pct = Math.round((vals.filter(Boolean).length / vals.length) * 100);
-                        return <StatTile key={f.id} label={f.label} value={`${pct}%`} sub="success rate" />;
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {statFields.map((f) => {
+                        const v = scoutedByField[f.id]?.[teamNumber] ?? null;
+                        const rk = rankIn(scoutedByField[f.id] ?? {}, teamNumber, isLowerBetter(f.label));
+                        if (f.type === "checkbox") {
+                          return v === null ? null : (
+                            <StatTile key={f.id} label={f.label} value={`${Math.round(v)}%`} sub="of reports" rank={rk} />
+                          );
+                        }
+                        return <StatTile key={f.id} label={f.label} value={v === null ? null : fmt(v)} rank={rk} />;
                       })}
                     </div>
-                    {numericFields.length === 0 && checkboxFields.length === 0 && (
+                    {statFields.length === 0 && (
                       <p className="text-sm text-muted-foreground">No numeric fields in the active form.</p>
                     )}
                   </div>
@@ -1000,6 +1180,29 @@ export default function TeamDetailPanel({
                     <p className="text-sm">No scouting data for this team yet.</p>
                   </div>
                 )}
+
+                {/* Pit report — only the latest one is shown */}
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                    Pit Report
+                    {pit?.syncedAt && (
+                      <span className="ml-2 normal-case tracking-normal font-normal">
+                        {new Date(pit.syncedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    )}
+                  </p>
+                  {!pit ? (
+                    <div className="flex items-center gap-2 px-4 py-3 rounded-xl border border-dashed border-border text-sm text-muted-foreground">
+                      <Search className="h-4 w-4 opacity-40" /> No pit scouting data yet.
+                    </div>
+                  ) : !pitHasAnswers ? (
+                    <p className="text-sm text-muted-foreground italic">No pit answers besides the photo.</p>
+                  ) : (
+                    <div className="bg-card border border-border rounded-xl px-4 py-3">
+                      <AnswerList fields={pitAnswerFields} data={pitData} onPhoto={setPhoto} />
+                    </div>
+                  )}
+                </div>
               </div>
             </ScrollArea>
           </TabsContent>
@@ -1029,128 +1232,66 @@ export default function TeamDetailPanel({
           <TabsContent value="reports" className="flex-1 min-h-0 mt-0">
             <ScrollArea className="h-full">
               <div className="px-5 py-4 space-y-3 pb-8">
-                {submissions.length === 0 ? (
+                <div className="flex items-center gap-1 p-1 rounded-lg bg-muted/40 w-fit" role="radiogroup" aria-label="Report filter">
+                  {REPORT_MODES.map(([m, label]) => (
+                    <button
+                      key={m}
+                      type="button"
+                      role="radio"
+                      aria-checked={reportMode === m}
+                      onClick={() => setReportMode(m)}
+                      className={`text-xs px-3 py-1.5 rounded-md font-medium transition-colors ${
+                        reportMode === m ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {reports.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-12 text-muted-foreground gap-2">
                     <ClipboardList className="h-8 w-8 opacity-30" />
-                    <p className="text-sm">No reports yet.</p>
-                  </div>
-                ) : (
-                  [...submissions]
-                    .sort((a, b) => a.matchNumber - b.matchNumber)
-                    .map((sub) => (
-                      <ReportRow key={sub._id} sub={sub} fields={fields} />
-                    ))
-                )}
-              </div>
-            </ScrollArea>
-          </TabsContent>
-
-          {/* ── PIT SCOUTING REPORT ── */}
-          <TabsContent value="pit" className="flex-1 min-h-0 mt-0">
-            <ScrollArea className="h-full">
-              <div className="px-5 py-4 pb-8">
-                {pitSubmissions.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-3">
-                    <Search className="h-9 w-9 opacity-20" />
-                    <p className="text-sm font-medium">No pit scouting data yet</p>
-                    <p className="text-xs text-center max-w-xs">
-                      Use <strong>Scout Pit</strong> to record pit data for this team.
+                    <p className="text-sm">
+                      {submissions.length === 0 ? "No reports yet." : reportMode === "notes" ? "No notes in any report." : "No data in any report."}
                     </p>
                   </div>
-                ) : (() => {
-                  // Use the most recent pit submission
-                  const latestPit = [...pitSubmissions].sort((a, b) => (b.syncedAt ?? 0) - (a.syncedAt ?? 0))[0];
-                  const pitData = parseData(latestPit);
-                  // Group non-teamNumber fields by section
-                  const visibleFields = pitFields.filter((f) => f.type !== "teamNumber");
-                  const sections = visibleFields.reduce<Record<string, FormField[]>>((acc, f) => {
-                    const key = f.section ?? "General";
-                    acc[key] = [...(acc[key] ?? []), f];
-                    return acc;
-                  }, {});
-
-                  return (
-                    <div className="space-y-5">
-                      {pitSubmissions.length > 1 && (
-                        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-xs text-cyan-400">
-                          <Search className="h-3.5 w-3.5 shrink-0" />
-                          Showing most recent of {pitSubmissions.length} pit submissions
-                        </div>
-                      )}
-                      {Object.entries(sections).map(([section, sectionFields]) => (
-                        <div key={section} className="bg-card border border-border rounded-xl overflow-hidden">
-                          <div className="px-4 py-2 bg-cyan-500/10 border-b border-border">
-                            <h3 className="font-semibold text-sm text-cyan-400">{section}</h3>
-                          </div>
-                          <div className="divide-y divide-border">
-                            {sectionFields.map((f) => {
-                              const raw = pitData[f.id];
-                              const isEmpty = raw === undefined || raw === null || raw === "" || raw === 0;
-
-                              let display: React.ReactNode;
-                              if (f.type === "checkbox") {
-                                display = raw ? (
-                                  <span className="flex items-center gap-1 text-green-400 text-sm font-medium">
-                                    <CheckCircle2 className="h-4 w-4" /> Yes
-                                  </span>
-                                ) : (
-                                  <span className="flex items-center gap-1 text-muted-foreground text-sm">
-                                    <XCircle className="h-4 w-4" /> No
-                                  </span>
-                                );
-                              } else if (f.type === "rating") {
-                                const max = Number(f.options?.[0] ?? "5");
-                                const val = Number(raw ?? 0);
-                                display = (
-                                  <div className="flex items-center gap-1">
-                                    {Array.from({ length: max }).map((_, i) => (
-                                      <Star
-                                        key={i}
-                                        className={`h-4 w-4 ${
-                                          i < val ? "text-yellow-400 fill-yellow-400" : "text-muted-foreground/20"
-                                        }`}
-                                      />
-                                    ))}
-                                    <span className="ml-1 text-sm font-mono text-muted-foreground">{val}/{max}</span>
-                                  </div>
-                                );
-                              } else if (f.type === "textarea") {
-                                display = (
-                                  <p className="text-sm whitespace-pre-wrap leading-relaxed">
-                                    {isEmpty ? <span className="text-muted-foreground italic">No response</span> : String(raw)}
-                                  </p>
-                                );
-                              } else {
-                                display = (
-                                  <span className={`text-sm font-medium ${
-                                    isEmpty ? "text-muted-foreground italic" : ""
-                                  }`}>
-                                    {isEmpty ? "No response" : String(raw)}
-                                  </span>
-                                );
-                              }
-
-                              return (
-                                <div key={f.id} className="px-4 py-3 flex items-start justify-between gap-4">
-                                  <span className="text-sm text-muted-foreground shrink-0 pt-0.5">{f.label}</span>
-                                  <div className="text-right">{display}</div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ))}
-                      {visibleFields.length === 0 && (
-                        <p className="text-sm text-muted-foreground italic">No fields in the pit form.</p>
-                      )}
-                    </div>
-                  );
-                })()}
+                ) : (
+                  reports.map(({ sub, tpl, data, shown }) => (
+                    <ReportCard
+                      key={sub._id}
+                      sub={sub}
+                      shown={shown}
+                      data={data}
+                      formName={tpl && (tpl.formType ?? "default") !== "default" ? tpl.name : null}
+                      canDelete={isAdminMode}
+                      onDelete={() => setToDelete(sub)}
+                      onPhoto={setPhoto}
+                    />
+                  ))
+                )}
               </div>
             </ScrollArea>
           </TabsContent>
         </Tabs>
       </div>
+
+      {photo && <PhotoLightbox src={photo} onClose={() => setPhoto(null)} />}
+
+      <ConfirmDeleteDialog
+        open={toDelete !== null}
+        onOpenChange={(o) => { if (!o) setToDelete(null); }}
+        title="Delete scouting report?"
+        description={
+          toDelete
+            ? `This permanently deletes the ${matchLabel(toDelete.matchNumber, toDelete.compLevel)} report for Team ${teamNumber}. This can't be undone.`
+            : ""
+        }
+        onConfirm={async () => {
+          if (!toDelete) return;
+          await deleteSubmission({ id: toDelete._id as Id<"formSubmissions"> });
+          toast.success("Report deleted");
+        }}
+      />
     </div>
   );
 }

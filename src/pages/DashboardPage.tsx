@@ -66,6 +66,7 @@ interface Submission {
   templateId: string;
   teamNumber: number;
   matchNumber: number;
+  compLevel?: "qm" | "elim";
   scoutId?: string;
   syncedAt?: number;
   data: string; // JSON string
@@ -941,6 +942,21 @@ export default function DashboardPage() {
   }, [activeTemplates]);
   const pitFields: FormField[] = (pitTemplate?.fields ?? []) as FormField[];
 
+  // Every live template (incl. inactive): the team panel renders each report
+  // with its own form, and a pit report from a retired pit form is still a pit
+  // report rather than a match report.
+  const allTemplatesLive = useQuery(api.forms.listTemplates);
+  const allTemplatesCached = useCached(allTemplatesLive, "all_templates");
+  const allTemplates = useMemo(
+    () => (allTemplatesCached ?? activeTemplates ?? []) as Array<{ _id: string; name: string; formType?: string; fields: FormField[] }>,
+    [allTemplatesCached, activeTemplates],
+  );
+  const pitTemplateIds = useMemo(() => {
+    const ids = new Set(allTemplates.filter((t) => t.formType === "pit").map((t) => t._id));
+    if (pitTemplate) ids.add(pitTemplate._id);
+    return ids;
+  }, [allTemplates, pitTemplate]);
+
   // ── Seed external state from stale localStorage on first render ─────────────
   // This ensures the full team list & EPA data appear instantly on reload,
   // without waiting for the async loadExternal() fetch to complete.
@@ -1218,25 +1234,17 @@ export default function DashboardPage() {
     (a, b) => (a as number) - (b as number)
   );
 
-  const submissionsByTeam = (allSubmissions ?? []).reduce<
-    Record<number, Submission[]>
-  >((acc, s: Submission) => {
-    // Exclude spying submissions (teamNumber === 0) and pit submissions
-    if (s.teamNumber === 0) return acc;
-    if (pitTemplate && s.templateId === pitTemplate._id) return acc;
-    acc[s.teamNumber] = [...(acc[s.teamNumber] ?? []), s];
-    return acc;
-  }, {});
-
-  // Pit submissions grouped by team
-  const pitSubmissionsByTeam = useMemo(() => {
-    if (!pitTemplate) return {} as Record<number, Submission[]>;
-    return (allSubmissions ?? []).reduce<Record<number, Submission[]>>((acc, s: Submission) => {
-      if (s.templateId !== pitTemplate._id) return acc;
-      acc[s.teamNumber] = [...(acc[s.teamNumber] ?? []), s];
-      return acc;
-    }, {});
-  }, [allSubmissions, pitTemplate]);
+  // Match/note reports vs pit reports, per team. Spying (teamNumber 0) is neither.
+  const { submissionsByTeam, pitSubmissionsByTeam } = useMemo(() => {
+    const reports: Record<number, Submission[]> = {};
+    const pits: Record<number, Submission[]> = {};
+    for (const s of (allSubmissions ?? []) as Submission[]) {
+      if (s.teamNumber === 0) continue;
+      const bucket = pitTemplateIds.has(s.templateId) ? pits : reports;
+      (bucket[s.teamNumber] ??= []).push(s);
+    }
+    return { submissionsByTeam: reports, pitSubmissionsByTeam: pits };
+  }, [allSubmissions, pitTemplateIds]);
 
   // Per team, per tagged column: the aggregated value across that form's
   // submissions (oldest match first, so "latest note" is really the latest).
@@ -1638,6 +1646,10 @@ export default function DashboardPage() {
             tbaRank={tbaRankings[selectedTeam] ?? null}
             pitSubmissions={pitSubmissionsByTeam[selectedTeam] ?? []}
             pitFields={pitFields}
+            templates={allTemplates}
+            epaByTeam={epaMap}
+            avgScoreByTeam={avgScoreByTeam}
+            submissionsByTeam={submissionsByTeam}
             onClose={() => setSelectedTeam(null)}
           />
         );

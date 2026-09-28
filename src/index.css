@@ -128,6 +128,16 @@
   html {
     @apply font-sans;
     }
+  /* Hide number-input spinners app-wide; scouts type values directly. */
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+    }
+  input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+    }
 }
 
 /* Custom scrollbar - yellow accent */
