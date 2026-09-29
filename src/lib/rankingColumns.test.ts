@@ -55,6 +55,13 @@ describe("visibleColumns", () => {
     expect(ids).toContain("f:m:a");
     expect(ids).toContain("reports");
   });
+
+  it("always puts the scouting reports column last", () => {
+    const tagged = { ...BUILTIN_COLUMNS[0], id: "f:m:a", defaultVisible: true };
+    const ids = visibleColumns([...BUILTIN_COLUMNS, tagged], {}).map((c) => c.id);
+    expect(ids[ids.length - 1]).toBe("reports");
+    expect(ids).toContain("f:m:a");
+  });
 });
 
 describe("picklist card stats", () => {

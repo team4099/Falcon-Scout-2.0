@@ -24,7 +24,7 @@ export const BUILTIN_COLUMNS: RankingColumn[] = [
   { id: "epaAuto",    label: "Auto",       width: 48, defaultVisible: true, sortable: true, group: "Stats" },
   { id: "epaTeleop",  label: "Teleop",     width: 56, defaultVisible: true, sortable: true, group: "Stats" },
   { id: "epaEndgame", label: "Endgame",    width: 64, defaultVisible: true, sortable: true, group: "Stats" },
-  { id: REPORTS_COLUMN_ID, label: "Scouting Reports", width: 120, defaultVisible: true, sortable: false, group: "Stats" },
+  { id: REPORTS_COLUMN_ID, label: "Scouting Reports", width: 72, defaultVisible: true, sortable: false, group: "Stats" },
 ];
 
 export function fieldColumnId(templateId: string, fieldId: string): string {
@@ -58,7 +58,9 @@ export function visibleColumns<C extends RankingColumn>(
   columns: C[],
   overrides: Record<string, boolean>
 ): C[] {
-  return columns.filter((c) => overrides[c.id] ?? c.defaultVisible);
+  // Scouting reports always sit last, next to the row's hide button.
+  const shown = columns.filter((c) => overrides[c.id] ?? c.defaultVisible);
+  return [...shown.filter((c) => c.id !== REPORTS_COLUMN_ID), ...shown.filter((c) => c.id === REPORTS_COLUMN_ID)];
 }
 
 export interface FieldCell {

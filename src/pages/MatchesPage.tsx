@@ -9,9 +9,12 @@ import {
   fetchTBAEventTeams,
   fetchTBAEventRankings,
   fetchTBAEventMatches,
+  fetchTBAEventAlliances,
 } from "@/lib/api";
-import type { TBAMatch } from "@/lib/api";
+import type { TBAMatch, TBAAlliance } from "@/lib/api";
 import { lsGet, lsGetStale } from "@/lib/persistentCache";
+import { allianceTeams } from "@/lib/bracket";
+import PlayoffBracket from "@/components/PlayoffBracket";
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -413,6 +416,11 @@ export default function MatchesPage() {
   // "played" / "upcoming" narrow the list by whether TBA has posted a result.
   const [filterStatus,    setFilterStatus]    = useState<"all" | "played" | "upcoming">("all");
   const [selectedMatch,   setSelectedMatch]   = useState<TBAMatch | null>(null);
+  const [view,            setView]            = useState<"schedule" | "bracket">("schedule");
+  const [alliances,       setAlliances]       = useState<TBAAlliance[] | null>(
+    () => lsGetStale<TBAAlliance[]>(`tba_alliances_${currentEvent?.eventKey ?? ""}`)
+  );
+  const teamsByAlliance = useMemo(() => allianceTeams(alliances), [alliances]);
 
   // Simple total-EPA map for the list view
   const epaByTeam = useMemo<Record<number, number | null>>(() => {
@@ -432,13 +440,15 @@ export default function MatchesPage() {
     let cancelled = false;
 
     async function load() {
-      const [matchData, sbData, , rankData] = await Promise.all([
+      const [matchData, sbData, , rankData, allianceData] = await Promise.all([
         fetchTBAEventMatches(eventKey),
         fetchStatboticsEventTeams(eventKey),
         fetchTBAEventTeams(eventKey),
         fetchTBAEventRankings(eventKey),
+        fetchTBAEventAlliances(eventKey),
       ]);
       if (cancelled) return;
+      if (Array.isArray(allianceData)) setAlliances(allianceData);
 
       if (Array.isArray(matchData)) {
         setMatches(matchData as TBAMatch[]);
@@ -529,12 +539,33 @@ export default function MatchesPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shrink-0">
         <div>
-          <h2 className="text-xl sm:text-2xl font-bold tracking-tight">Match Schedule</h2>
+          <h2 className="text-xl sm:text-2xl font-bold tracking-tight">
+            {view === "schedule" ? "Match Schedule" : "Playoff Bracket"}
+          </h2>
           <p className="text-muted-foreground text-sm">
             {currentEvent?.eventName ?? eventKey}
           </p>
         </div>
         <div className="flex items-center flex-wrap gap-2">
+          <div className="flex items-center rounded-lg border border-border bg-muted/30 p-0.5 gap-0.5">
+            {([
+              { id: "schedule", label: "Schedule" },
+              { id: "bracket",  label: "Bracket" },
+            ] as const).map(({ id, label }) => (
+              <button
+                key={id}
+                onClick={() => setView(id)}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${
+                  view === id
+                    ? "bg-background shadow text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {view === "schedule" && <>
           <button
             onClick={() => setFilterMine(false)}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
@@ -579,11 +610,19 @@ export default function MatchesPage() {
           <span className="text-xs text-muted-foreground ml-1">
             {sorted.length} match{sorted.length !== 1 ? "es" : ""}
           </span>
+          </>}
         </div>
       </div>
 
       {/* Match list */}
-      {matches.length === 0 ? (
+      {view === "bracket" ? (
+        <PlayoffBracket
+          eventKey={eventKey}
+          matches={matches}
+          teamsByAlliance={teamsByAlliance}
+          onOpenMatch={setSelectedMatch}
+        />
+      ) : matches.length === 0 ? (
         <div className="flex flex-col items-center justify-center flex-1 gap-2 text-muted-foreground">
           <CalendarDays className="h-8 w-8 opacity-30" />
           <p className="text-sm">No match schedule posted yet.</p>

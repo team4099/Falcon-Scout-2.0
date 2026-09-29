@@ -33,6 +33,7 @@ import {
 import {
   BUILTIN_COLUMNS,
   REPORTS_COLUMN_ID,
+  columnShortLabel,
   visibleColumns,
 } from "@/lib/rankingColumns";
 import type { FieldCell, RankingColumn } from "@/lib/rankingColumns";
@@ -169,7 +170,10 @@ async function primeAvatar(teamNumber: number, year: number) {
 
 /** Grid template shared by the header and every row so cells always line up. */
 function gridTemplate(columns: RankingColumn[]): string {
-  return columns.map((c) => `minmax(${c.width}px, 1fr)`).join(" ");
+  // The reports button column stays narrow; stat columns share the slack.
+  return columns
+    .map((c) => (c.id === REPORTS_COLUMN_ID ? `${c.width}px` : `minmax(${c.width}px, 1fr)`))
+    .join(" ");
 }
 
 type StatColor = "default" | "primary" | "success" | "muted";
@@ -462,7 +466,7 @@ function ColumnHeader({
         {columns.map((c) =>
           c.sortable
             ? <SortHeader key={c.id} id={c.id} label={c.label} title={c.id === "rank" ? "Sort by event ranking" : undefined} {...sort} />
-            : <span key={c.id} className="truncate">{c.label}</span>
+            : <span key={c.id} className="truncate">{columnShortLabel(c)}</span>
         )}
       </div>
       {/* Spacer matching each row's hide button */}
