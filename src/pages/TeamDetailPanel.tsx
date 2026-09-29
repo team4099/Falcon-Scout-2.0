@@ -755,7 +755,7 @@ function BoxPlotChart({ fields, submissions }: { fields: FormField[]; submission
 
 // ── Team avatar ───────────────────────────────────────────────────────────────
 
-function TeamAvatar({ teamNumber, size = 40 }: { teamNumber: number; size?: number }) {
+export function TeamAvatar({ teamNumber, size = 40 }: { teamNumber: number; size?: number }) {
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => {
     fetchTBATeamAvatar(teamNumber, size).then(setSrc).catch(() => setSrc(null));
@@ -834,7 +834,7 @@ function AnswerValue({ field, raw, onPhoto }: { field: FormField; raw: unknown; 
 
 /** Answered fields grouped by section, in form order. Blank answers are
  *  omitted entirely; notes and photos span the full width. */
-function AnswerList({ fields, data, onPhoto }: { fields: FormField[]; data: Record<string, unknown>; onPhoto: (src: string) => void }) {
+export function AnswerList({ fields, data, onPhoto }: { fields: FormField[]; data: Record<string, unknown>; onPhoto: (src: string) => void }) {
   const sections: Array<[string, FormField[]]> = [];
   for (const f of fields) {
     if (isEmptyValue(data[f.id])) continue;
@@ -933,7 +933,7 @@ function ReportCard({
 
 // ── Photo lightbox ────────────────────────────────────────────────────────────
 
-function PhotoLightbox({ src, onClose }: { src: string; onClose: () => void }) {
+export function PhotoLightbox({ src, onClose }: { src: string; onClose: () => void }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);

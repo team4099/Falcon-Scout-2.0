@@ -42,6 +42,9 @@ export interface SlotState {
   redProjected: boolean;
   blueProjected: boolean;
   winner: number | null;        // alliance number
+  /** Usually the other entrant; a "this alliance loses" what-if can set it
+   *  before the opponent is known. */
+  loser: number | null;
   decidedBy: "actual" | "predicted" | null;
   redScore: number | null;      // latest actual score (finals: series wins)
   blueScore: number | null;
@@ -59,7 +62,9 @@ export interface BracketState {
   settled: number[];
 }
 
-/** Predicted winner alliance per match number (1-13, FINALS). */
+/** What-if per match number (1-13, FINALS): `a` = alliance a wins, `-a` =
+ *  alliance a loses (lets a drag place it in the lower bracket before its
+ *  opponent is known). */
 export type Predictions = Record<number, number>;
 
 function isPlayed(m: TBAMatch): boolean {
@@ -87,9 +92,8 @@ export function resolveBracket(matches: TBAMatch[], predictions: Predictions): B
   const pick = (s: Source): number | null => {
     if ("seed" in s) return s.seed;
     const src = slots["winner" in s ? s.winner : s.loser];
-    if (!src || src.winner === null) return null;
-    if ("winner" in s) return src.winner;
-    return src.winner === src.red ? src.blue : src.red;
+    if (!src) return null;
+    return "winner" in s ? src.winner : src.loser;
   };
   const projected = (s: Source): boolean => {
     if ("seed" in s) return false;
@@ -124,25 +128,35 @@ export function resolveBracket(matches: TBAMatch[], predictions: Predictions): B
     }
 
     let winner: number | null = null;
+    let loser: number | null = null;
     let decidedBy: SlotState["decidedBy"] = null;
     if (actualSide && red !== null && blue !== null) {
       winner = actualSide === "red" ? red : blue;
+      loser = actualSide === "red" ? blue : red;
       decidedBy = "actual";
     }
 
     const p = predictions[n];
     if (p !== undefined) {
-      if (winner !== null) {
-        (p === winner ? settled : corrected).push(n);
+      const who = Math.abs(p);
+      const wins = p > 0;
+      if (decidedBy === "actual") {
+        ((wins ? winner : loser) === who ? settled : corrected).push(n);
+      } else if (who === red || who === blue) {
+        // The opponent may still be unknown; the what-if alliance moves on anyway.
+        const opp = who === red ? blue : red;
+        winner = wins ? who : opp;
+        loser = wins ? opp : who;
+        decidedBy = "predicted";
       } else if (red !== null && blue !== null) {
-        if (p === red || p === blue) { winner = p; decidedBy = "predicted"; }
-        // The predicted alliance can't be here — real results sent someone else.
-        else corrected.push(n);
+        // The predicted alliance can't be here: real results sent someone else.
+        corrected.push(n);
       }
+      // Otherwise an entrant is still unknown and may yet be `who`: wait.
     }
 
     slots[n] = {
-      red, blue, winner,
+      red, blue, winner, loser,
       redProjected: red !== null && projected(BRACKET[n].red),
       blueProjected: blue !== null && projected(BRACKET[n].blue),
       decidedBy, redScore, blueScore,
@@ -171,4 +185,24 @@ export function togglePrediction(pred: Predictions, match: number, alliance: num
   if (next[match] === alliance) delete next[match];
   else next[match] = alliance;
   return next;
+}
+
+/**
+ * What-ifs that carry `alliance` from match `from` (where it is an entrant)
+ * into slot `side` of match `target`, winning or losing each match on the way.
+ * Null when that slot can't be reached from `from`.
+ */
+export function routeTo(from: number, target: number, side: "red" | "blue", alliance: number): Predictions | null {
+  for (const [t, srcs] of Object.entries(BRACKET)) {
+    for (const sd of ["red", "blue"] as const) {
+      const s = srcs[sd];
+      const via = "winner" in s ? s.winner : "loser" in s ? s.loser : null;
+      if (via !== from) continue;
+      const step = { [from]: "winner" in s ? alliance : -alliance };
+      if (Number(t) === target && sd === side) return step;
+      const rest = routeTo(Number(t), target, side, alliance);
+      if (rest) return { ...step, ...rest };
+    }
+  }
+  return null;
 }

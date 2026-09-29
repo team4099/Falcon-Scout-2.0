@@ -15,6 +15,7 @@ import type { TBAMatch, TBAAlliance } from "@/lib/api";
 import { lsGet, lsGetStale } from "@/lib/persistentCache";
 import { allianceTeams } from "@/lib/bracket";
 import PlayoffBracket from "@/components/PlayoffBracket";
+import AllianceDetailPanel from "@/pages/AllianceDetailPanel";
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -416,6 +417,7 @@ export default function MatchesPage() {
   // "played" / "upcoming" narrow the list by whether TBA has posted a result.
   const [filterStatus,    setFilterStatus]    = useState<"all" | "played" | "upcoming">("all");
   const [selectedMatch,   setSelectedMatch]   = useState<TBAMatch | null>(null);
+  const [openAlliance,    setOpenAlliance]    = useState<number | null>(null);
   const [view,            setView]            = useState<"schedule" | "bracket">("schedule");
   const [alliances,       setAlliances]       = useState<TBAAlliance[] | null>(
     () => lsGetStale<TBAAlliance[]>(`tba_alliances_${currentEvent?.eventKey ?? ""}`)
@@ -621,6 +623,7 @@ export default function MatchesPage() {
           matches={matches}
           teamsByAlliance={teamsByAlliance}
           onOpenMatch={setSelectedMatch}
+          onOpenAlliance={setOpenAlliance}
         />
       ) : matches.length === 0 ? (
         <div className="flex flex-col items-center justify-center flex-1 gap-2 text-muted-foreground">
@@ -793,6 +796,15 @@ export default function MatchesPage() {
             })}
           </div>
         </ScrollArea>
+      )}
+
+      {openAlliance !== null && (
+        <AllianceDetailPanel
+          allianceNumber={openAlliance}
+          teams={teamsByAlliance[openAlliance] ?? []}
+          eventKey={eventKey}
+          onClose={() => setOpenAlliance(null)}
+        />
       )}
 
       {/* Detail panel — rendered at page level, overlays via fixed positioning */}

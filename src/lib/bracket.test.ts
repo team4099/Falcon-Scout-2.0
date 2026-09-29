@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveBracket, allianceTeams, togglePrediction, FINALS } from "./bracket";
+import { resolveBracket, allianceTeams, togglePrediction, routeTo, FINALS } from "./bracket";
 import type { TBAMatch } from "./api";
 
 function m(level: "sf" | "f", set: number, num: number, win: "red" | "blue" | "" | null): TBAMatch {
@@ -73,6 +73,31 @@ describe("resolveBracket", () => {
     expect(done.slots[FINALS].games).toEqual([
       { red: 50, blue: 100 }, { red: 100, blue: 50 }, { red: 100, blue: 50 },
     ]);
+  });
+});
+
+describe("drag what-ifs", () => {
+  it("routes an alliance through wins and losses to a later slot", () => {
+    expect(routeTo(1, 7, "red", 1)).toEqual({ 1: 1 });
+    expect(routeTo(1, 5, "red", 1)).toEqual({ 1: -1 });
+    expect(routeTo(1, 13, "red", 1)).toEqual({ 1: 1, 7: 1, 11: -1 });
+    expect(routeTo(1, FINALS, "blue", 8)).not.toBeNull();
+    expect(routeTo(1, 7, "blue", 1)).toBeNull();   // that slot is fed by M2
+    expect(routeTo(7, 1, "red", 1)).toBeNull();    // no going backwards
+  });
+
+  it("places a dragged alliance before its opponents are known", () => {
+    const b = resolveBracket([], routeTo(1, 13, "red", 1)!);
+    expect(b.slots[7]).toMatchObject({ red: 1, blue: null, winner: 1, decidedBy: "predicted" });
+    expect(b.slots[11]).toMatchObject({ red: 1, loser: 1, winner: null });
+    expect(b.slots[13]).toMatchObject({ red: 1, redProjected: true });
+    expect(b.corrected).toEqual([]);
+  });
+
+  it("corrects a loss what-if the real result contradicts", () => {
+    const b = resolveBracket([m("sf", 1, 1, "red")], { 1: -1 });
+    expect(b.corrected).toEqual([1]);
+    expect(resolveBracket([m("sf", 1, 1, "blue")], { 1: -1 }).settled).toEqual([1]);
   });
 });
 
