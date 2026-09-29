@@ -70,6 +70,9 @@ describe("resolveBracket", () => {
     const done = resolveBracket(
       [...upper, ...lower, m("f", 1, 1, "blue"), m("f", 1, 2, "red"), m("f", 1, 3, "red")], {});
     expect(done.champion).toBe(1);
+    expect(done.slots[FINALS].games).toEqual([
+      { red: 50, blue: 100 }, { red: 100, blue: 50 }, { red: 100, blue: 50 },
+    ]);
   });
 });
 

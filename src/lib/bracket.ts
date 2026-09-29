@@ -45,6 +45,8 @@ export interface SlotState {
   decidedBy: "actual" | "predicted" | null;
   redScore: number | null;      // latest actual score (finals: series wins)
   blueScore: number | null;
+  /** Every played game's score, in order (finals: one per game). */
+  games: { red: number; blue: number }[];
   tbaMatch: TBAMatch | null;    // latest TBA match for this slot, for the detail panel
 }
 
@@ -144,6 +146,7 @@ export function resolveBracket(matches: TBAMatch[], predictions: Predictions): B
       redProjected: red !== null && projected(BRACKET[n].red),
       blueProjected: blue !== null && projected(BRACKET[n].blue),
       decidedBy, redScore, blueScore,
+      games: played.map((g) => ({ red: g.alliances.red.score, blue: g.alliances.blue.score })),
       tbaMatch: games[games.length - 1] ?? null,
     };
   }

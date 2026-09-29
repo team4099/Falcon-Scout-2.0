@@ -1,6 +1,6 @@
 // Double-elimination playoff bracket for the Matches tab. Real TBA results
 // place alliances; tapping an alliance in an undecided match predicts it wins
-// (a local what-if). Real results always override what-ifs — see lib/bracket.
+// (a local what-if). Real results always override what-ifs, see lib/bracket.
 import { useEffect, useMemo, useState } from "react";
 import { RotateCcw, Trophy } from "lucide-react";
 import type { TBAMatch } from "@/lib/api";
@@ -11,41 +11,43 @@ import {
 
 const MY_TEAM = 4099;
 
-// ── layout (px) — mirrors the official FRC bracket diagram ──────────────────
-const COL_W = 184;
-const GAP = 36;
-const HEAD_H = 20;
-const ROW_H = 30;
+// ── layout (px), mirrors the official FRC bracket diagram ───────────────────
+const COL_W = 196;
+const FINALS_W = 284;   // wider: one score cell per finals game
+const GAP = 40;
+const HEAD_H = 24;
+const ROW_H = 32;
 const BOX_H = HEAD_H + ROW_H * 2;
-const DIVIDER_Y = 386;
+const DIVIDER_Y = 408;
 const col = (c: number) => c * (COL_W + GAP);
 const POS: Record<number, { x: number; y: number }> = {
-  1: { x: col(0), y: 24 },  2: { x: col(0), y: 112 }, 3: { x: col(0), y: 200 }, 4: { x: col(0), y: 288 },
-  7: { x: col(1), y: 68 },  8: { x: col(1), y: 244 },
-  11: { x: col(3), y: 156 },
-  5: { x: col(1), y: 486 }, 6: { x: col(1), y: 654 },
-  10: { x: col(2), y: 432 }, 9: { x: col(2), y: 600 },
-  12: { x: col(3), y: 516 },
-  13: { x: col(4), y: 474 },
-  [FINALS]: { x: col(5), y: 340 },
+  1: { x: col(0), y: 28 },  2: { x: col(0), y: 124 }, 3: { x: col(0), y: 220 }, 4: { x: col(0), y: 316 },
+  7: { x: col(1), y: 76 },  8: { x: col(1), y: 268 },
+  11: { x: col(3), y: 172 },
+  5: { x: col(1), y: 510 }, 6: { x: col(1), y: 690 },
+  10: { x: col(2), y: 452 }, 9: { x: col(2), y: 632 },
+  12: { x: col(3), y: 542 },
+  13: { x: col(4), y: 498 },
+  [FINALS]: { x: col(5), y: 356 },
 };
-const WIDTH = col(5) + COL_W;
-const HEIGHT = 654 + BOX_H + 4;
+const WIDTH = col(5) + FINALS_W;
+const HEIGHT = 690 + BOX_H + 4;
 const ROUNDS = ["Round 1", "Round 2", "Round 3", "Round 4", "Round 5", "Finals"];
+const FINALS_GAMES = 3;
 
 function rowY(side: "red" | "blue") {
   return HEAD_H + (side === "red" ? ROW_H / 2 : ROW_H * 1.5);
 }
 
 /** Elbow lines from each "winner of" feeder to the slot it fills. */
-const PATHS: string[] = Object.entries(BRACKET).flatMap(([t, srcs]) => {
+const PATHS = Object.entries(BRACKET).flatMap(([t, srcs]) => {
   const to = POS[Number(t)];
   return (["red", "blue"] as const).flatMap((side) => {
     const s = srcs[side];
     if (!("winner" in s)) return [];
     const from = POS[s.winner];
     const mid = to.x - GAP / 2;
-    return [`M${from.x + COL_W} ${from.y + HEAD_H + ROW_H}H${mid}V${to.y + rowY(side)}H${to.x}`];
+    return [{ from: s.winner, d: `M${from.x + COL_W} ${from.y + HEAD_H + ROW_H}H${mid}V${to.y + rowY(side)}H${to.x}` }];
   });
 });
 
@@ -102,47 +104,53 @@ export default function PlayoffBracket({
 
   return (
     <div className="flex flex-col gap-3 min-h-0 flex-1">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground shrink-0">
-        <span>
-          {hasAlliances ? "" : "Teams appear after alliance selection. "}
-          Tap an alliance to predict it wins; tap again to undo.
-        </span>
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted-foreground shrink-0">
         {bracket.champion !== null && (
-          <span className="flex items-center gap-1 font-semibold text-yellow-500">
-            <Trophy className="h-3.5 w-3.5" />
-            Alliance {bracket.champion} {bracket.slots[FINALS].decidedBy === "predicted" ? "(predicted)" : "champions"}
+          <span className="flex items-center gap-1.5 font-semibold text-foreground">
+            <Trophy className="h-3.5 w-3.5 text-primary" />
+            Alliance {bracket.champion} {bracket.slots[FINALS].decidedBy === "predicted" ? "(predicted)" : "wins"}
           </span>
         )}
-        {eliminated.length > 0 && <span>Eliminated: {eliminated.map((a) => `A${a}`).join(", ")}</span>}
+        {eliminated.length > 0 && (
+          <span>Out: <span className="font-mono tabular-nums">{eliminated.map((a) => `A${a}`).join("  ")}</span></span>
+        )}
+        <span>
+          {hasAlliances ? "" : "Teams appear after alliance selection. "}
+          Tap an alliance to predict it wins.
+        </span>
         {whatIfCount > 0 && (
           <button
             onClick={() => { setPredictions({}); setNotice(null); }}
-            className="ml-auto flex items-center gap-1 px-2.5 py-1 rounded-md bg-muted hover:bg-muted/80 text-foreground font-medium"
+            className="ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-border bg-muted/40 hover:bg-muted text-foreground font-medium active:scale-[0.98] transition"
           >
             <RotateCcw className="h-3 w-3" /> Reset {whatIfCount} prediction{whatIfCount > 1 ? "s" : ""}
           </button>
         )}
       </div>
       {notice && (
-        <div className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400 shrink-0">
+        <div className="flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-xs text-foreground shrink-0">
           <span className="flex-1">{notice}</span>
-          <button onClick={() => setNotice(null)} className="font-semibold">Dismiss</button>
+          <button onClick={() => setNotice(null)} className="font-semibold text-primary">Dismiss</button>
         </div>
       )}
 
-      <div className="flex-1 min-h-0 overflow-auto rounded-xl border border-border bg-card/40">
-        <div className="relative m-3" style={{ width: WIDTH, height: HEIGHT }}>
+      <div className="flex-1 min-h-0 overflow-auto rounded-xl border border-border bg-muted/10">
+        <div className="relative m-4" style={{ width: WIDTH, height: HEIGHT }}>
           {ROUNDS.map((r, i) => (
-            <div key={r} className="absolute top-0 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground text-center"
-              style={{ left: col(i), width: COL_W }}>{r}</div>
+            <div key={r} className="absolute top-0 text-[11px] font-medium text-muted-foreground"
+              style={{ left: col(i), width: i === 5 ? FINALS_W : COL_W }}>{r}</div>
           ))}
-          <div className="absolute text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70"
-            style={{ left: 0, top: DIVIDER_Y - 16 }}>▲ Upper bracket</div>
-          <div className="absolute text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70"
-            style={{ left: 0, top: DIVIDER_Y + 4 }}>▼ Lower bracket</div>
-          <div className="absolute border-t border-dashed border-border" style={{ left: 0, width: col(5) - GAP / 2, top: DIVIDER_Y }} />
-          <svg className="absolute inset-0 pointer-events-none text-muted-foreground/40" width={WIDTH} height={HEIGHT}>
-            {PATHS.map((d) => <path key={d} d={d} fill="none" stroke="currentColor" strokeWidth={1.5} />)}
+          <div className="absolute border-t border-border/60" style={{ left: 0, width: col(5) - GAP / 2, top: DIVIDER_Y }} />
+          <div className="absolute text-[11px] font-medium text-muted-foreground/70"
+            style={{ left: 0, top: DIVIDER_Y + 8 }}>Lower bracket</div>
+          <svg className="absolute inset-0 pointer-events-none" width={WIDTH} height={HEIGHT}>
+            {PATHS.map(({ from, d }) => {
+              const lit = bracket.slots[from].winner !== null;
+              return (
+                <path key={d} d={d} fill="none" strokeWidth={1.25}
+                  className={lit ? "stroke-muted-foreground/70" : "stroke-border"} />
+              );
+            })}
           </svg>
           {Object.keys(BRACKET).map(Number).map((n) => (
             <MatchBox
@@ -169,63 +177,83 @@ function MatchBox({
   const { x, y } = POS[n];
   const isFinals = n === FINALS;
   const canPick = slot.red !== null && slot.blue !== null && slot.decidedBy !== "actual";
+  const predicted = slot.decidedBy === "predicted";
   const status =
-    slot.decidedBy === "actual" ? "Final"
-    : slot.redScore !== null ? "In progress"
-    : slot.decidedBy === "predicted" ? "Predicted"
+    predicted ? "Predicted"
+    : isFinals ? "Best of 3"
+    : slot.decidedBy === "actual" ? "Final"
+    : slot.games.length > 0 ? "Live"
     : "";
 
   return (
     <div
-      className={`absolute rounded-lg border bg-card shadow-sm overflow-hidden ${isFinals ? "border-yellow-500/60 ring-1 ring-yellow-500/30" : "border-border"}`}
-      style={{ left: x, top: y, width: COL_W, height: BOX_H }}
+      className={`absolute rounded-lg border bg-card overflow-hidden ${
+        isFinals ? "border-primary/50 ring-1 ring-primary/15" : "border-border"
+      }`}
+      style={{ left: x, top: y, width: isFinals ? FINALS_W : COL_W, height: BOX_H }}
     >
       <button
         disabled={!slot.tbaMatch}
         onClick={() => slot.tbaMatch && onOpen(slot.tbaMatch)}
-        className="w-full flex items-center justify-between px-2 text-[10px] font-semibold bg-muted/40 enabled:hover:bg-muted disabled:cursor-default"
+        className="w-full flex items-center gap-2 px-2.5 text-[11px] enabled:hover:bg-muted/50 disabled:cursor-default"
         style={{ height: HEAD_H }}
         title={slot.tbaMatch ? "Open match details" : undefined}
       >
-        <span>{isFinals ? "Finals · best 2 of 3" : `Match ${n}`}</span>
-        <span className={slot.decidedBy === "predicted" ? "text-primary italic" : "text-muted-foreground"}>{status}</span>
+        <span className="font-semibold text-foreground">{isFinals ? "Finals" : `M${n}`}</span>
+        <span className={`flex-1 text-left ${predicted ? "text-primary" : "text-muted-foreground"}`}>{status}</span>
+        {isFinals && Array.from({ length: FINALS_GAMES }, (_, i) => (
+          <span key={i} className="w-8 text-right text-[10px] text-muted-foreground">G{i + 1}</span>
+        ))}
       </button>
       {(["red", "blue"] as const).map((side) => {
         const a = slot[side];
         const projected = side === "red" ? slot.redProjected : slot.blueProjected;
-        const score = side === "red" ? slot.redScore : slot.blueScore;
         const won = a !== null && slot.winner === a;
         const lost = a !== null && slot.winner !== null && !won;
         const teams = a !== null ? (teamsByAlliance[a] ?? []).slice(0, 3) : [];
+        const other = side === "red" ? "blue" : "red";
+        // Regular matches show the latest game; finals show every game.
+        const cells = isFinals
+          ? Array.from({ length: FINALS_GAMES }, (_, i) => slot.games[i])
+          : [slot.games[slot.games.length - 1]];
         return (
           <button
             key={side}
             disabled={!canPick}
             onClick={() => a !== null && onPick(a)}
-            className={`w-full flex items-center gap-1.5 pr-2 text-left text-[11px] border-t border-border/50 transition-colors
-              ${canPick ? "hover:bg-muted/60 cursor-pointer" : "cursor-default"}
-              ${lost ? "opacity-45" : ""}
-              ${won && slot.decidedBy === "predicted" ? "bg-primary/10" : ""}`}
+            className={`relative w-full flex items-center gap-2 pl-3 pr-2.5 text-left text-xs border-t border-border/60 transition-colors
+              ${canPick ? "hover:bg-muted/50 active:bg-muted cursor-pointer" : "cursor-default"}
+              ${won && predicted ? "bg-primary/10" : ""}`}
             style={{ height: ROW_H }}
             aria-label={a !== null ? `Alliance ${a}${canPick ? ", tap to predict winner" : ""}` : sourceLabel(BRACKET[n][side])}
           >
-            <span className={`self-stretch w-1.5 shrink-0 ${side === "red" ? "bg-red-500" : "bg-blue-500"}`} />
+            <span className={`absolute left-0 inset-y-0 w-[3px] ${side === "red" ? "bg-red-500" : "bg-blue-500"} ${lost ? "opacity-30" : ""}`} />
             {a === null ? (
-              <span className="italic text-muted-foreground truncate">{sourceLabel(BRACKET[n][side])}</span>
+              <span className="flex-1 truncate text-muted-foreground/70">{sourceLabel(BRACKET[n][side])}</span>
             ) : (
               <>
-                <span className={`shrink-0 font-bold ${projected ? "italic text-primary" : ""}`}>A{a}</span>
-                <span className={`flex-1 min-w-0 truncate font-mono text-[10px] text-muted-foreground ${projected ? "italic" : ""}`}>
+                <span className={`w-6 shrink-0 font-semibold ${
+                  lost ? "text-muted-foreground/50" : projected || (won && predicted) ? "text-primary" : "text-foreground"
+                }`}>A{a}</span>
+                <span className={`flex-1 min-w-0 truncate font-mono text-[11px] tabular-nums ${lost ? "text-muted-foreground/50" : "text-muted-foreground"}`}>
                   {teams.map((t, i) => (
-                    <span key={t} className={t === MY_TEAM ? "text-yellow-500 font-bold" : ""}>{i ? " " : ""}{t}</span>
+                    <span key={t} className={t === MY_TEAM && !lost ? "text-primary font-semibold" : ""}>{i ? " " : ""}{t}</span>
                   ))}
                 </span>
               </>
             )}
-            {score !== null && (
-              <span className={`shrink-0 font-mono font-semibold ${won ? (side === "red" ? "text-red-500" : "text-blue-500") : ""}`}>{score}</span>
-            )}
-            {won && <span className={`shrink-0 ${slot.decidedBy === "predicted" ? "text-primary" : "text-green-500"}`}>✓</span>}
+            {cells.map((g, i) => {
+              const gameWon = g !== undefined && g[side] > g[other];
+              return (
+                <span key={i} className={`w-8 shrink-0 text-right font-mono tabular-nums ${
+                  g === undefined ? "text-muted-foreground/30"
+                  : gameWon ? "text-foreground font-semibold"
+                  : "text-muted-foreground/60"
+                }`}>
+                  {g === undefined ? (isFinals ? "-" : "") : g[side]}
+                </span>
+              );
+            })}
           </button>
         );
       })}
