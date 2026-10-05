@@ -1479,6 +1479,21 @@ function BoardView({
         </div>
       )}
 
+      {data.sbNoData && (
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs">
+          <span>
+            Statbotics has no event EPA for this event on any host that answered
+            {data.sbNoData.downHost ? ` (${data.sbNoData.downHost} is unreachable)` : ""}, so event EPA stats show a dash.
+          </span>
+          <button
+            className="ml-auto shrink-0 underline hover:text-amber-500 transition-colors"
+            onClick={data.reloadExternal}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Board or List view */}
       {viewMode === "board" ? (
         <div className="flex flex-col gap-3 flex-1 min-h-0">

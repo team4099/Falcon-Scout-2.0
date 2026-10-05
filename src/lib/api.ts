@@ -44,6 +44,11 @@ export function clearCacheErrKey(cacheKey: string): void {
   localStorage.removeItem(`${LS_PREFIX}${cacheKey}__err`);
 }
 
+/** Drop a cached response outright, so the next call refetches it. */
+export function clearCacheKey(cacheKey: string): void {
+  localStorage.removeItem(`falconscout_cache_${cacheKey}`);
+}
+
 /**
  * Read the error-backoff entry for a cache key, if the last fetch failed and
  * the 5-minute backoff has not yet expired. Lets the UI distinguish "this

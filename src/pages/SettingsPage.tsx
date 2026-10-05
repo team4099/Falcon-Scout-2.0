@@ -134,12 +134,19 @@ function StatboticsSourceCard() {
     setChecking(true);
     try {
       const result = await checkStatboticsHosts();
-      if (result.primary) {
-        toast.success("Official Statbotics API is up — switched back to it.");
-      } else if (result.mirror) {
-        toast.warning("Official API is still down. Using the mirror.");
+      // Mirrors checkStatboticsHosts' own preference order, so the toast names
+      // the host the card is about to show.
+      const down = (["mirror", "primary", "popcorn"] as const)
+        .filter((src) => !result[src]).map(statboticsHostLabel);
+      const downNote = down.length ? ` Unreachable: ${down.join(", ")}.` : "";
+      if (result.mirror) {
+        toast.success(`Live mirror is up — using it.${downNote}`);
+      } else if (result.primary) {
+        toast.warning(`Mirror is down. Using the official API.${downNote}`);
+      } else if (result.popcorn) {
+        toast.warning(`Using the popcornpenguins mirror.${downNote}`);
       } else {
-        toast.error("Both Statbotics hosts are unreachable.");
+        toast.error("All Statbotics hosts are unreachable.");
       }
     } finally {
       setChecking(false);
@@ -190,14 +197,14 @@ function StatboticsSourceCard() {
       <Separator />
 
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-medium">Re-check both hosts</p>
+        <p className="text-sm font-medium">Re-check hosts</p>
         <Button variant="outline" size="sm" onClick={handleRecheck} disabled={checking}>
           {checking ? "Checking…" : "Re-check"}
         </Button>
       </div>
       <p className="text-xs text-muted-foreground -mt-2">
-        Tests the official API and the mirror right now, and switches back to the
-        official one if it has recovered.
+        Tests all three hosts right now and switches back to the live mirror if
+        it has recovered. A host can be up and still have no data for an event.
       </p>
     </div>
   );

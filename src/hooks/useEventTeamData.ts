@@ -13,7 +13,10 @@ import {
   fetchTBAEventMatches,
   getCacheError,
   clearCacheErrKey,
+  clearCacheKey,
   statboticsEventTeamsCacheKey,
+  getStatboticsHealth,
+  statboticsHostLabel,
 } from "@/lib/api";
 import type { TBAMatch } from "@/lib/api";
 import { parseEpaComponents, totalEpa } from "@/lib/epa";
@@ -106,6 +109,11 @@ export function useEventTeamData(
   // Non-null when the statbotics EPA fetch failed upstream, so empty EPA
   // values can explain themselves instead of looking like an app bug.
   const [sbError, setSbError] = useState<{ status: number } | null>(null);
+  // Non-null when the hosts that answered have no rows for this event: Season
+  // EPA still loads, so the blank event columns need their own explanation.
+  // `downHost` names a host that failed on the way, which may be the only one
+  // carrying the event.
+  const [sbNoData, setSbNoData] = useState<{ downHost: string | null } | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
   const seededEventKeyRef = useRef(eventKey);
   const onFreshRosterRef = useRef(onFreshRoster);
@@ -141,6 +149,13 @@ export function useEventTeamData(
       // means the request failed. Surface the upstream error either way.
       const sbErr = getCacheError(statboticsEventTeamsCacheKey(eventKey));
       setSbError(!Array.isArray(sbData) || sbData.length === 0 ? sbErr : null);
+      if (Array.isArray(sbData) && sbData.length === 0 && !sbErr) {
+        const e = getStatboticsHealth().lastError;
+        const recent = e !== null && Date.now() - e.at < TTL.SHORT;
+        setSbNoData({ downHost: recent ? statboticsHostLabel(e.source) : null });
+      } else {
+        setSbNoData(null);
+      }
 
       if (Array.isArray(sbData) && sbData.length > 0) {
         const map: Record<number, Record<string, unknown>> = {};
@@ -224,6 +239,8 @@ export function useEventTeamData(
   /** Retry after a Statbotics outage, skipping the 5-min error backoff. */
   function reloadExternal() {
     clearCacheErrKey(statboticsEventTeamsCacheKey(eventKey));
+    // An empty answer is cached briefly; without this a retry just re-reads it.
+    if (sbNoData) clearCacheKey(statboticsEventTeamsCacheKey(eventKey));
     setReloadNonce((n) => n + 1);
   }
 
@@ -291,6 +308,7 @@ export function useEventTeamData(
     matchData,
     loadingExternal,
     sbError,
+    sbNoData,
     reloadExternal,
     epaMap,
     submissionsByTeam,

@@ -915,6 +915,7 @@ export default function DashboardPage() {
     matchData,
     loadingExternal,
     sbError,
+    sbNoData,
     epaMap,
     submissionsByTeam,
     pitSubmissionsByTeam,
@@ -1214,6 +1215,14 @@ export default function DashboardPage() {
               ⚠ Statbotics is unavailable{sbError.status ? ` (HTTP ${sbError.status})` : ""} — EPA
               columns are blank. Rank, record and Avg Score come from The Blue Alliance and are
               unaffected. This retries automatically.
+            </p>
+          )}
+
+          {sbNoData && (
+            <p className="text-xs text-amber-500 dark:text-amber-400 shrink-0">
+              ⚠ Statbotics has no EPA for {eventKey} on any host that answered
+              {sbNoData.downHost ? ` (${sbNoData.downHost} is unreachable)` : ""} — Event EPA, Auto,
+              Teleop and Endgame are blank. Season EPA is unaffected.
             </p>
           )}
 
