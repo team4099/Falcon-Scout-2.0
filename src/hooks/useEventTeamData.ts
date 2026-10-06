@@ -189,8 +189,11 @@ export function useEventTeamData(
             }
           }
           if (cancelled) return;
-          setSbOverall(overall);
-          lsSet(`dash_sbOverall_${eventKey}`, overall, TTL.SHORT);
+          // Merge: a team whose request dropped keeps its last known value
+          // instead of going blank (and being saved blank).
+          const merged = { ...(lsGetStale<Record<number, number>>(`dash_sbOverall_${eventKey}`) ?? {}), ...overall };
+          setSbOverall(merged);
+          lsSet(`dash_sbOverall_${eventKey}`, merged, TTL.SHORT);
         })();
       }
 
@@ -243,6 +246,24 @@ export function useEventTeamData(
     if (sbNoData) clearCacheKey(statboticsEventTeamsCacheKey(eventKey));
     setReloadNonce((n) => n + 1);
   }
+
+  // A failed host is usually a blip on venue wifi: try again on our own, and
+  // straight away when the connection comes back. Genuinely empty events
+  // (no host down) are left alone rather than polled.
+  const sbHostDown = sbError !== null || !!sbNoData?.downHost;
+  useEffect(() => {
+    if (!eventKey) return;
+    const retry = () => {
+      clearCacheErrKey(statboticsEventTeamsCacheKey(eventKey));
+      if (lsGetStale<unknown[]>(statboticsEventTeamsCacheKey(eventKey))?.length === 0) {
+        clearCacheKey(statboticsEventTeamsCacheKey(eventKey));
+      }
+      setReloadNonce((n) => n + 1);
+    };
+    window.addEventListener("online", retry);
+    const id = sbHostDown ? window.setTimeout(retry, 90_000) : undefined;
+    return () => { window.removeEventListener("online", retry); window.clearTimeout(id); };
+  }, [eventKey, sbHostDown, reloadNonce]);
 
   // Keyed off sbTeams ∪ sbOverall: before Statbotics processes an event,
   // sbTeams is empty but season EPA is already known.

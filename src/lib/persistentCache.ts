@@ -142,13 +142,18 @@ export function lsGetStale<T>(key: string): T | null {
   } catch { return null; }
 }
 
-/** Remove all expired localStorage cache entries. */
+/** How long an expired entry is kept as a stale fallback. Evicting at expiry
+ *  left nothing for `lsGetStale` to return, so opening the app on bad wifi
+ *  more than a TTL after the last fetch blanked EPA and rankings. */
+const STALE_GRACE = 1000 * 60 * 60 * 24 * 7; // 7 days — one event
+
+/** Remove localStorage cache entries that expired more than STALE_GRACE ago. */
 export function lsEvictExpired(): void {
   for (const k of Object.keys(localStorage)) {
     if (!k.startsWith(LS_PREFIX)) continue;
     try {
       const entry = JSON.parse(localStorage.getItem(k)!) as CacheEntry<unknown>;
-      if (Date.now() - entry.ts > entry.ttl) localStorage.removeItem(k);
+      if (Date.now() - entry.ts > entry.ttl + STALE_GRACE) localStorage.removeItem(k);
     } catch {
       localStorage.removeItem(k);
     }

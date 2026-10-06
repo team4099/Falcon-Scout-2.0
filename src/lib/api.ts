@@ -12,7 +12,7 @@
 import { idbGetEntry, idbSet, lsGet, lsGetStale, lsSet, TTL } from "./persistentCache";
 import { convex } from "./convexClient";
 import { api } from "../../convex/_generated/api";
-import { slimStatboticsMatches, slimStatboticsTeamMatches } from "./chartData";
+import { slimStatboticsMatches, slimStatboticsPreEpas, slimStatboticsTeamMatches } from "./chartData";
 import type { SlimMatch, SlimTeamMatch } from "./chartData";
 
 // Statbotics has two hosts. The official API is the source of truth; the
@@ -351,6 +351,7 @@ async function fetchStatboticsWithCache<T>(
   if (lsGet<unknown>(errKey) !== null) return lsGetStale<T>(cacheKey);
 
   let lastStatus = 0;
+  let anyFailed = false;
   let emptyResult: T | null = null;
 
   for (const source of statboticsOrder()) {
@@ -359,6 +360,7 @@ async function fetchStatboticsWithCache<T>(
       if (!res.ok) {
         console.warn(`[Statbotics:${source}] ${res.status} — ${path}`);
         lastStatus = res.status;
+        anyFailed = true;
         writeStatboticsHealth({ lastError: { source, status: res.status, at: Date.now() } });
         continue;
       }
@@ -376,6 +378,7 @@ async function fetchStatboticsWithCache<T>(
     } catch {
       // Network/CORS failure — no status to report.
       lastStatus = 0;
+      anyFailed = true;
       writeStatboticsHealth({ lastError: { source, status: 0, at: Date.now() } });
     }
   }
@@ -383,6 +386,10 @@ async function fetchStatboticsWithCache<T>(
   // Every host that answered had an empty list: that is a real "no data", not an
   // outage — no backoff, and a short cache so the next host gets retried soon.
   if (emptyResult !== null) {
+    // Unless a host failed and we already hold rows: then the host that failed
+    // was probably the one with the data, and "empty" must not overwrite it.
+    const stale = lsGetStale<T>(cacheKey);
+    if (anyFailed && Array.isArray(stale) && stale.length > 0) return stale;
     lsSet(cacheKey, emptyResult, SB_ERROR_BACKOFF_MS);
     return emptyResult;
   }
@@ -469,13 +476,23 @@ export async function fetchStatboticsEventMatches(eventKey: string) {
 
 /** Per-match EPA (going into each match) for every team at an event. */
 export async function fetchStatboticsEventTeamMatches(eventKey: string) {
-  return fetchStatboticsWithCache<SlimTeamMatch[]>(
+  const rows = await fetchStatboticsWithCache<SlimTeamMatch[]>(
     // Same 1000 cap as team_events — limit=5000 returns 422.
     `/team_matches?event=${eventKey}&limit=1000`,
     `sb_event_team_matches_v2_${eventKey}`,
     TTL.SHORT,
     SB_TIMEOUT_MS,
     slimStatboticsTeamMatches
+  );
+  if (rows?.length) return rows;
+  // Only the railway mirror serves /team_matches. For an event it hasn't
+  // synced, the same numbers ride along on each /matches row as `pre_epas`.
+  return fetchStatboticsWithCache<SlimTeamMatch[]>(
+    `/matches?event=${eventKey}&limit=1000`,
+    `sb_event_pre_epas_${eventKey}`,
+    TTL.SHORT,
+    90_000,
+    slimStatboticsPreEpas
   );
 }
 

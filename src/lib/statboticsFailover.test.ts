@@ -9,6 +9,7 @@ import {
   fetchStatboticsTeamYear,
   fetchStatboticsEventTeams,
   fetchStatboticsEventMatches,
+  fetchStatboticsEventTeamMatches,
   getStatboticsHealth,
   checkStatboticsHosts,
   subscribeStatboticsHealth,
@@ -206,5 +207,42 @@ describe("checkStatboticsHosts", () => {
     const result = await checkStatboticsHosts();
 
     expect(result).toEqual({ primary: false, mirror: false, popcorn: false });
+  });
+});
+
+describe("flaky hosts", () => {
+  it("keeps cached rows when the host that has them drops and the rest answer empty", async () => {
+    mockHosts({ mirror: ok([]), primary: ok([]), popcorn: ok([{ team: 4099 }]) });
+    await fetchStatboticsEventTeams("2026vaale1");
+    // Expire the cache entry so the next call goes back to the network.
+    const key = "falconscout_cache_sb_event_teams_2026vaale1";
+    localStorage.setItem(key, JSON.stringify({ ...JSON.parse(localStorage.getItem(key)!), ts: 0 }));
+
+    mockHosts({ mirror: ok([]), primary: ok([]), popcorn: unreachable });
+    const data = await fetchStatboticsEventTeams("2026vaale1");
+
+    expect(data).toEqual([{ team: 4099 }]);
+    expect(JSON.parse(localStorage.getItem(key)!).data).toEqual([{ team: 4099 }]);
+  });
+
+  it("builds per-match EPA from /matches pre_epas when no host has /team_matches rows", async () => {
+    const matches = [{
+      key: "2026vaale1_qm1",
+      pre_epas: { "116": { epa: 39.32, auto_epa: 5, teleop_epa: 21.04, endgame_epa: 13.28 } },
+    }];
+    const calls = mockHosts({
+      mirror: ok([]),
+      primary: fail(404),
+      popcorn: () => new Response(JSON.stringify(matches), { status: 200 }),
+    });
+    // popcorn has no /team_matches route at all.
+    const fetchMock = globalThis.fetch as unknown as (url: string) => Promise<Response>;
+    vi.stubGlobal("fetch", async (url: string) =>
+      url.startsWith(POPCORN) && url.includes("/team_matches") ? new Response("{}", { status: 404 }) : fetchMock(url));
+
+    const rows = await fetchStatboticsEventTeamMatches("2026vaale1");
+
+    expect(rows).toEqual([{ team: 116, k: "2026vaale1_qm1", e: [39.3, 5, 21, 13.3] }]);
+    expect(calls.some((c) => c.includes("/matches?event=2026vaale1"))).toBe(true);
   });
 });

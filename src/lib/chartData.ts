@@ -3,7 +3,7 @@
 // (TBA/Statbotics scores, Statbotics per-match EPA, scouting submissions).
 import { BUILTIN_COLUMNS, EPA_KEYS, REPORTS_COLUMN_ID, aggregateField } from "./rankingColumns";
 import type { RankingColumn, TeamStats } from "./rankingColumns";
-import { findInEpa } from "./epa";
+import { findInEpa, readMean } from "./epa";
 import type { FormField } from "@/types";
 
 export type ChartType = "scatter" | "line";
@@ -141,6 +141,24 @@ export function slimStatboticsTeamMatches(raw: unknown): SlimTeamMatch[] {
         findInEpa(r.epa, "endgame_points"),
       ],
     }];
+  });
+}
+
+/** Statbotics `/v3/matches` rows → SlimTeamMatch, from each row's `pre_epas`
+ *  (`{ "116": { epa, auto_epa, teleop_epa, endgame_epa } }`). */
+export function slimStatboticsPreEpas(raw: unknown): SlimTeamMatch[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((m: Record<string, unknown>) => {
+    if (typeof m?.key !== "string" || !m.pre_epas || typeof m.pre_epas !== "object") return [];
+    const k = m.key;
+    return Object.entries(m.pre_epas as Record<string, Record<string, unknown> | null>).flatMap(([team, e]) => {
+      if (!(Number(team) > 0) || !e) return [];
+      return [{
+        team: Number(team),
+        k,
+        e: [readMean(e.epa), readMean(e.auto_epa), readMean(e.teleop_epa), readMean(e.endgame_epa)],
+      }];
+    });
   });
 }
 
