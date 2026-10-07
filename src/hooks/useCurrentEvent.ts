@@ -3,7 +3,7 @@
 // The admin-set current event is the one everybody works in: scouting forms,
 // assignments, scheduling and FalconBet always use it (useAdminEvent). Screens
 // that only *read* an event's data — Dashboard, Matches, Data Viewer, Picklist,
-// Submissions — use useCurrentEvent, which returns the event this device chose
+// Submissions, My QR Codes — use useCurrentEvent, which returns the event this device chose
 // to look at in Settings instead, when there is one. That choice is local: it
 // never changes the current event for anyone else.
 

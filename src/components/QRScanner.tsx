@@ -102,8 +102,8 @@ export function useScannedSubmissions() {
     reload();
   }, [reload]);
 
-  const clearAll = useCallback(() => {
-    clearScannedSubmissions();
+  const clearAll = useCallback((eventKey?: string) => {
+    clearScannedSubmissions(eventKey);
     reload();
   }, [reload]);
 

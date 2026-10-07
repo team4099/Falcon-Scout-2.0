@@ -9,6 +9,7 @@ import {
   toQRChunks,
   type LocalSubmission,
 } from "@/lib/submissionStore";
+import { useCurrentEvent } from "@/hooks/useCurrentEvent";
 import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { enqueueSubmissionDelete, dequeueSubmissionDelete } from "@/lib/offlineQueue";
@@ -263,14 +264,27 @@ function SubmissionCard({
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function QRCodesPage() {
-  const [subs, setSubs] = useState<LocalSubmission[]>([]);
+  const [allSubs, setSubs] = useState<LocalSubmission[]>([]);
   const [viewing, setViewing] = useState<LocalSubmission | null>(null);
   const [clearConfirm, setClearConfirm] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<LocalSubmission | null>(null);
   const [clearScannedConfirm, setClearScannedConfirm] = useState(false);
   const scannedData = useScannedSubmissions();
   const deleteOnServer = useMutation(api.forms.deleteMySubmission);
-  const { scanned, attemptUpload } = scannedData;
+  const { attemptUpload } = scannedData;
+
+  // Only the event on screen (the one viewed in Settings, else the current
+  // one). Other events' codes stay stored and come back when that event is
+  // viewed. With no event known yet (offline, nothing cached) show everything
+  // rather than hide a scout's backups.
+  const currentEvent = useCurrentEvent();
+  const eventKey = currentEvent?.eventKey;
+  const subs = eventKey ? allSubs.filter((s) => s.eventKey === eventKey) : allSubs;
+  const scanned = eventKey
+    ? scannedData.scanned.filter((s) => s.eventKey === eventKey)
+    : scannedData.scanned;
+  const hiddenCount =
+    allSubs.length - subs.length + (scannedData.scanned.length - scanned.length);
   const pendingScans = scanned.filter((s) => s.uploadStatus !== "uploaded").length;
 
   // ?scan=1 opens the camera directly (the old /scanner route redirects here)
@@ -305,7 +319,7 @@ export default function QRCodesPage() {
   }
 
   function handleClearAll() {
-    clearMySubmissions();
+    clearMySubmissions(eventKey);
     reload();
     setViewing(null);
     setClearConfirm(false);
@@ -359,6 +373,13 @@ export default function QRCodesPage() {
       {/* Submissions grouped by match */}
       <ScrollArea className="flex-1 -mx-1 px-1">
         <div className="space-y-6 pb-4">
+          {hiddenCount > 0 && (
+            <p className="text-xs text-muted-foreground bg-muted/40 rounded-xl px-4 py-3">
+              {hiddenCount} code{hiddenCount !== 1 ? "s" : ""} from other events
+              {hiddenCount !== 1 ? " are" : " is"} still saved on this device. Pick that event in
+              Settings → View Another Event to see {hiddenCount !== 1 ? "them" : "it"}.
+            </p>
+          )}
           {/* Empty state */}
           {subs.length === 0 && (
             <div className="flex flex-col items-center justify-center gap-3 text-center px-4 py-8">
@@ -494,7 +515,8 @@ export default function QRCodesPage() {
               Clear all submissions?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              This removes all {subs.length} locally stored scouting submissions and their QR codes.
+              This removes all {subs.length} locally stored scouting submissions
+              {eventKey ? ` for ${eventKey}` : ""} and their QR codes.
               Submissions already synced to Convex are not affected.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -519,7 +541,8 @@ export default function QRCodesPage() {
               Clear all scanned data?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Removes all {scanned.length} locally stored scanned submissions.
+              Removes all {scanned.length} locally stored scanned submissions
+              {eventKey ? ` for ${eventKey}` : ""}.
               Records already uploaded to Convex are not affected.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -528,7 +551,7 @@ export default function QRCodesPage() {
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => {
-                scannedData.clearAll();
+                scannedData.clearAll(eventKey);
                 setClearScannedConfirm(false);
               }}
             >

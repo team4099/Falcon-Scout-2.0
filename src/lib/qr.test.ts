@@ -6,8 +6,11 @@
  * payloads overrunning their own size budget once JSON-escaped (FS-07).
  */
 import { beforeEach, describe, expect, test } from "vitest";
-import { MAX_CHUNK_CHARS, toQRChunks, stripPhotosForQR, type LocalSubmission } from "./submissionStore";
-import { ingestQRPayload } from "./scannedDataStore";
+import {
+  MAX_CHUNK_CHARS, toQRChunks, stripPhotosForQR, saveMySubmission, getMySubmissions,
+  clearMySubmissions, type LocalSubmission,
+} from "./submissionStore";
+import { ingestQRPayload, getScannedSubmissions, clearScannedSubmissions } from "./scannedDataStore";
 
 // jsdom supplies localStorage; both modules persist through it.
 beforeEach(() => localStorage.clear());
@@ -89,6 +92,28 @@ describe("round trip", () => {
     expect(first.status).toBe("buffering");
     if (first.status !== "buffering") return;
     expect(first.chunksNeeded).toBe(chunks.length);
+  });
+});
+
+describe("clearing one event", () => {
+  // My QR Codes only shows the event on screen, so its "Clear all" must leave
+  // the other events' backups (which the scout can't see) alone.
+  test("keeps the other events' submissions and scans", () => {
+    const other = { ...submission(2), id: "aaaaaaaa-0000-0000-0000-000000000000", eventKey: "2024old" };
+    saveMySubmission(submission(2));
+    saveMySubmission(other);
+    clearMySubmissions("2025chcmp");
+    expect(getMySubmissions().map((s) => s.eventKey)).toEqual(["2024old"]);
+
+    scanAll(toQRChunks({ ...submission(2), id: "bbbbbbbb-0000-0000-0000-000000000000" }));
+    scanAll(toQRChunks({ ...other, id: "cccccccc-0000-0000-0000-000000000000" }));
+    clearScannedSubmissions("2025chcmp");
+    expect(getScannedSubmissions().map((s) => s.eventKey)).toEqual(["2024old"]);
+
+    clearMySubmissions();
+    clearScannedSubmissions();
+    expect(getMySubmissions()).toHaveLength(0);
+    expect(getScannedSubmissions()).toHaveLength(0);
   });
 });
 

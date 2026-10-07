@@ -29,6 +29,15 @@
         ],
         "createdAt": "2026-09-16T13:23:54.341Z",
         "reason": "pre-existing sidebar collapse width/max-width transition, unrelated to this session's Grant Admin hours change; narrow one-off collapse animation, not addressed here"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/components/QRScanner.tsx"
+        ],
+        "createdAt": "2026-10-07T18:10:08.568Z",
+        "reason": "Claude triage: L385-388 are the four corner brackets of the camera aim box in the QR scanner overlay, not a card accent border"
       }
     ]
   }

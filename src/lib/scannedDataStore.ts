@@ -103,8 +103,10 @@ export function deleteScannedSubmission(id: string): void {
   saveScannedSubmissions(getScannedSubmissions().filter((s) => s.id !== id));
 }
 
-export function clearScannedSubmissions(): void {
-  localStorage.removeItem(SCANNED_KEY);
+/** Clears one event's scans, or everything when no event is given. */
+export function clearScannedSubmissions(eventKey?: string): void {
+  if (!eventKey) { localStorage.removeItem(SCANNED_KEY); return; }
+  saveScannedSubmissions(getScannedSubmissions().filter((s) => s.eventKey !== eventKey));
 }
 
 // ── Chunk buffer ──────────────────────────────────────────────────────────────

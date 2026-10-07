@@ -72,8 +72,13 @@ export function deleteMySubmission(id: string): void {
   } catch { /* quota */ }
 }
 
-export function clearMySubmissions(): void {
-  localStorage.removeItem(STORE_KEY);
+/** Clears one event's submissions, or everything when no event is given. */
+export function clearMySubmissions(eventKey?: string): void {
+  if (!eventKey) { localStorage.removeItem(STORE_KEY); return; }
+  try {
+    const next = getMySubmissions().filter((s) => s.eventKey !== eventKey);
+    localStorage.setItem(STORE_KEY, JSON.stringify(next));
+  } catch { /* quota */ }
 }
 
 // ── QR chunking ───────────────────────────────────────────────────────────────
