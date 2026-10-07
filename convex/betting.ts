@@ -1,8 +1,8 @@
 import { v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
-import type { MutationCtx } from "./_generated/server";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { getApprovedUserId, isSignedIn, requireAdmin } from "./adminAuth";
+import { canViewEvent, eventViewerId, getApprovedUserId, requireAdmin } from "./adminAuth";
 
 const STARTING_BALANCE = 1000;
 
@@ -70,6 +70,7 @@ export function optionWinProb(option: { winProb?: number; seedPool: number }): n
 
 type TransactionType =
   | "scouting_reward"
+  | "scouting_revoked"
   | "pit_duty_reward"
   | "pit_duty_revoked"
   | "admin_award"
@@ -105,7 +106,7 @@ async function logTransaction(
 export const listMyTransactions = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getApprovedUserId(ctx);
+    const userId = await eventViewerId(ctx, eventKey);
     if (!userId) return [];
     const rows = await ctx.db
       .query("coinTransactions")
@@ -168,7 +169,7 @@ export async function revokeCoins(
   userId: Id<"users">,
   eventKey: string,
   amount: number,
-  reason: "pit_duty_revoked",
+  reason: "pit_duty_revoked" | "scouting_revoked",
   note?: string,
   relatedId?: string,
 ): Promise<void> {
@@ -221,7 +222,7 @@ export const adminAwardCoins = mutation({
 export const getOrCreateBalance = mutation({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getApprovedUserId(ctx);
+    const userId = await eventViewerId(ctx, eventKey);
     if (!userId) throw new Error("Not authenticated");
 
     const existing = await ctx.db
@@ -248,7 +249,7 @@ export const getOrCreateBalance = mutation({
 export const getMyBalance = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getApprovedUserId(ctx);
+    const userId = await eventViewerId(ctx, eventKey);
     if (!userId) return null;
     return await ctx.db
       .query("userBalances")
@@ -271,7 +272,7 @@ const BEG_AMOUNT = 1;
 export const beg = mutation({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getApprovedUserId(ctx);
+    const userId = await eventViewerId(ctx, eventKey);
     if (!userId) throw new Error("Not authenticated");
 
     const now = Date.now();
@@ -336,7 +337,7 @@ export const listMarkets = query({
     )),
   },
   handler: async (ctx, { eventKey, status }) => {
-    if (!(await isSignedIn(ctx))) return [];
+    if (!(await canViewEvent(ctx, eventKey))) return [];
     const all = (await ctx.db
       .query("bettingMarkets")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
@@ -351,8 +352,14 @@ export const listMarkets = query({
 export const getMarket = query({
   args: { marketId: v.id("bettingMarkets") },
   handler: async (ctx, { marketId }) =>
-    (await isSignedIn(ctx)) ? ctx.db.get(marketId) : null,
+    (await canViewMarket(ctx, marketId)) ? ctx.db.get(marketId) : null,
 });
+
+/** Whether the caller may see the event this market belongs to. */
+async function canViewMarket(ctx: QueryCtx, marketId: Id<"bettingMarkets">): Promise<boolean> {
+  const market = await ctx.db.get(marketId);
+  return !!market && (await canViewEvent(ctx, market.eventKey));
+}
 
 /**
  * Returns the real bet totals per option for a market (used to compute live odds).
@@ -361,7 +368,7 @@ export const getMarket = query({
 export const getMarketPool = query({
   args: { marketId: v.id("bettingMarkets") },
   handler: async (ctx, { marketId }) => {
-    if (!(await isSignedIn(ctx))) return {};
+    if (!(await canViewMarket(ctx, marketId))) return {};
     const bets = await ctx.db
       .query("bets")
       .withIndex("by_market", (q) => q.eq("marketId", marketId))
@@ -471,6 +478,7 @@ export const lockMarket = mutation({
   args: { marketId: v.id("bettingMarkets"), adminKey: v.optional(v.string()) },
   handler: async (ctx, { marketId, adminKey }) => {
     await requireAdmin(ctx, adminKey);
+    if ((await ctx.db.get(marketId))?.status !== "open") throw new Error("Only an open market can be locked");
     await ctx.db.patch(marketId, { status: "locked" });
   },
 });
@@ -480,6 +488,9 @@ export const unlockMarket = mutation({
   args: { marketId: v.id("bettingMarkets"), adminKey: v.optional(v.string()) },
   handler: async (ctx, { marketId, adminKey }) => {
     await requireAdmin(ctx, adminKey);
+    // Reopening a resolved or cancelled market would let it be settled (or
+    // refunded) a second time, paying every bet on it twice.
+    if ((await ctx.db.get(marketId))?.status !== "locked") throw new Error("Only a locked market can be unlocked");
     await ctx.db.patch(marketId, { status: "open" });
   },
 });
@@ -522,6 +533,7 @@ async function settleMarket(
 
   // Settle each winning bet
   for (const bet of allBets) {
+    if (bet.settled) continue; // never pay a bet twice
     const won = bet.optionId === resolvedOptionId;
     const payout = won
       ? Math.floor(bet.amount * (bet.multiplier ?? fallbackMultiplier))
@@ -672,6 +684,7 @@ export const placeBet = mutation({
 
     const market = await ctx.db.get(marketId);
     if (!market) throw new Error("Market not found");
+    if (!(await eventViewerId(ctx, market.eventKey))) throw new Error("You haven't been added to this event.");
     if (market.status !== "open") throw new Error("Market is not open for betting");
 
     const validOption = market.options.find((o) => o.id === optionId);
@@ -740,7 +753,7 @@ export const placeBet = mutation({
 export const listMyBets = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getApprovedUserId(ctx);
+    const userId = await eventViewerId(ctx, eventKey);
     if (!userId) return [];
     return await ctx.db
       .query("bets")
@@ -755,7 +768,7 @@ export const listMyBets = query({
 export const listMarketBets = query({
   args: { marketId: v.id("bettingMarkets") },
   handler: async (ctx, { marketId }) => {
-    if (!(await isSignedIn(ctx))) return [];
+    if (!(await canViewMarket(ctx, marketId))) return [];
     return await ctx.db
       .query("bets")
       .withIndex("by_market", (q) => q.eq("marketId", marketId))
@@ -769,7 +782,7 @@ export const listMarketBets = query({
 export const getLeaderboard = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    if (!(await isSignedIn(ctx))) return [];
+    if (!(await canViewEvent(ctx, eventKey))) return [];
     const balances = (await ctx.db
       .query("userBalances")
       .collect()

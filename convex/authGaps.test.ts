@@ -453,7 +453,7 @@ describe("scouting pays once per match", () => {
     expect(rows).toHaveLength(5); // corrections are still accepted
   });
 
-  test("a different match or comp level each pays", async () => {
+  test("each assigned match pays, but another comp level of the same number does not", async () => {
     const t = convexTest(schema, modules);
     const { as, templateId, bal, assign } = await scout(t);
     await assign(1);
@@ -461,8 +461,138 @@ describe("scouting pays once per match", () => {
     const base = { templateId, eventKey: EVENT, data: "{}" } as const;
     await as.mutation(api.forms.submitForm, { ...base, matchNumber: 1, compLevel: "qm", teamNumber: 4099 });
     await as.mutation(api.forms.submitForm, { ...base, matchNumber: 2, compLevel: "qm", teamNumber: 4099 });
+    // Assignments are quals-only and keyed by number: "elim 1" and a
+    // level-less "1" are not extra assigned matches.
     await as.mutation(api.forms.submitForm, { ...base, matchNumber: 1, compLevel: "elim", teamNumber: 4099 });
-    expect(await bal()).toBe(1150); // 1000 + 3 × 50
+    await as.mutation(api.forms.submitForm, { ...base, matchNumber: 1, teamNumber: 4099 });
+    expect(await bal()).toBe(1100); // 1000 + 2 × 50
+  });
+
+  test("an elim form sent first can't unlock the qual payout twice", async () => {
+    const t = convexTest(schema, modules);
+    const { as, templateId, bal, assign } = await scout(t);
+    await assign(1);
+    const base = { templateId, eventKey: EVENT, matchNumber: 1, teamNumber: 4099, data: "{}" } as const;
+    await as.mutation(api.forms.submitForm, { ...base, compLevel: "elim" });
+    expect(await bal()).toBe(0);
+    await as.mutation(api.forms.submitForm, { ...base, compLevel: "qm" });
+    await as.mutation(api.forms.submitForm, { ...base });
+    expect(await bal()).toBe(1050);
+  });
+
+  test("the active template sets the reward, not whichever one the client names", async () => {
+    const t = convexTest(schema, modules);
+    const { as, bal, assign } = await scout(t); // active match template pays 50
+    await assign(1);
+    const richId = await t.run(async (ctx) => ctx.db.insert("formTemplates", {
+      name: "Old draft", fields: [], isActive: false, coinReward: 5000,
+    }));
+    await as.mutation(api.forms.submitForm, {
+      templateId: richId, eventKey: EVENT, matchNumber: 1, compLevel: "qm", teamNumber: 4099, data: "{}",
+    });
+    expect(await bal()).toBe(1050);
+  });
+
+  test("deleting your own form claws the coins back and reopens the assignment", async () => {
+    const t = convexTest(schema, modules);
+    const { as, templateId, bal, assign } = await scout(t);
+    await assign(1);
+    const args = { templateId, eventKey: EVENT, matchNumber: 1, compLevel: "qm", teamNumber: 4099, data: "{}" } as const;
+
+    // Delete → resubmit, repeated, never nets more than one reward.
+    for (const offlineId of ["a", "b", "c"]) {
+      await as.mutation(api.forms.submitForm, { ...args, offlineId });
+      expect(await bal()).toBe(1050);
+      expect(await as.query(api.forms.getMySubmissions, { eventKey: EVENT })).toHaveLength(1);
+      expect(await as.mutation(api.forms.deleteMySubmission, { offlineId })).toBe(true);
+      expect(await bal()).toBe(1000);
+      expect(await as.query(api.forms.getMySubmissions, { eventKey: EVENT })).toHaveLength(0);
+    }
+    // A repeat of a delete the server already applied is a harmless no-op.
+    expect(await as.mutation(api.forms.deleteMySubmission, { offlineId: "c" })).toBe(false);
+    expect(await bal()).toBe(1000);
+  });
+
+  test("deleting the paid form while a second one remains keeps one reward, no more", async () => {
+    const t = convexTest(schema, modules);
+    const { as, templateId, bal, assign } = await scout(t);
+    await assign(1);
+    const args = { templateId, eventKey: EVENT, matchNumber: 1, compLevel: "qm", teamNumber: 4099, data: "{}" } as const;
+    await as.mutation(api.forms.submitForm, { ...args, offlineId: "first" });
+    await as.mutation(api.forms.submitForm, { ...args, offlineId: "second" });
+    expect(await bal()).toBe(1050);
+
+    await as.mutation(api.forms.deleteMySubmission, { offlineId: "first" });
+    expect(await bal()).toBe(1050); // the work is still on file
+    await as.mutation(api.forms.submitForm, { ...args, offlineId: "third" });
+    expect(await bal()).toBe(1050); // and it still doesn't pay twice
+
+    await as.mutation(api.forms.deleteMySubmission, { offlineId: "second" });
+    await as.mutation(api.forms.deleteMySubmission, { offlineId: "third" });
+    expect(await bal()).toBe(1000); // nothing left → nothing earned
+  });
+
+  test("a scout cannot delete someone else's form", async () => {
+    const t = convexTest(schema, modules);
+    const a = await scout(t);
+    const b = await scout(t);
+    await a.assign(1);
+    await a.as.mutation(api.forms.submitForm, {
+      templateId: a.templateId, eventKey: EVENT, matchNumber: 1, compLevel: "qm",
+      teamNumber: 4099, data: "{}", offlineId: "a-form",
+    });
+    expect(await b.as.mutation(api.forms.deleteMySubmission, { offlineId: "a-form" })).toBe(false);
+    expect(await a.bal()).toBe(1050);
+    expect(await t.run(async (ctx) => ctx.db.query("formSubmissions").collect())).toHaveLength(1);
+  });
+
+  test("an admin delete keeps the coins, keeps the assignment done, and can't be re-earned", async () => {
+    const t = convexTest(schema, modules);
+    const { as, templateId, bal, assign, userId } = await scout(t);
+    await assign(1);
+    const args = { templateId, eventKey: EVENT, matchNumber: 1, compLevel: "qm", teamNumber: 4099, data: "{}" } as const;
+    const id = await as.mutation(api.forms.submitForm, { ...args, offlineId: "x" });
+    const admin = t.withIdentity({ subject: userId, issuer: "test", email: "czhao@team4099.com" });
+    await admin.mutation(api.forms.deleteSubmission, { id });
+
+    expect(await t.run(async (ctx) => ctx.db.query("formSubmissions").collect())).toHaveLength(0);
+    expect(await bal()).toBe(1050);
+    const mine = await as.query(api.forms.getMySubmissions, { eventKey: EVENT });
+    expect(mine).toMatchObject([{ formType: "default", matchNumber: 1, compLevel: "qm", teamNumber: 4099 }]);
+
+    await as.mutation(api.forms.submitForm, { ...args, offlineId: "y" });
+    expect(await bal()).toBe(1050);
+    // Deleting the unpaid replacement can't claw back or reopen it either.
+    await as.mutation(api.forms.deleteMySubmission, { offlineId: "y" });
+    expect(await bal()).toBe(1050);
+    expect(await as.query(api.forms.getMySubmissions, { eventKey: EVENT })).toHaveLength(1);
+  });
+
+  test("pit forms: self-delete claws back the whole roster, admin delete does not", async () => {
+    const t = convexTest(schema, modules);
+    const a = await scout(t);
+    const b = await scout(t);
+    const pitTemplateId = await t.run(async (ctx) => ctx.db.insert("formTemplates", {
+      name: "Pit", formType: "pit", fields: [], isActive: true, coinReward: 50,
+    }));
+    await t.run(async (ctx) => ctx.db.insert("pitScoutingTeams", {
+      eventKey: EVENT, teamNumber: 254, scoutIds: [a.userId, b.userId],
+    }));
+    const args = { templateId: pitTemplateId, eventKey: EVENT, matchNumber: 0, teamNumber: 254, data: "{}" };
+
+    await a.as.mutation(api.forms.submitForm, { ...args, offlineId: "p1" });
+    await a.as.mutation(api.forms.deleteMySubmission, { offlineId: "p1" });
+    expect(await a.bal()).toBe(1000);
+    expect(await b.bal()).toBe(1000);
+    expect(await b.as.query(api.forms.getMySubmissions, { eventKey: EVENT })).toHaveLength(0);
+
+    const id = await a.as.mutation(api.forms.submitForm, { ...args, offlineId: "p2" });
+    const admin = t.withIdentity({ subject: a.userId, issuer: "test", email: "czhao@team4099.com" });
+    await admin.mutation(api.forms.deleteSubmission, { id });
+    expect((await b.as.query(api.forms.getMySubmissions, { eventKey: EVENT })).map((s) => s.teamNumber)).toEqual([254]);
+    await b.as.mutation(api.forms.submitForm, { ...args, offlineId: "p3" });
+    expect(await a.bal()).toBe(1050);
+    expect(await b.bal()).toBe(1050);
   });
 
   test("scouting several teams in one assigned match pays only once", async () => {

@@ -1,6 +1,6 @@
 ﻿import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { getApprovedUserId, isSignedIn, requireAdmin } from "./adminAuth";
+import { canViewEvent, eventViewerId, requireAdmin } from "./adminAuth";
 
 // -- Pit Scouting Assignments -------------------------------------------------
 // Maps individual TBA team numbers to the scouts assigned to pit-scout them.
@@ -9,7 +9,7 @@ import { getApprovedUserId, isSignedIn, requireAdmin } from "./adminAuth";
 export const listPitScoutingTeams = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    if (!(await isSignedIn(ctx))) return [];
+    if (!(await canViewEvent(ctx, eventKey))) return [];
     return await ctx.db
       .query("pitScoutingTeams")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
@@ -21,7 +21,7 @@ export const listPitScoutingTeams = query({
 export const getMyPitScoutingTeam = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getApprovedUserId(ctx);
+    const userId = await eventViewerId(ctx, eventKey);
     if (!userId) return null;
     const all = await ctx.db
       .query("pitScoutingTeams")

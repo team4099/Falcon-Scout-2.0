@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import { useCached } from "@/hooks/useCached";
+import { useCurrentEvent } from "@/hooks/useCurrentEvent";
 import { useUIStore } from "@/store/uiStore";
 import {
   SubmissionDetailModal,
@@ -37,7 +37,7 @@ function readLastSeen(): number {
 
 export default function SubmissionsPage() {
   const { isAdminMode } = useUIStore();
-  const currentEvent = useCached(useQuery(api.events.getCurrentEvent), "current_event");
+  const currentEvent = useCurrentEvent();
   const eventKey = currentEvent?.eventKey ?? "";
   const submissions = useQuery(api.forms.listSubmissionSummaries, eventKey ? { eventKey } : "skip") as
     | Submission[]

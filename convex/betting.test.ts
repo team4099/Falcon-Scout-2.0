@@ -82,6 +82,17 @@ describe("cancelMarket", () => {
     ).rejects.toThrow(/already resolved/i);
     expect(await bal()).toBe(afterResolve);
   });
+
+  test("a resolved market cannot be reopened and paid out a second time", async () => {
+    const t = convexTest(schema, modules);
+    const { as, marketId, bal } = await setup(t, 1000);
+    await as.mutation(api.betting.placeBet, { marketId, optionId: "red", amount: 100 });
+    await as.mutation(api.betting.resolveMarket, { marketId, resolvedOptionId: "red" });
+    const afterResolve = await bal();
+    await expect(as.mutation(api.betting.unlockMarket, { marketId })).rejects.toThrow(/locked market/i);
+    await expect(as.mutation(api.betting.lockMarket, { marketId })).rejects.toThrow(/open market/i);
+    expect(await bal()).toBe(afterResolve);
+  });
 });
 
 describe("placeBet", () => {

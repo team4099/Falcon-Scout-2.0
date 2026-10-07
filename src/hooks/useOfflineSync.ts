@@ -12,6 +12,8 @@ import {
   dequeueKanbanOp,
   getPitDutyQueue,
   dequeuePitDutyOp,
+  getDeleteQueue,
+  dequeueSubmissionDelete,
   getTotalPendingOps,
 } from "@/lib/offlineQueue";
 import { getLastSync } from "@/lib/convexCache";
@@ -39,6 +41,7 @@ export function useOfflineSync() {
   const syncingRef = useRef(false);
 
   const submitForm      = useMutation(api.forms.submitForm);
+  const deleteMySubmission = useMutation(api.forms.deleteMySubmission);
   const moveCard    = useMutation(api.kanban.moveCard);
   const updateCard  = useMutation(api.kanban.updateCard);
   const removeCard  = useMutation(api.kanban.removeCard);
@@ -83,6 +86,18 @@ export function useOfflineSync() {
           continue;
         }
         break; // stop on first transient failure; retry next cycle
+      }
+    }
+
+    // ── Drain own-form deletions (after submissions, so a form that only
+    //    just went up is still removed) ─────────────────────────────────────
+    for (const offlineId of getDeleteQueue()) {
+      try {
+        await deleteMySubmission({ offlineId });
+        dequeueSubmissionDelete(offlineId);
+        anySynced = true;
+      } catch {
+        break; // transient — retry next cycle
       }
     }
 
@@ -149,7 +164,7 @@ export function useOfflineSync() {
     }
     refreshCounts();
     syncingRef.current = false;
-  }, [submitForm, moveCard, updateCard, removeCard, reportPitDuty, unreportPitDuty, refreshCounts]);
+  }, [submitForm, deleteMySubmission, moveCard, updateCard, removeCard, reportPitDuty, unreportPitDuty, refreshCounts]);
 
   // Called by convexCache when live data arrives
   const markSynced = useCallback(() => {

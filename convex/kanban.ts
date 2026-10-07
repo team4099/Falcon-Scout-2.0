@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { getApprovedUserId, isSignedIn, requireAdmin, requireUser } from "./adminAuth";
+import { canViewEvent, eventViewerId, requireAdmin, requireEventAccess } from "./adminAuth";
 import { planMove } from "./kanbanOrder";
 
 // ──────────────────────────────────────────────
@@ -12,7 +12,7 @@ import { planMove } from "./kanbanOrder";
 export const getCentralBoard = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    if (!(await isSignedIn(ctx))) return null;
+    if (!(await canViewEvent(ctx, eventKey))) return null;
     return await ctx.db
       .query("kanbanBoards")
       .withIndex("by_type_event", (q) =>
@@ -25,7 +25,7 @@ export const getCentralBoard = query({
 export const getPersonalBoard = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getApprovedUserId(ctx);
+    const userId = await eventViewerId(ctx, eventKey);
     if (!userId) return null;
     const boards = await ctx.db
       .query("kanbanBoards")
@@ -43,7 +43,7 @@ export const getPersonalBoard = query({
  */
 async function requireBoardWrite(ctx: MutationCtx, board: Doc<"kanbanBoards">) {
   if (board.type === "central") return await requireAdmin(ctx);
-  const userId = await requireUser(ctx);
+  const userId = await requireEventAccess(ctx, board.eventKey);
   if (board.ownerId !== userId) throw new Error("That is someone else's board.");
   return userId;
 }
@@ -79,7 +79,7 @@ export const createBoard = mutation({
       if (existing) return existing._id;
       return await ctx.db.insert("kanbanBoards", { ...args, ownerId: undefined });
     }
-    const userId = await requireUser(ctx);
+    const userId = await requireEventAccess(ctx, args.eventKey);
     return await ctx.db.insert("kanbanBoards", { ...args, ownerId: userId });
   },
 });
@@ -123,7 +123,8 @@ export const updateBoardColumns = mutation({
 export const getBoardCards = query({
   args: { boardId: v.id("kanbanBoards") },
   handler: async (ctx, { boardId }) => {
-    if (!(await isSignedIn(ctx))) return [];
+    const board = await ctx.db.get(boardId);
+    if (!board || !(await canViewEvent(ctx, board.eventKey))) return [];
     return await ctx.db
       .query("kanbanCards")
       .withIndex("by_board", (q) => q.eq("boardId", boardId))

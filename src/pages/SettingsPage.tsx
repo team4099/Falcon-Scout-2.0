@@ -315,6 +315,109 @@ function AdminModeCard() {
   );
 }
 
+// ── View an event ─────────────────────────────────────────────────────────────
+//
+// Picks the event THIS device looks at (uiStore.viewEvent). It never touches
+// the current event an admin set. Team accounts can open any event by key; a
+// guest can only open the events an admin added them to — the list comes from
+// the server, which also refuses the data for anything else.
+
+function ViewEventCard({ currentEvent }: { currentEvent: { eventKey: string; eventName: string } | null | undefined }) {
+  const { viewEvent, setViewEvent } = useUIStore();
+  const info = useCached(useQuery(api.events.listEvents), "my_events");
+  const [key, setKey] = useState("");
+  const isGuest = info?.isGuest ?? false;
+  const events = info?.events ?? [];
+  const viewingKey = viewEvent?.eventKey ?? currentEvent?.eventKey;
+  const blocked = isGuest && !events.some((e) => e.eventKey === viewingKey);
+
+  function view(eventKey: string) {
+    const k = eventKey.trim().toLowerCase();
+    if (!/^\d{4}[a-z0-9]{1,20}$/.test(k)) {
+      toast.error("That doesn't look like an event key (e.g. 2025chcmp).");
+      return;
+    }
+    if (k === currentEvent?.eventKey) setViewEvent(null);
+    else setViewEvent({ eventKey: k, eventName: events.find((e) => e.eventKey === k)?.eventName ?? k });
+    setKey("");
+    toast.success(`Now viewing ${k} on this device.`);
+  }
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-5 space-y-4">
+      <div className="flex items-center gap-2">
+        <CalendarSearch className="h-4 w-4 text-primary" />
+        <h3 className="font-semibold">{isGuest ? "Your Events" : "View Another Event"}</h3>
+      </div>
+      <p className="text-xs text-muted-foreground -mt-2">
+        {isGuest
+          ? "You can see the scouting data of events a Team 4099 admin added you to."
+          : "Look at a previous event's scouting data. This only changes what this device shows — the current event stays the same for everyone."}
+      </p>
+
+      {blocked && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-xs">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-amber-500" />
+          <span>
+            You haven't been added to {viewingKey ? <span className="font-mono">{viewingKey}</span> : "the current event"}.
+            {events.length > 0 ? " Pick one of your events below." : " Ask a Team 4099 admin to add you to an event."}
+          </span>
+        </div>
+      )}
+
+      {events.length > 0 && (
+        <div className="space-y-1.5">
+          {events.map((e) => {
+            const active = e.eventKey === viewingKey;
+            return (
+              <button
+                key={e.eventKey}
+                onClick={() => view(e.eventKey)}
+                className={`w-full flex items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-sm transition-colors ${
+                  active ? "border-primary/40 bg-primary/10" : "border-border hover:bg-muted/50"
+                }`}
+              >
+                <span className="font-mono font-bold text-primary shrink-0">{e.eventKey}</span>
+                <span className="truncate text-muted-foreground">{e.eventName !== e.eventKey ? e.eventName : ""}</span>
+                <span className="ml-auto flex shrink-0 items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
+                  {e.isCurrent && <span className="rounded-full bg-muted px-2 py-0.5">Current</span>}
+                  {active && <CheckCircle2 className="h-4 w-4 text-primary" />}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {!isGuest && (
+        <div className="space-y-1.5">
+          <Label>
+            Event key{" "}
+            <span className="text-muted-foreground font-normal text-xs">(e.g. 2025chcmp)</span>
+          </Label>
+          <div className="flex gap-2">
+            <Input
+              placeholder="2025chcmp"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && view(key)}
+            />
+            <Button variant="outline" onClick={() => view(key)} disabled={!key.trim()}>
+              View
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {viewEvent && currentEvent && viewEvent.eventKey !== currentEvent.eventKey && !isGuest && (
+        <Button variant="ghost" size="sm" className="w-full" onClick={() => setViewEvent(null)}>
+          Back to current event ({currentEvent.eventKey})
+        </Button>
+      )}
+    </div>
+  );
+}
+
 // ── Settings Page ─────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
@@ -449,6 +552,8 @@ export default function SettingsPage() {
           </div>
         )}
       </div>
+
+      <ViewEventCard currentEvent={currentEvent} />
 
       {/* Statbotics source — admin-facing diagnostics */}
       {isAdminMode && <TbaKeyCard eventKey={currentEvent?.eventKey} />}

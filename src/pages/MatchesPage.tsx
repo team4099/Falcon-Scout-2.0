@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useQuery } from "convex/react";
 import { useCached } from "@/hooks/useCached";
+import { useCurrentEvent } from "@/hooks/useCurrentEvent";
 import { api } from "../../convex/_generated/api";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { CalendarDays, Shield } from "lucide-react";
@@ -387,8 +388,7 @@ function MatchDetailPanel({
 // ── MatchesPage ────────────────────────────────────────────────────────────────
 
 export default function MatchesPage() {
-  const currentEventLive = useQuery(api.events.getCurrentEvent);
-  const currentEvent = useCached(currentEventLive, "current_event");
+  const currentEvent = useCurrentEvent();
   const eventKey = currentEvent?.eventKey ?? "";
   const eventYear = eventKey ? Number(eventKey.slice(0, 4)) : new Date().getFullYear();
 

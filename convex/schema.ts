@@ -93,6 +93,22 @@ export default defineSchema({
     // so only the first one pays out. See awardOncePerMatch in forms.ts.
     .index("by_scout_event_match", ["scoutId", "eventKey", "matchNumber"]),
 
+  // What an admin-deleted match/pit submission was for. The scout did the work,
+  // so the assignment stays ticked off in My Assignments and re-submitting it
+  // doesn't pay a second time. A scout deleting their own form leaves no row
+  // here — that reopens the assignment and claws the coins back instead.
+  submissionTombstones: defineTable({
+    scoutId: v.id("users"),
+    eventKey: v.string(),
+    templateId: v.id("formTemplates"),
+    formType: v.string(), // "default" | "pit"
+    matchNumber: v.number(),
+    compLevel: v.optional(v.union(v.literal("qm"), v.literal("elim"))),
+    teamNumber: v.number(),
+  })
+    .index("by_scout_event", ["scoutId", "eventKey"])
+    .index("by_event_team", ["eventKey", "teamNumber"]),
+
   // DEPRECATED — checklists were removed. Nothing writes here. Kept because
   // `convex deploy` rejects a schema that omits a populated table; drop it once
   // forms.purgeLegacyChecklists has emptied it on every deployment.
@@ -139,7 +155,7 @@ export default defineSchema({
 
   // Global event selection
   eventSettings: defineTable({
-    key: v.string(), // "current_event"
+    key: v.string(), // "current_event", or "event:<eventKey>" for every event ever set
     eventKey: v.string(),
     eventName: v.string(),
     updatedAt: v.number(),
@@ -410,6 +426,7 @@ export default defineSchema({
     eventKey: v.string(),
     type: v.union(
       v.literal("scouting_reward"),
+      v.literal("scouting_revoked"),
       v.literal("pit_duty_reward"),
       v.literal("pit_duty_revoked"),
       v.literal("admin_award"),
@@ -424,7 +441,8 @@ export default defineSchema({
     relatedId:    v.optional(v.string()),   // marketId / submissionId / rotationId
     createdAt:    v.number(),
   })
-    .index("by_user_event", ["userId", "eventKey"]),
+    .index("by_user_event", ["userId", "eventKey"])
+    .index("by_related", ["relatedId"]),
 
   // ── Temporary admin grants ────────────────────────────────────────────────
   // Lets an inherent admin (see ADMIN_EMAILS in convex/adminAuth.ts) hand a
@@ -481,5 +499,6 @@ export default defineSchema({
     addedBy:  v.id("users"),
   })
     .index("by_event", ["eventKey"])
-    .index("by_event_user", ["eventKey", "userId"]),
+    .index("by_event_user", ["eventKey", "userId"])
+    .index("by_user", ["userId"]),
 });

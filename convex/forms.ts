@@ -1,8 +1,8 @@
 import { v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
-import { getApprovedUserId, isSignedIn, requireAdmin, requireUser } from "./adminAuth";
-import { awardCoins, DEFAULT_SCOUT_REWARD } from "./betting";
-import type { Id } from "./_generated/dataModel";
+import { canViewEvent, eventViewerId, isSignedIn, requireAdmin, requireEventAccess, requireUser } from "./adminAuth";
+import { awardCoins, revokeCoins, DEFAULT_SCOUT_REWARD } from "./betting";
+import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 
 /**
@@ -74,11 +74,78 @@ async function alreadyScoutedMatch(
     )
     .collect();
   for (const r of prior) {
-    if (r._id === exclude || r.compLevel !== args.compLevel) continue;
+    if (r._id === exclude || (r.compLevel ?? "qm") !== "qm") continue;
     const t = await ctx.db.get(r.templateId);
     if ((t?.formType ?? "default") === "default") return true;
   }
-  return false;
+  // A form an admin deleted still counts — the scout was already paid for it.
+  const tombstones = await ctx.db
+    .query("submissionTombstones")
+    .withIndex("by_scout_event", (q) => q.eq("scoutId", scoutId).eq("eventKey", args.eventKey))
+    .collect();
+  return tombstones.some(
+    (r) => r.formType === "default" && r.matchNumber === args.matchNumber && (r.compLevel ?? "qm") === "qm"
+  );
+}
+
+/**
+ * The reward for a form of this type right now: the ACTIVE template's, not the
+ * submitted one's. templateId comes from the client, so trusting its own
+ * coinReward would let a scout submit against an old or draft template that
+ * happens to pay more.
+ */
+async function currentReward(ctx: MutationCtx, template: Doc<"formTemplates"> | null): Promise<number> {
+  const formType = template?.formType ?? "default";
+  const active = (await ctx.db
+    .query("formTemplates")
+    .filter((q) => q.eq(q.field("isActive"), true))
+    .collect()
+  ).find((t) => (t.formType ?? "default") === formType);
+  return (active ?? template)?.coinReward ?? DEFAULT_SCOUT_REWARD;
+}
+
+/**
+ * Undo the payout of a submission its own scout is deleting.
+ *
+ * If another of their forms still covers the same match (or pit team), the
+ * payout moves to that one instead — the work is still done. Otherwise every
+ * scout it paid (a pit form pays the whole roster) is clawed back by what the
+ * ledger says is outstanding, so delete → resubmit nets to zero.
+ */
+async function reverseReward(ctx: MutationCtx, sub: Doc<"formSubmissions">): Promise<void> {
+  const txns = (await ctx.db
+    .query("coinTransactions")
+    .withIndex("by_related", (q) => q.eq("relatedId", sub._id))
+    .collect()
+  ).filter((t) => t.type === "scouting_reward" || t.type === "scouting_revoked");
+  if (txns.length === 0) return;
+
+  const formType = (await ctx.db.get(sub.templateId))?.formType ?? "default";
+  const paid = new Set<string>(txns.map((t) => t.userId));
+  const others = formType === "pit"
+    ? await ctx.db
+        .query("formSubmissions")
+        .withIndex("by_event_team", (q) => q.eq("eventKey", sub.eventKey).eq("teamNumber", sub.teamNumber))
+        .collect()
+    : await ctx.db
+        .query("formSubmissions")
+        .withIndex("by_scout_event_match", (q) =>
+          q.eq("scoutId", sub.scoutId).eq("eventKey", sub.eventKey).eq("matchNumber", sub.matchNumber)
+        )
+        .collect();
+  for (const r of others) {
+    if (r._id === sub._id || !r.scoutId || !paid.has(r.scoutId)) continue;
+    if (formType !== "pit" && (r.compLevel ?? "qm") !== "qm") continue;
+    if (((await ctx.db.get(r.templateId))?.formType ?? "default") !== formType) continue;
+    for (const t of txns) await ctx.db.patch(t._id, { relatedId: r._id });
+    return;
+  }
+
+  const owed = new Map<Id<"users">, number>();
+  for (const t of txns) owed.set(t.userId, (owed.get(t.userId) ?? 0) + t.amount);
+  for (const [userId, amount] of owed) {
+    await revokeCoins(ctx, userId, sub.eventKey, amount, "scouting_revoked", "Scouting form deleted", sub._id);
+  }
 }
 
 // Shared field-type validator (keep in sync with schema.ts)
@@ -285,7 +352,8 @@ export const submitForm = mutation({
     offlineId: v.optional(v.string()), // idempotency key — set by offline queue
   },
   handler: async (ctx, args) => {
-    const userId = await requireUser(ctx);
+    // A guest can only file reports for an event they were added to.
+    const userId = await requireEventAccess(ctx, args.eventKey);
 
     // ── Idempotency check ─────────────────────────────────────────────────
     if (args.offlineId) {
@@ -338,9 +406,13 @@ export const submitForm = mutation({
     // it just doesn't pay twice.
     const template = userId ? await ctx.db.get(args.templateId) : null;
     const formType = template?.formType ?? "default";
-    const reward = template?.coinReward ?? DEFAULT_SCOUT_REWARD;
+    const reward = userId ? await currentReward(ctx, template) : 0;
     if (userId && formType === "default") {
+      // Match assignments only exist for quals and are keyed by match number
+      // alone — so an "elim" (or level-less) form for the same number must not
+      // count as a second assigned match.
       if (
+        (args.compLevel ?? "qm") === "qm" &&
         !(await alreadyScoutedMatch(ctx, userId, args, submissionId)) &&
         reward > 0 &&
         (await isAssignedForReward(ctx, userId, formType, args))
@@ -366,8 +438,16 @@ export const submitForm = mutation({
             q.eq("eventKey", args.eventKey).eq("teamNumber", args.teamNumber)
           )
           .collect();
-        let alreadyPaid = false;
+        // A pit form an admin deleted still counts as this team's paid one.
+        let alreadyPaid = (await ctx.db
+          .query("submissionTombstones")
+          .withIndex("by_event_team", (q) =>
+            q.eq("eventKey", args.eventKey).eq("teamNumber", args.teamNumber)
+          )
+          .collect()
+        ).some((r) => r.formType === "pit" && roster.has(r.scoutId));
         for (const r of prior) {
+          if (alreadyPaid) break;
           if (r._id === submissionId || !r.scoutId || !roster.has(r.scoutId)) continue;
           if (((await ctx.db.get(r.templateId))?.formType ?? "default") === "pit") {
             alreadyPaid = true;
@@ -396,7 +476,7 @@ export const submitForm = mutation({
 export const getMySubmissions = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getApprovedUserId(ctx);
+    const userId = await eventViewerId(ctx, eventKey);
     if (!userId) return [];
     const rows = await ctx.db
       .query("formSubmissions")
@@ -415,14 +495,31 @@ export const getMySubmissions = query({
       if (tpl) formTypeById.set(templateId, tpl.formType ?? "default");
     }
 
-    const mine = rows.map((r) => ({
+    const mine: {
+      _id: string; templateId: Id<"formTemplates">; formType: string;
+      matchNumber: number; compLevel?: "qm" | "elim"; teamNumber: number;
+      offlineId?: string;
+    }[] = rows.map((r) => ({
       _id: r._id,
       templateId: r.templateId,
       formType: formTypeById.get(r.templateId) ?? "default",
       matchNumber: r.matchNumber,
       compLevel: r.compLevel,
       teamNumber: r.teamNumber,
+      // Lets the client hide a form it has queued for deletion while offline.
+      offlineId: r.offlineId,
     }));
+
+    // Forms an admin deleted still count as done (see submissionTombstones).
+    const asKey = (r: Doc<"submissionTombstones">) => ({
+      _id: r._id, templateId: r.templateId, formType: r.formType,
+      matchNumber: r.matchNumber, compLevel: r.compLevel, teamNumber: r.teamNumber,
+    });
+    const myTombstones = await ctx.db
+      .query("submissionTombstones")
+      .withIndex("by_scout_event", (q) => q.eq("scoutId", userId).eq("eventKey", eventKey))
+      .collect();
+    mine.push(...myTombstones.map(asKey));
 
     // Pit scouting is a group job: a teammate's pit form completes the team for
     // everyone rostered on it, so include those alongside this scout's own.
@@ -448,6 +545,11 @@ export const getMySubmissions = query({
           matchNumber: r.matchNumber, compLevel: r.compLevel, teamNumber: r.teamNumber,
         });
       }
+      const gone = await ctx.db
+        .query("submissionTombstones")
+        .withIndex("by_event_team", (q) => q.eq("eventKey", eventKey).eq("teamNumber", t.teamNumber))
+        .collect();
+      mine.push(...gone.filter((r) => r.formType === "pit" && r.scoutId !== userId).map(asKey));
     }
     return mine;
   },
@@ -458,7 +560,7 @@ export const listSubmissions = query({
     eventKey: v.string(),
   },
   handler: async (ctx, { eventKey }) => {
-    if (!(await isSignedIn(ctx))) return [];
+    if (!(await canViewEvent(ctx, eventKey))) return [];
     return await ctx.db
       .query("formSubmissions")
       .withIndex("by_event_team", (q) => q.eq("eventKey", eventKey))
@@ -473,7 +575,7 @@ export const listSubmissions = query({
 export const listSubmissionSummaries = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    if (!(await isSignedIn(ctx))) return [];
+    if (!(await canViewEvent(ctx, eventKey))) return [];
     const rows = await ctx.db
       .query("formSubmissions")
       .withIndex("by_event_team", (q) => q.eq("eventKey", eventKey))
@@ -485,8 +587,8 @@ export const listSubmissionSummaries = query({
 export const getSubmission = query({
   args: { id: v.id("formSubmissions") },
   handler: async (ctx, { id }) => {
-    if (!(await isSignedIn(ctx))) return null;
-    return await ctx.db.get(id);
+    const sub = await ctx.db.get(id);
+    return sub && (await canViewEvent(ctx, sub.eventKey)) ? sub : null;
   },
 });
 
@@ -496,7 +598,7 @@ export const getTeamSubmissions = query({
     teamNumber: v.number(),
   },
   handler: async (ctx, { eventKey, teamNumber }) => {
-    if (!(await isSignedIn(ctx))) return [];
+    if (!(await canViewEvent(ctx, eventKey))) return [];
     return await ctx.db
       .query("formSubmissions")
       .withIndex("by_event_team", (q) =>
@@ -510,7 +612,41 @@ export const deleteSubmission = mutation({
   args: { id: v.id("formSubmissions"), adminKey: v.optional(v.string()) },
   handler: async (ctx, { id, adminKey }) => {
     await requireAdmin(ctx, adminKey);
+    const sub = await ctx.db.get(id);
+    if (!sub) return;
+    // An admin removing a report is data cleanup, not the scout undoing their
+    // work: coins stay, the assignment stays done, and it can't be re-earned.
+    const formType = (await ctx.db.get(sub.templateId))?.formType ?? "default";
+    if (sub.scoutId && (formType === "default" || formType === "pit")) {
+      await ctx.db.insert("submissionTombstones", {
+        scoutId: sub.scoutId, eventKey: sub.eventKey, templateId: sub.templateId, formType,
+        matchNumber: sub.matchNumber, compLevel: sub.compLevel, teamNumber: sub.teamNumber,
+      });
+    }
     await ctx.db.delete(id);
+  },
+});
+
+/**
+ * A scout deleting their own form (My QR Codes). Looked up by the offlineId the
+ * device generated, and only ever touches the caller's own row. The coins it
+ * earned are clawed back and, with the row gone, the assignment reopens in My
+ * Assignments. Returns false when there is nothing of theirs to delete (never
+ * synced, already deleted, or uploaded by a teammate's scan) so a queued retry
+ * can be dropped.
+ */
+export const deleteMySubmission = mutation({
+  args: { offlineId: v.string() },
+  handler: async (ctx, { offlineId }) => {
+    const userId = await requireUser(ctx);
+    const sub = await ctx.db
+      .query("formSubmissions")
+      .withIndex("by_offline_id", (q) => q.eq("offlineId", offlineId))
+      .first();
+    if (!sub || sub.scoutId !== userId) return false;
+    await reverseReward(ctx, sub);
+    await ctx.db.delete(sub._id);
+    return true;
   },
 });
 
@@ -554,7 +690,7 @@ export const syncEventTeamRoster = mutation({
   handler: async (ctx, { eventKey, teamNumbers }) => {
     // Every scout's device calls this in the background, so this is
     // signed-in-only rather than admin-only.
-    await requireUser(ctx);
+    await requireEventAccess(ctx, eventKey);
     const existing = await ctx.db
       .query("eventTeamRosters")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
@@ -575,7 +711,7 @@ export const syncEventTeamRoster = mutation({
 export const getEventTeamRoster = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    if (!(await isSignedIn(ctx))) return null;
+    if (!(await canViewEvent(ctx, eventKey))) return null;
     const roster = await ctx.db
       .query("eventTeamRosters")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))

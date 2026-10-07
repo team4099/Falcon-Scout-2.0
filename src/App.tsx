@@ -3,6 +3,7 @@ import { useTheme } from "next-themes";
 import { useQuery, useMutation } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import { useCached } from "@/hooks/useCached";
+import { useAdminEvent, useCurrentEvent } from "@/hooks/useCurrentEvent";
 import { useAuthActions, useConvexAuth } from "@convex-dev/auth/react";
 import { api } from "../convex/_generated/api";
 import { purgeLegacyTbaKey } from "@/lib/api";
@@ -237,8 +238,15 @@ function AuthenticatedApp() {
   // Pages with their own inner scroll panes need a definite height; everything
   // else grows and scrolls <main>. See FILL_ROUTES.
   const layout = FILL_ROUTES[useLocation().pathname] ?? DEFAULT_LAYOUT;
-  const currentEventLive = useQuery(api.events.getCurrentEvent);
-  const currentEvent = useCached(currentEventLive, "current_event");
+  const adminEvent = useAdminEvent();
+  const currentEvent = useCurrentEvent();
+  const viewingOther = !!currentEvent && currentEvent.eventKey !== adminEvent?.eventKey;
+  const setViewEvent = useUIStore((s) => s.setViewEvent);
+  // A guest only gets the events an admin added them to. Until the event on
+  // screen is one of those, the app is just Settings, where they pick one. The
+  // server refuses the data either way — this replaces a wall of empty pages.
+  const myEvents = useCached(useQuery(api.events.listEvents), "my_events");
+  const locked = !!myEvents?.isGuest && !myEvents.events.some((e) => e.eventKey === currentEvent?.eventKey);
   const { totalPending, lastSyncedAt, markSynced } = useOfflineSync();
   // isOnline from useOfflineSync is navigator.onLine only, which reports
   // "online" on a venue network that can't reach Convex. Use the real
@@ -251,8 +259,8 @@ function AuthenticatedApp() {
 
   // Build nav dynamically — admin-only items shown/hidden based on isAdminMode
   const NAV = [
-    ...BASE_NAV,
-    ...(isAdminMode
+    ...(locked ? [] : BASE_NAV),
+    ...(isAdminMode && !locked
       ? [
           { to: "/builder",     label: "Form Builder",  icon: WrenchIcon  },
           { to: "/scouts",      label: "Manage Scouts", icon: Users, alert: guestsPending },
@@ -263,14 +271,14 @@ function AuthenticatedApp() {
   ];
 
   // Bottom nav (most-used on mobile) — max 4 primary + More overflow
-  const BOTTOM_NAV_PRIMARY = [
+  const BOTTOM_NAV_PRIMARY = locked ? [] : [
     { to: "/",          label: "Dashboard", icon: LayoutDashboard },
     { to: "/scout",     label: "Scout",     icon: ClipboardList   },
     { to: "/schedule",  label: "Schedule",  icon: CalendarDays    },
     { to: "/matches",   label: "Matches",   icon: CalendarDays    },
   ];
 
-  const BOTTOM_NAV_MORE = [
+  const BOTTOM_NAV_MORE = locked ? [] : [
     { to: "/data",       label: "Data",       icon: BarChart2    },
     { to: "/betting",    label: "FalconBet",  icon: DollarSign   },
     { to: "/qrcodes",    label: "QR Codes",   icon: QrCode       },
@@ -316,6 +324,7 @@ function AuthenticatedApp() {
     // The server never trusted the toggle, but showing Form Builder / Manage
     // Scouts to a guest is misleading and invites errors.
     setAdminMode(false);
+    setViewEvent(null); // likewise: the next account must start on the current event
     await signOut();
     navigate("/login");
   }
@@ -464,8 +473,25 @@ function AuthenticatedApp() {
           </div>
         )}
 
+        {/* Viewing another event — a local choice, so say so on every page */}
+        {viewingOther && !locked && (
+          <div className="shrink-0 flex items-center gap-2 px-4 py-1.5 bg-primary/10 border-b border-primary/20 text-xs font-medium">
+            <span className="min-w-0">
+              Viewing <span className="font-mono text-primary">{currentEvent.eventKey}</span> on this device only.
+              {adminEvent && <> Scouting, assignments and FalconBet stay on <span className="font-mono">{adminEvent.eventKey}</span>.</>}
+            </span>
+            <button
+              className="ml-auto shrink-0 rounded-md px-2 py-1 text-primary hover:bg-primary/10"
+              onClick={() => setViewEvent(null)}
+            >
+              Back to current
+            </button>
+          </div>
+        )}
+
         {/* Page content */}
         <div className={`p-4 md:p-6 pb-24 md:pb-6 ${layout.page}`}>
+          {locked ? <SettingsPage /> : (
           <Routes>
             <Route path="/"           element={<DashboardPage />} />
             <Route path="/matches"    element={<MatchesPage />} />
@@ -486,14 +512,17 @@ function AuthenticatedApp() {
                 or a mistyped URL should say so, not look like a broken app. */}
             <Route path="*"           element={<NotFound />} />
           </Routes>
+          )}
         </div>
       </main>
 
       {/* ── Mobile Bottom Tab Bar ────────────────────────────────────────── */}
-      <MobileBottomNav
-        primary={BOTTOM_NAV_PRIMARY}
-        more={BOTTOM_NAV_MORE}
-      />
+      {!locked && (
+        <MobileBottomNav
+          primary={BOTTOM_NAV_PRIMARY}
+          more={BOTTOM_NAV_MORE}
+        />
+      )}
     </div>
   );
 }

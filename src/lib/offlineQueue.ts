@@ -141,7 +141,41 @@ export function clearPitDutyQueue(): void {
   localStorage.removeItem(PIT_DUTY_QUEUE_KEY);
 }
 
+// ── Own-submission delete queue ───────────────────────────────────────────────
+//
+// offlineIds of forms the scout deleted from My QR Codes that the server has
+// not confirmed yet. Deleting also drops the form from the submission queue,
+// so one that never synced simply never goes up.
+
+const DELETE_QUEUE_KEY = "falconscout_delete_queue";
+
+export function getDeleteQueue(): string[] {
+  try {
+    const raw = localStorage.getItem(DELETE_QUEUE_KEY);
+    return raw ? (JSON.parse(raw) as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function enqueueSubmissionDelete(offlineId: string): void {
+  localStorage.setItem(
+    QUEUE_KEY,
+    JSON.stringify(getOfflineQueue().filter((s) => s.offlineId !== offlineId)),
+  );
+  const queue = getDeleteQueue();
+  if (!queue.includes(offlineId)) queue.push(offlineId);
+  localStorage.setItem(DELETE_QUEUE_KEY, JSON.stringify(queue));
+}
+
+export function dequeueSubmissionDelete(offlineId: string): void {
+  localStorage.setItem(
+    DELETE_QUEUE_KEY,
+    JSON.stringify(getDeleteQueue().filter((id) => id !== offlineId)),
+  );
+}
+
 export function getTotalPendingOps(): number {
   return getOfflineQueue().length
-    + getKanbanQueue().length + getPitDutyQueue().length;
+    + getKanbanQueue().length + getPitDutyQueue().length + getDeleteQueue().length;
 }

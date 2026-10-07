@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useUIStore } from "@/store/uiStore";
 import { useQuery } from "convex/react";
 import { useCached } from "@/hooks/useCached";
+import { useCurrentEvent } from "@/hooks/useCurrentEvent";
 import { useEventTeamData } from "@/hooks/useEventTeamData";
 import { api } from "../../convex/_generated/api";
 import { Input } from "@/components/ui/input";
@@ -898,8 +899,7 @@ function MyScouting({
 
 export default function DashboardPage() {
   const syncRoster = useMutation(api.forms.syncEventTeamRoster);
-  const currentEventLive = useQuery(api.events.getCurrentEvent);
-  const currentEvent = useCached(currentEventLive, "current_event");
+  const currentEvent = useCurrentEvent();
   const eventKey = currentEvent?.eventKey ?? "";
 
   // Submissions, templates, TBA + Statbotics stats: shared with the Picklist.

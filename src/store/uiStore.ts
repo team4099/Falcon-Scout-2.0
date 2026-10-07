@@ -21,6 +21,10 @@ interface UIState {
   hiddenTeams: Record<string, number[]>;
   setTeamHidden: (eventKey: string, team: number, hidden: boolean) => void;
   unhideAllTeams: (eventKey: string) => void;
+  // An event this device is looking at instead of the admin-set current one.
+  // Local only: nobody else's app changes, and the current event stays put.
+  viewEvent: { eventKey: string; eventName: string } | null;
+  setViewEvent: (event: { eventKey: string; eventName: string } | null) => void;
 }
 
 export const useUIStore = create<UIState>()(
@@ -50,6 +54,8 @@ export const useUIStore = create<UIState>()(
           delete next[eventKey];
           return { hiddenTeams: next };
         }),
+      viewEvent: null,
+      setViewEvent: (event) => set({ viewEvent: event }),
     }),
     {
       name: "falconscout_ui",
@@ -59,6 +65,7 @@ export const useUIStore = create<UIState>()(
         rankingColumns: state.rankingColumns,
         picklistColumns: state.picklistColumns,
         hiddenTeams: state.hiddenTeams,
+        viewEvent: state.viewEvent,
       }),
     }
   )

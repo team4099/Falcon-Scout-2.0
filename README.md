@@ -190,6 +190,29 @@ Do these once, in order:
   `checklistSubmissions` rows. Afterwards the `"checklist"` literal and that
   table can be dropped from `convex/schema.ts`.
 
+### Rollout: coin-farming fixes (2026-10-06)
+
+- **Deploy Convex before or with the frontend.** Deleting a form in My QR
+  Codes now calls `forms:deleteMySubmission`; against an older backend the
+  delete just stays queued on the device until the backend catches up.
+- A scout who deletes their own form gets a new `scouting_revoked` row in the
+  FalconBet Log. A cached **old** build doesn't know that type and its Log tab
+  errors for that scout until the device reloads. Nothing else is affected.
+- Additive schema only: new `submissionTombstones` table, a `by_related`
+  index on `coinTransactions`. No migration to run.
+
+### Rollout: event-based access (2026-10-06)
+
+- **Guests lose access to an event until an admin adds them to it** (Manage
+  Scouts → Add to event). Before deploying mid-event, make sure every guest
+  who is scouting is on the current event's roster, or their submissions are
+  rejected ("You haven't been added to this event") and stay queued on their
+  device until they are added. Team accounts are unaffected.
+- Deploy Convex before or with the frontend. Additive schema only (a
+  `by_user` index on `eventRoster`).
+- Past events appear in Settings → View Another Event once they have been set
+  as current after this deploy; before that, type the key.
+
 ## Offline behaviour
 
 Worth knowing before changing any of it:

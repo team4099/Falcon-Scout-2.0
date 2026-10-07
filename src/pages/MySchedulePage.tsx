@@ -13,7 +13,7 @@ import {
   buildCompletion, isMatchDone, resolvePitDutyDone, EMPTY_COMPLETION,
   type Completion, type SubmissionKey,
 } from "@/lib/scheduleCompletion";
-import { enqueuePitDutyOp, dequeuePitDutyOp, getPitDutyQueue } from "@/lib/offlineQueue";
+import { enqueuePitDutyOp, dequeuePitDutyOp, getPitDutyQueue, getDeleteQueue } from "@/lib/offlineQueue";
 import type { TBAMatch } from "@/lib/api";
 import {
   CalendarDays, CalendarCheck, ClipboardList, Wrench, Coffee,
@@ -844,7 +844,12 @@ export default function MySchedulePage() {
       (activeTemplates ?? []).map((t) => [t._id, t.formType ?? "default"])
     );
     const keys: SubmissionKey[] = [];
-    for (const sub of (mySubmissions ?? []) as SubmissionKey[]) keys.push(sub);
+    // A form deleted from My QR Codes that the server hasn't heard about yet
+    // (no uplink) must not keep its assignment ticked off.
+    const deleting = new Set(getDeleteQueue());
+    for (const sub of (mySubmissions ?? []) as (SubmissionKey & { offlineId?: string })[]) {
+      if (!sub.offlineId || !deleting.has(sub.offlineId)) keys.push(sub);
+    }
     for (const sub of localSubs) {
       if (sub.eventKey !== eventKey) continue;
       keys.push({

@@ -9,6 +9,9 @@ import {
   toQRChunks,
   type LocalSubmission,
 } from "@/lib/submissionStore";
+import { useMutation } from "convex/react";
+import { api } from "../../convex/_generated/api";
+import { enqueueSubmissionDelete, dequeueSubmissionDelete } from "@/lib/offlineQueue";
 import { Button } from "@/components/ui/button";
 import {
   QRScannerOverlay,
@@ -266,6 +269,7 @@ export default function QRCodesPage() {
   const [pendingDelete, setPendingDelete] = useState<LocalSubmission | null>(null);
   const [clearScannedConfirm, setClearScannedConfirm] = useState(false);
   const scannedData = useScannedSubmissions();
+  const deleteOnServer = useMutation(api.forms.deleteMySubmission);
   const { scanned, attemptUpload } = scannedData;
   const pendingScans = scanned.filter((s) => s.uploadStatus !== "uploaded").length;
 
@@ -290,6 +294,12 @@ export default function QRCodesPage() {
 
   function handleDelete(id: string) {
     deleteMySubmission(id);
+    // Queue first, then fire: with no uplink the entry stays queued and
+    // useOfflineSync retries it, so the server copy (and its coins) still go.
+    enqueueSubmissionDelete(id);
+    void deleteOnServer({ offlineId: id })
+      .then(() => dequeueSubmissionDelete(id))
+      .catch(() => { /* stays queued */ });
     reload();
     if (viewing?.id === id) setViewing(null);
   }
@@ -464,12 +474,12 @@ export default function QRCodesPage() {
       <ConfirmDeleteDialog
         open={pendingDelete !== null}
         onOpenChange={(o) => { if (!o) setPendingDelete(null); }}
-        title="Delete this QR code?"
+        title="Delete this submission?"
         description={pendingDelete && (
           <>
             Match {matchLabel(pendingDelete.matchNumber, pendingDelete.compLevel)} ·{" "}
             {pendingDelete.teamNumber ? `Team ${pendingDelete.teamNumber}` : "No team #"} ({pendingDelete.templateName}).
-            This removes the QR backup from this device only. Submissions already synced, or still waiting to sync, are not affected.
+            This deletes the form for the whole team, not just its QR code. Any coins it earned are taken back and the assignment returns to My Assignments.
           </>
         )}
         onConfirm={() => handleDelete(pendingDelete!.id)}

@@ -1,9 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
-import { useQuery } from "convex/react";
-import { useCached } from "@/hooks/useCached";
+import { useCurrentEvent } from "@/hooks/useCurrentEvent";
 import { useEventTeamData } from "@/hooks/useEventTeamData";
 import type { EventSubmission } from "@/hooks/useEventTeamData";
-import { api } from "../../convex/_generated/api";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import {
@@ -660,8 +658,7 @@ function useSeasonData(teams: number[], year: number) {
 const KNOWN_TYPES = new Set<ChartType>(["scatter", "line"]);
 
 export default function DataViewerPage() {
-  const currentEventLive = useQuery(api.events.getCurrentEvent);
-  const currentEvent = useCached(currentEventLive, "current_event");
+  const currentEvent = useCurrentEvent();
   const eventKey = currentEvent?.eventKey ?? "";
 
   const data = useEventTeamData(eventKey);

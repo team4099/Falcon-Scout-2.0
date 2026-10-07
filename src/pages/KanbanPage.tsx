@@ -36,6 +36,7 @@ import {
 } from "@/lib/api";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCached } from "@/hooks/useCached";
+import { useCurrentEvent } from "@/hooks/useCurrentEvent";
 import { enqueueKanbanOp } from "@/lib/offlineQueue";
 import { useEventTeamData } from "@/hooks/useEventTeamData";
 import type { EventTeamData } from "@/hooks/useEventTeamData";
@@ -1673,8 +1674,7 @@ function BoardView({
 // ── Kanban Page ───────────────────────────────────────────────────────────────
 
 export default function KanbanPage() {
-  const currentEventLive = useQuery(api.events.getCurrentEvent);
-  const currentEvent = useCached(currentEventLive, "current_event");
+  const currentEvent = useCurrentEvent();
   const createBoard = useMutation(api.kanban.createBoard);
   const { isAdminMode } = useUIStore();
 

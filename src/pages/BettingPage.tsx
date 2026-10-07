@@ -1194,6 +1194,7 @@ function LeaderboardTab({ eventKey }: { eventKey: string }) {
 
 type TransactionType =
   | "scouting_reward"
+  | "scouting_revoked"
   | "pit_duty_reward"
   | "pit_duty_revoked"
   | "admin_award"
@@ -1213,6 +1214,7 @@ interface CoinTransaction {
 
 const TXN_CONFIG: Record<TransactionType, { label: string; icon: React.ElementType }> = {
   scouting_reward: { label: "Scouting reward",  icon: BadgeCheck },
+  scouting_revoked: { label: "Scouting form deleted", icon: XCircle },
   pit_duty_reward: { label: "Pit duty",         icon: CheckCircle2 },
   pit_duty_revoked: { label: "Pit duty undone", icon: XCircle },
   admin_award:      { label: "Admin award",     icon: Gift },
@@ -1251,7 +1253,8 @@ function TransactionLogTab({ eventKey }: { eventKey: string }) {
   return (
     <div className="space-y-2">
       {txns.map((tx) => {
-        const cfg = TXN_CONFIG[tx.type];
+        // A newer backend may log a type this build predates — don't crash on it.
+        const cfg = TXN_CONFIG[tx.type] ?? { label: "Coins", icon: Coins };
         const Icon = cfg.icon;
         const gained = tx.amount >= 0;
         return (

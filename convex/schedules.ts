@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query, type QueryCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
-import { getApprovedUserId, isSignedIn, requireAdmin } from "./adminAuth";
+import { canViewEvent, eventViewerId, getApprovedUserId, requireAdmin } from "./adminAuth";
 import { awardCoins, revokeCoins, PIT_DUTY_REWARD } from "./betting";
 
 const positionValidator = v.union(
@@ -24,7 +24,7 @@ const MAX_PLANNED_QUALS = 400;
 export const getMatchPlan = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    if (!(await isSignedIn(ctx))) return null;
+    if (!(await canViewEvent(ctx, eventKey))) return null;
     return await ctx.db
       .query("eventMatchPlans")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
@@ -95,7 +95,7 @@ export const clearMatchAssignmentsAbove = mutation({
 export const listMatchAssignments = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    if (!(await isSignedIn(ctx))) return [];
+    if (!(await canViewEvent(ctx, eventKey))) return [];
     return await ctx.db
       .query("matchAssignments")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
@@ -107,7 +107,7 @@ export const listMatchAssignments = query({
 export const getMyMatchAssignments = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getApprovedUserId(ctx);
+    const userId = await eventViewerId(ctx, eventKey);
     if (!userId) return [];
     return await ctx.db
       .query("matchAssignments")
@@ -287,7 +287,7 @@ export const clearAllMatchAssignments = mutation({
 export const listPitRotations = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    if (!(await isSignedIn(ctx))) return [];
+    if (!(await canViewEvent(ctx, eventKey))) return [];
     return await ctx.db
       .query("pitRotations")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
@@ -299,7 +299,7 @@ export const listPitRotations = query({
 export const getMyPitRotations = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getApprovedUserId(ctx);
+    const userId = await eventViewerId(ctx, eventKey);
     if (!userId) return [];
     const all = await ctx.db
       .query("pitRotations")
@@ -390,7 +390,7 @@ export const deletePitRotation = mutation({
 export const getMyPitDutyCheckIns = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getApprovedUserId(ctx);
+    const userId = await eventViewerId(ctx, eventKey);
     if (!userId) return [];
     const rows = await ctx.db
       .query("pitDutyCheckIns")
@@ -410,7 +410,7 @@ export const getMyPitDutyCheckIns = query({
 export const reportPitDuty = mutation({
   args: { eventKey: v.string(), rotationId: v.id("pitRotations") },
   handler: async (ctx, { eventKey, rotationId }) => {
-    const userId = await getApprovedUserId(ctx);
+    const userId = await eventViewerId(ctx, eventKey);
     if (!userId) throw new Error("Not authenticated");
 
     const rotation = await ctx.db.get(rotationId);
@@ -480,7 +480,7 @@ export const unreportPitDuty = mutation({
 export const getMyPreferences = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    const userId = await getApprovedUserId(ctx);
+    const userId = await eventViewerId(ctx, eventKey);
     if (!userId) return null;
     return await ctx.db
       .query("scoutPreferences")
@@ -499,7 +499,7 @@ export const upsertMyPreferences = mutation({
     wantsPitScouting:  v.optional(v.boolean()),
   },
   handler: async (ctx, { eventKey, preferredPartners, wantsMoreMatches, wantsPitRotation, wantsPitScouting }) => {
-    const userId = await getApprovedUserId(ctx);
+    const userId = await eventViewerId(ctx, eventKey);
     if (!userId) throw new Error("Not authenticated");
     const existing = await ctx.db
       .query("scoutPreferences")
@@ -518,7 +518,7 @@ export const upsertMyPreferences = mutation({
 export const listAllPreferences = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    if (!(await isSignedIn(ctx))) return [];
+    if (!(await canViewEvent(ctx, eventKey))) return [];
     return await ctx.db
       .query("scoutPreferences")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
@@ -561,7 +561,7 @@ export const adminSetPreferences = mutation({
 export const getScheduleExclusions = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
-    if (!(await isSignedIn(ctx))) return null;
+    if (!(await canViewEvent(ctx, eventKey))) return null;
     const row = await ctx.db
       .query("scheduleExclusions")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))

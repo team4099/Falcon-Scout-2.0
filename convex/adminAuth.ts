@@ -79,10 +79,13 @@ export function isTeamEmail(email: string | null | undefined): boolean {
  * the signed JWT claim (see authCustomClaims in convex/auth.ts), falling back
  * to the user row for a token minted before that claim existed.
  */
-async function isCallerApproved(ctx: QueryCtx | MutationCtx, userId: Id<"users">) {
+async function callerEmail(ctx: QueryCtx | MutationCtx, userId: Id<"users">) {
   const identity = await ctx.auth.getUserIdentity();
-  let email = identity?.email;
-  if (!email) email = (await ctx.db.get(userId))?.email;
+  return identity?.email ?? (await ctx.db.get(userId))?.email;
+}
+
+async function isCallerApproved(ctx: QueryCtx | MutationCtx, userId: Id<"users">) {
+  const email = await callerEmail(ctx, userId);
   if (!email) return false;
   if (isTeamEmail(email)) return true;
   const normalized = email.trim().toLowerCase();
@@ -114,6 +117,39 @@ export async function requireUser(ctx: QueryCtx | MutationCtx) {
   if (!userId) throw new Error("You must be signed in to do that.");
   if (!(await isCallerApproved(ctx, userId))) {
     throw new Error("Your guest access hasn't been approved yet.");
+  }
+  return userId;
+}
+
+// ── Per-event access ──────────────────────────────────────────────────────────
+//
+// Team accounts may read any event by key. A guest is scoped to the events an
+// admin put them on (eventRoster): being approved gets them into the app, but
+// every event's data — reports, schedule, picklists, bets — stays closed until
+// they are added to that event.
+
+/** The caller's id if they may see `eventKey`'s data, else null. */
+export async function eventViewerId(ctx: QueryCtx | MutationCtx, eventKey: string) {
+  const userId = await getApprovedUserId(ctx);
+  if (!userId) return null;
+  if (isTeamEmail(await callerEmail(ctx, userId))) return userId;
+  const onRoster = await ctx.db
+    .query("eventRoster")
+    .withIndex("by_event_user", (q) => q.eq("eventKey", eventKey).eq("userId", userId))
+    .first();
+  return onRoster ? userId : null;
+}
+
+/** Non-throwing gate for event-scoped read queries (see isSignedIn for why). */
+export async function canViewEvent(ctx: QueryCtx, eventKey: string): Promise<boolean> {
+  return (await eventViewerId(ctx, eventKey)) !== null;
+}
+
+/** Throwing gate for a scout's own writes to an event. Returns the user id. */
+export async function requireEventAccess(ctx: QueryCtx | MutationCtx, eventKey: string) {
+  const userId = await requireUser(ctx);
+  if (!(await eventViewerId(ctx, eventKey))) {
+    throw new Error("You haven't been added to this event.");
   }
   return userId;
 }
