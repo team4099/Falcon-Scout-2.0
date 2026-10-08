@@ -397,8 +397,10 @@ export default function MatchesPage() {
   const allSubs = useCached(allSubsLive, `submissions_${eventKey}`) as
     Array<{ teamNumber: number; matchNumber: number; data: string }> | null;
 
-  const templateLive = useQuery(api.forms.getActiveTemplate);
-  const template = useCached(templateLive, "active_template");
+  // The match form this event was scouted with (forms.listEventTemplates).
+  const templatesLive = useQuery(api.forms.listEventTemplates, eventKey ? { eventKey } : "skip");
+  const template = useCached(templatesLive, `event_templates_${eventKey}`)
+    ?.find((t) => t.isActive && (t.formType ?? "default") === "default");
   const fields = (template?.fields as Array<{ id: string; label: string; type: string }>) ?? [];
 
   // Seed from cache immediately so the list renders on first mount even offline

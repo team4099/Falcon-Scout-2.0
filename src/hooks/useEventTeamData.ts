@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { useCached } from "@/hooks/useCached";
+import { convexCacheGet } from "@/lib/convexCache";
 import {
   fetchStatboticsEventTeams,
   fetchStatboticsTeamYear,
@@ -58,8 +59,23 @@ export function useEventTeamData(
   const allSubmissionsLive = useQuery(api.forms.listSubmissions, eventKey ? { eventKey } : "skip");
   const allSubmissions = useCached(allSubmissionsLive, `submissions_${eventKey}`) as EventSubmission[] | undefined;
 
-  const activeTemplatesLive = useQuery(api.forms.listActiveTemplates);
-  const activeTemplates = useCached(activeTemplatesLive, "active_templates") as EventTemplate[] | undefined;
+  // The forms as THIS event was scouted with them, not as they are today: a
+  // past event keeps its own fields and its own "active" form of each type
+  // (forms.listEventTemplates). `all_templates` is what older builds cached —
+  // only a fallback for a device that updated and then went offline.
+  const eventTemplatesLive = useQuery(api.forms.listEventTemplates, eventKey ? { eventKey } : "skip");
+  const eventTemplates = useCached(eventTemplatesLive, `event_templates_${eventKey}`) as
+    | (EventTemplate & { isActive: boolean })[]
+    | undefined;
+  const legacyTemplates = useMemo(
+    () => convexCacheGet<(EventTemplate & { isActive: boolean })[]>("all_templates") ?? undefined,
+    [],
+  );
+  const allTemplates = useMemo(() => eventTemplates ?? legacyTemplates ?? [], [eventTemplates, legacyTemplates]);
+  const activeTemplates = useMemo(
+    () => (eventTemplates ?? legacyTemplates)?.filter((t) => t.isActive),
+    [eventTemplates, legacyTemplates],
+  );
   const fields: FormField[] = useMemo(() => {
     if (!activeTemplates) return [];
     const defaultTpl = activeTemplates.find((t) => (t.formType ?? "default") === "default");
@@ -72,15 +88,9 @@ export function useEventTeamData(
   );
   const pitFields: FormField[] = pitTemplate?.fields ?? [];
 
-  // Every live template (incl. inactive): the team panel renders each report
-  // with its own form, and a pit report from a retired pit form is still a pit
+  // Every template (incl. inactive): the team panel renders each report with
+  // its own form, and a pit report from a retired pit form is still a pit
   // report rather than a match report.
-  const allTemplatesLive = useQuery(api.forms.listTemplates);
-  const allTemplatesCached = useCached(allTemplatesLive, "all_templates");
-  const allTemplates = useMemo(
-    () => (allTemplatesCached ?? activeTemplates ?? []) as EventTemplate[],
-    [allTemplatesCached, activeTemplates],
-  );
   const pitTemplateIds = useMemo(() => {
     const ids = new Set(allTemplates.filter((t) => t.formType === "pit").map((t) => t._id));
     if (pitTemplate) ids.add(pitTemplate._id);

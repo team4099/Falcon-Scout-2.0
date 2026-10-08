@@ -15,6 +15,32 @@ const fieldTypeValidator = v.union(
   v.literal("photo")
 );
 
+// What a form looks like to whoever reads a report filed with it. Shared by the
+// live template and the per-event frozen copies (formTemplateSnapshots).
+const templateFormat = {
+  name: v.string(),
+  description: v.optional(v.string()),
+  // "default" = match scouting (all field types, auto team# pinned at top)
+  // "super"   = note scout (shown as "Note Scout"; value kept from the old name)
+  // "pit"     = pit scouting (all field types, team# pinned, no match number)
+  // "spy"     = spying (unassigned, no team# required, tagged with a playoff alliance)
+  // "checklist" is legacy: the form type was removed and nothing can create
+  // one. Kept only so old rows still validate until forms.purgeLegacyChecklists
+  // has been run on every deployment, after which it can be dropped.
+  // optional for backwards compat with existing records
+  formType: v.optional(v.union(v.literal("default"), v.literal("super"), v.literal("pit"), v.literal("spy"), v.literal("checklist"))),
+  fields: v.array(v.object({
+    id: v.string(),
+    type: fieldTypeValidator,
+    label: v.string(),
+    required: v.boolean(),
+    options: v.optional(v.array(v.string())),
+    section: v.optional(v.string()),
+    // Dashboard rankings: offer this field as an (off-by-default) column.
+    showInRankings: v.optional(v.boolean()),
+  })),
+};
+
 export default defineSchema({
   ...authTables,
 
@@ -46,32 +72,25 @@ export default defineSchema({
     .index("by_status", ["status"]),
 
   formTemplates: defineTable({
-    name: v.string(),
-    description: v.optional(v.string()),
-    // "default" = match scouting (all field types, auto team# pinned at top)
-    // "super"   = note scout (shown as "Note Scout"; value kept from the old name)
-    // "pit"     = pit scouting (all field types, team# pinned, no match number)
-    // "spy"     = spying (unassigned, no team# required, tagged with a playoff alliance)
-    // "checklist" is legacy: the form type was removed and nothing can create
-    // one. Kept only so old rows still validate until forms.purgeLegacyChecklists
-    // has been run on every deployment, after which it can be dropped.
-    // optional for backwards compat with existing records
-    formType: v.optional(v.union(v.literal("default"), v.literal("super"), v.literal("pit"), v.literal("spy"), v.literal("checklist"))),
-    fields: v.array(v.object({
-      id: v.string(),
-      type: fieldTypeValidator,
-      label: v.string(),
-      required: v.boolean(),
-      options: v.optional(v.array(v.string())),
-      section: v.optional(v.string()),
-      // Dashboard rankings: offer this field as an (off-by-default) column.
-      showInRankings: v.optional(v.boolean()),
-    })),
+    ...templateFormat,
     isActive: v.boolean(),
     // Coins paid to the scout for each accepted submission of this form.
     // Optional: templates created before this field pay DEFAULT_SCOUT_REWARD.
     coinReward: v.optional(v.number()),
   }),
+
+  // A form as it stood when an event was scouted with it. Written the moment a
+  // form with reports at that event is about to be changed or deleted (see
+  // freezeEvents in forms.ts), and never updated: that event's reports keep
+  // reading against this copy. An event with no row here still matches the
+  // live form. templateId may point at a template that has since been deleted.
+  formTemplateSnapshots: defineTable({
+    templateId: v.id("formTemplates"),
+    eventKey: v.string(),
+    ...templateFormat,
+  })
+    .index("by_event", ["eventKey"])
+    .index("by_template_event", ["templateId", "eventKey"]),
 
   formSubmissions: defineTable({
     templateId: v.id("formTemplates"),
@@ -89,6 +108,8 @@ export default defineSchema({
   })
     .index("by_event_team", ["eventKey", "teamNumber"])
     .index("by_offline_id", ["offlineId"])
+    // Which events a form has reports at (forms.ts eventsWithReports).
+    .index("by_template_event", ["templateId", "eventKey"])
     // Used to tell a scout's first submission for a match apart from a repeat,
     // so only the first one pays out. See awardOncePerMatch in forms.ts.
     .index("by_scout_event_match", ["scoutId", "eventKey", "matchNumber"]),

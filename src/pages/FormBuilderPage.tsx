@@ -4,6 +4,7 @@ import { useQuery } from "convex/react";
 import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
+import { formatKey } from "../../convex/formFormat";
 import type { FormField, FieldType, FormType } from "@/types";
 import { formTypeRank, FORM_TYPE_LABEL, FORM_TYPE_ORDER, hasChoiceOptions } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -679,6 +680,14 @@ function FormBuilderContent() {
   const [sectionNames, setSectionNames] = useState<string[]>(["General"]);
   const [saving, setSaving] = useState(false);
   const [confirmFormDelete, setConfirmFormDelete] = useState(false);
+  // Earlier events always keep the form they were scouted with. The current
+  // event is the one case the server can't decide alone, so a save that would
+  // restyle its reports asks first (see forms.updateTemplate).
+  const currentEventInUse = useQuery(
+    api.forms.currentEventReports,
+    selectedId ? { id: selectedId as Id<"formTemplates"> } : "skip",
+  );
+  const [askCurrentEvent, setAskCurrentEvent] = useState<{ eventName: string; activate: boolean } | null>(null);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
@@ -799,14 +808,30 @@ function FormBuilderContent() {
     setSectionNames(["General"]);
   }
 
-  async function saveTemplate() {
+  // Every form but spying gets the pinned team# field prepended
+  // Sections render in first-appearance order, so persist fields grouped
+  // by the builder's section order.
+  function fieldsToSave(): FormField[] {
+    const ordered = orderFieldsBySection(fields, sectionNames);
+    return hasPinnedTeam ? [AUTO_TEAM_FIELD, ...ordered] : ordered;
+  }
+
+  /** Save (and optionally activate), asking first when the current event's
+   *  already-filed reports would change format. */
+  function requestSave(activate: boolean) {
+    const saved = templates?.find((t) => t._id === selectedId);
+    const draft = { name: name.trim() || "Untitled Form", formType, fields: fieldsToSave() };
+    if (saved && currentEventInUse && formatKey(draft) !== formatKey(saved)) {
+      setAskCurrentEvent({ eventName: currentEventInUse.eventName, activate });
+    } else {
+      void (activate ? handleActivate() : saveTemplate());
+    }
+  }
+
+  async function saveTemplate(keepCurrentEvent?: boolean) {
     setSaving(true);
     try {
-      // Every form but spying gets the pinned team# field prepended
-      // Sections render in first-appearance order, so persist fields grouped
-      // by the builder's section order.
-      const ordered = orderFieldsBySection(fields, sectionNames);
-      const savedFields = hasPinnedTeam ? [AUTO_TEAM_FIELD, ...ordered] : ordered;
+      const savedFields = fieldsToSave();
 
       if (selectedId) {
         // Deduplicate name against all other templates (excluding self)
@@ -820,6 +845,7 @@ function FormBuilderContent() {
           formType,
           fields: savedFields,
           coinReward,
+          ...(keepCurrentEvent ? { keepCurrentEvent: true } : {}),
         });
         toast.success("Form saved!");
       } else {
@@ -846,9 +872,9 @@ function FormBuilderContent() {
     ? templates?.find((t) => t._id === selectedId)?.isActive ?? false
     : false;
 
-  async function handleActivate() {
+  async function handleActivate(keepCurrentEvent?: boolean) {
     if (!selectedId) return;
-    await saveTemplate();
+    await saveTemplate(keepCurrentEvent);
     try {
       await activateTemplate({ id: selectedId as Id<"formTemplates"> });
       toast.success(`Activated as ${FORM_TYPE_LABEL[formType]} form!`);
@@ -1011,16 +1037,44 @@ function FormBuilderContent() {
                       <PowerOff className="h-4 w-4 mr-1" /> Deactivate
                     </Button>
                   ) : (
-                    <Button onClick={handleActivate} size="sm" variant="outline" className="border-green-500/50 text-green-400 hover:bg-green-500/10">
+                    <Button onClick={() => requestSave(true)} size="sm" variant="outline" className="border-green-500/50 text-green-400 hover:bg-green-500/10">
                       <ActiveIcon className="h-4 w-4 mr-1" />
                       Activate as {FORM_TYPE_LABEL[formType]}
                     </Button>
                   )
                 )}
-                <Button onClick={saveTemplate} disabled={saving} size="sm">
+                <Button onClick={() => requestSave(false)} disabled={saving} size="sm">
                   <Save className="h-4 w-4 mr-1" />
                   {saving ? "Saving…" : selectedId ? "Save Form" : "Create Form"}
                 </Button>
+                <AlertDialog open={askCurrentEvent !== null} onOpenChange={(open) => { if (!open) setAskCurrentEvent(null); }}>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>{askCurrentEvent?.eventName} already has reports on this form</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Earlier events always keep the form they were scouted with. Should the reports already filed at{" "}
+                        <strong className="text-foreground">{askCurrentEvent?.eventName}</strong> change to match this edit?
+                        Keep them if you are rebuilding the form for a different event; update them if you are fixing the form mid-event.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      {([true, false] as const).map((keep) => (
+                        <AlertDialogAction
+                          key={String(keep)}
+                          variant={keep ? "outline" : "default"}
+                          onClick={() => {
+                            const activate = askCurrentEvent?.activate;
+                            setAskCurrentEvent(null);
+                            void (activate ? handleActivate(keep) : saveTemplate(keep));
+                          }}
+                        >
+                          {keep ? "Keep them as scouted" : "Update them too"}
+                        </AlertDialogAction>
+                      ))}
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
                 {selectedId && (
                   <>
                     <Button
@@ -1036,7 +1090,7 @@ function FormBuilderContent() {
                         <AlertDialogHeader>
                           <AlertDialogTitle>Delete this form?</AlertDialogTitle>
                           <AlertDialogDescription>
-                            <strong className="text-foreground">{name || "This form"}</strong> will be permanently deleted. All {fields.length} field{fields.length !== 1 ? "s" : ""} will be lost. Existing submissions that reference this form will still be stored but won't be viewable.
+                            <strong className="text-foreground">{name || "This form"}</strong> will be permanently deleted. All {fields.length} field{fields.length !== 1 ? "s" : ""} will be lost. Reports already filed with it stay viewable in the format they were scouted with.
                           </AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>

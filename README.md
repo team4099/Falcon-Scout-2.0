@@ -213,6 +213,17 @@ Do these once, in order:
 - Past events appear in Settings → View Another Event once they have been set
   as current after this deploy; before that, type the key.
 
+### Rollout: form history (2026-10-08)
+
+- Deploy Convex before or with the frontend: the event pages read the new
+  `forms:listEventTemplates` query. Additive schema only (table
+  `formTemplateSnapshots`, index `by_template_event` on `formSubmissions`); no
+  migration to run. Cached clients keep working on the old queries.
+- Protection starts at the first form edit **after** this deploy. An event whose
+  form was already edited or deleted before it cannot be recovered.
+- A phone still running a cached build shows past events with today's forms
+  until it updates.
+
 ## Offline behaviour
 
 Worth knowing before changing any of it:

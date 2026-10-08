@@ -521,7 +521,10 @@ export default function ManageScoutsPage() {
     api.schedules.listPitRotations,
     currentEvent ? { eventKey } : "skip"
   ) as PitRotation[] | undefined;
-  const allTemplates = useQuery(api.forms.listTemplates) as FormTemplate[] | undefined;
+  const allTemplates = useQuery(
+    api.forms.listEventTemplates,
+    currentEvent ? { eventKey } : "skip"
+  ) as FormTemplate[] | undefined;
   const dbExcludedScoutIds = useQuery(
     api.schedules.getScheduleExclusions,
     currentEvent ? { eventKey } : "skip"

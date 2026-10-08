@@ -42,7 +42,10 @@ export default function SubmissionsPage() {
   const submissions = useQuery(api.forms.listSubmissionSummaries, eventKey ? { eventKey } : "skip") as
     | Submission[]
     | undefined;
-  const templates = useQuery(api.forms.listTemplates) as FormTemplate[] | undefined;
+  // This event's forms as they were scouted (incl. since-edited or deleted ones).
+  const templates = useQuery(api.forms.listEventTemplates, eventKey ? { eventKey } : "skip") as
+    | FormTemplate[]
+    | undefined;
   const users = useQuery(api.users.listUsers) as User[] | undefined;
 
   const [templateId, setTemplateId] = useState<string | null>(null);

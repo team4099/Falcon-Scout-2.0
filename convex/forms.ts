@@ -3,7 +3,8 @@ import { internalMutation, mutation, query } from "./_generated/server";
 import { canViewEvent, eventViewerId, isSignedIn, requireAdmin, requireEventAccess, requireUser } from "./adminAuth";
 import { awardCoins, revokeCoins, DEFAULT_SCOUT_REWARD } from "./betting";
 import type { Doc, Id } from "./_generated/dataModel";
-import type { MutationCtx } from "./_generated/server";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
+import { formatKey } from "./formFormat";
 
 /**
  * Was this scout actually assigned the work this submission represents?
@@ -219,6 +220,59 @@ export const purgeLegacyChecklists = internalMutation({
   },
 });
 
+// ──────────────────────────────────────────────
+// Form history: an event keeps the form it was scouted with
+// ──────────────────────────────────────────────
+// Reports store answers by field id and point at a template, so editing that
+// template in place would relabel (or orphan) every report ever filed with it.
+// Instead, just before a form's format changes or the form is deleted, each
+// event that has reports on it gets a frozen copy (formTemplateSnapshots), and
+// listEventTemplates hands event screens that copy in place of the live form.
+
+/** Every event this form has at least one report at — one index seek each. */
+async function eventsWithReports(ctx: QueryCtx, templateId: Id<"formTemplates">): Promise<string[]> {
+  const keys: string[] = [];
+  for (;;) {
+    const after = keys[keys.length - 1];
+    const row = await ctx.db
+      .query("formSubmissions")
+      .withIndex("by_template_event", (q) => {
+        const ofTemplate = q.eq("templateId", templateId);
+        return after === undefined ? ofTemplate : ofTemplate.gt("eventKey", after);
+      })
+      .first();
+    if (!row) return keys;
+    keys.push(row.eventKey);
+  }
+}
+
+function frozenCopy(ctx: QueryCtx, templateId: Id<"formTemplates">, eventKey: string) {
+  return ctx.db
+    .query("formTemplateSnapshots")
+    .withIndex("by_template_event", (q) => q.eq("templateId", templateId).eq("eventKey", eventKey))
+    .first();
+}
+
+function currentEventRow(ctx: QueryCtx) {
+  return ctx.db
+    .query("eventSettings")
+    .withIndex("by_key", (q) => q.eq("key", "current_event"))
+    .first();
+}
+
+/**
+ * Freeze `template` as it stands for every event with reports on it, except
+ * `except`. An event that already has a copy keeps it — copies are never
+ * rewritten, so the first change after an event is what pins that event.
+ */
+async function freezeEvents(ctx: MutationCtx, template: Doc<"formTemplates">, except?: string): Promise<void> {
+  const { _id, name, description, formType, fields } = template;
+  for (const eventKey of await eventsWithReports(ctx, _id)) {
+    if (eventKey === except || (await frozenCopy(ctx, _id, eventKey))) continue;
+    await ctx.db.insert("formTemplateSnapshots", { templateId: _id, eventKey, name, description, formType, fields });
+  }
+}
+
 export const listTemplates = query({
   args: {},
   handler: async (ctx) => {
@@ -263,6 +317,100 @@ export const listActiveTemplates = query({
   },
 });
 
+/**
+ * The forms as one event knows them — what every screen showing an event's
+ * reports should read instead of listTemplates / listActiveTemplates:
+ *
+ *  - a form frozen for this event comes back in its frozen format (same _id),
+ *    including one that has since been deleted;
+ *  - `isActive` means "the form of its type this event was scouted with": the
+ *    one with the newest report here. Only a type with no reports at the event
+ *    falls back to the live active flag. So activating a new match form for
+ *    the next game doesn't swap the columns on an old event's dashboard.
+ *
+ * The "Rankings column" tag is a display setting, not format: a frozen field
+ * that still exists on the live form (same id and type) follows the live tag.
+ */
+export const listEventTemplates = query({
+  args: { eventKey: v.string() },
+  handler: async (ctx, { eventKey }) => {
+    if (!(await canViewEvent(ctx, eventKey))) return [];
+    const frozen = new Map<string, Doc<"formTemplateSnapshots">>();
+    for (const copy of await ctx.db
+      .query("formTemplateSnapshots")
+      .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
+      .collect()
+    ) frozen.set(copy.templateId, copy);
+
+    const forms: Doc<"formTemplates">[] = [];
+    for (const live of await ctx.db.query("formTemplates").collect()) {
+      const copy = frozen.get(live._id);
+      frozen.delete(live._id);
+      if (!copy) { forms.push(live); continue; }
+      const { _id, _creationTime, isActive, coinReward } = live;
+      const now = new Map(live.fields.map((f) => [f.id, f]));
+      forms.push({
+        _id, _creationTime, isActive, ...(coinReward === undefined ? {} : { coinReward }),
+        name: copy.name,
+        ...(copy.description === undefined ? {} : { description: copy.description }),
+        ...(copy.formType === undefined ? {} : { formType: copy.formType }),
+        fields: copy.fields.map(({ showInRankings, ...field }) => {
+          const liveField = now.get(field.id);
+          const tag = liveField?.type === field.type ? liveField.showInRankings : showInRankings;
+          return tag === undefined ? field : { ...field, showInRankings: tag };
+        }),
+      });
+    }
+    // Deleted forms live on only as their frozen copies.
+    for (const { _id: _copyId, templateId, eventKey: _event, ...format } of frozen.values()) {
+      forms.push({ ...format, _id: templateId, isActive: false });
+    }
+
+    const lastReport = new Map<string, number>();
+    for (const f of forms) {
+      const newest = await ctx.db
+        .query("formSubmissions")
+        .withIndex("by_template_event", (q) => q.eq("templateId", f._id).eq("eventKey", eventKey))
+        .order("desc")
+        .first();
+      if (newest) lastReport.set(f._id, newest._creationTime);
+    }
+    const scoutedWith = new Map<string, string>(); // formType → template id
+    for (const f of forms) {
+      const at = lastReport.get(f._id);
+      if (at === undefined) continue;
+      const type = f.formType ?? "default";
+      const best = scoutedWith.get(type);
+      if (best === undefined || at > lastReport.get(best)!) scoutedWith.set(type, f._id);
+    }
+    return forms.filter(isLiveTemplate).map((f) => {
+      const used = scoutedWith.get(f.formType ?? "default");
+      return used === undefined ? f : { ...f, isActive: used === f._id };
+    });
+  },
+});
+
+/**
+ * The current event, when it has reports on this form that a format change
+ * would restyle (i.e. it isn't frozen yet); otherwise null. The Form Builder
+ * asks the admin what to do about exactly this case — see updateTemplate.
+ */
+export const currentEventReports = query({
+  args: { id: v.id("formTemplates") },
+  handler: async (ctx, { id }) => {
+    if (!(await isSignedIn(ctx))) return null;
+    const current = await currentEventRow(ctx);
+    if (!current) return null;
+    const { eventKey, eventName } = current;
+    const report = await ctx.db
+      .query("formSubmissions")
+      .withIndex("by_template_event", (q) => q.eq("templateId", id).eq("eventKey", eventKey))
+      .first();
+    if (!report || (await frozenCopy(ctx, id, eventKey))) return null;
+    return { eventKey, eventName };
+  },
+});
+
 export const createTemplate = mutation({
   args: {
     name: v.string(),
@@ -288,10 +436,25 @@ export const updateTemplate = mutation({
     fields: v.optional(v.array(fieldValidator)),
     coinReward: v.optional(v.number()),
     isActive: v.optional(v.boolean()),
+    // A format change always leaves earlier events as they were scouted. The
+    // current event is the one judgement call: by default it follows the edit
+    // (fixing a label mid-event); true pins it to the old format as well
+    // (rebuilding the form for the next game before switching events).
+    keepCurrentEvent: v.optional(v.boolean()),
     adminKey: v.optional(v.string()),
   },
-  handler: async (ctx, { id, adminKey, description, ...updates }) => {
+  handler: async (ctx, { id, adminKey, description, keepCurrentEvent, ...updates }) => {
     await requireAdmin(ctx, adminKey);
+    const before = await ctx.db.get(id);
+    if (!before) throw new Error("Template not found");
+    const after = {
+      name: updates.name ?? before.name,
+      formType: updates.formType ?? before.formType,
+      fields: updates.fields ?? before.fields,
+    };
+    if (formatKey(after) !== formatKey(before)) {
+      await freezeEvents(ctx, before, keepCurrentEvent ? undefined : (await currentEventRow(ctx))?.eventKey);
+    }
     // The client can't send `undefined` (it's stripped in transit), so a
     // cleared description arrives as "" — map it to undefined, which makes
     // patch remove the field. Omitted entirely = leave it alone.
@@ -333,6 +496,9 @@ export const deleteTemplate = mutation({
   args: { id: v.id("formTemplates"), adminKey: v.optional(v.string()) },
   handler: async (ctx, { id, adminKey }) => {
     await requireAdmin(ctx, adminKey);
+    // Reports already filed with it stay readable through their frozen copy.
+    const template = await ctx.db.get(id);
+    if (template) await freezeEvents(ctx, template);
     await ctx.db.delete(id);
   },
 });

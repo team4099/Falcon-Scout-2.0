@@ -15,6 +15,7 @@ import type * as betting from "../betting.js";
 import type * as bettingSync from "../bettingSync.js";
 import type * as crons from "../crons.js";
 import type * as events from "../events.js";
+import type * as formFormat from "../formFormat.js";
 import type * as forms from "../forms.js";
 import type * as guests from "../guests.js";
 import type * as http from "../http.js";
@@ -40,6 +41,7 @@ declare const fullApi: ApiFromModules<{
   bettingSync: typeof bettingSync;
   crons: typeof crons;
   events: typeof events;
+  formFormat: typeof formFormat;
   forms: typeof forms;
   guests: typeof guests;
   http: typeof http;
