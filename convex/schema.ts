@@ -77,6 +77,9 @@ export default defineSchema({
     // Coins paid to the scout for each accepted submission of this form.
     // Optional: templates created before this field pay DEFAULT_SCOUT_REWARD.
     coinReward: v.optional(v.number()),
+    // Position in the Form Builder sidebar (forms.reorderTemplates). Optional:
+    // a form nobody has dragged yet sorts after the placed ones.
+    sortOrder: v.optional(v.number()),
   }),
 
   // A form as it stood when an event was scouted with it. Written the moment a

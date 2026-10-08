@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { FORM_TYPE_ORDER, FORM_TYPE_LABEL, formTypeRank, hasChoiceOptions } from "./index";
+import { FORM_TYPE_ORDER, FORM_TYPE_LABEL, formTypeRank, hasChoiceOptions, sortForms } from "./index";
 import type { FormType } from "./index";
 
 describe("form type ordering", () => {
@@ -49,6 +49,17 @@ describe("form type ordering", () => {
       "test form",
       "Spying",
     ]);
+  });
+
+  it("orders the builder sidebar by the admin's drag order, unplaced forms last", () => {
+    const forms = [
+      { name: "new spy", formType: "spy", _creationTime: 5 },
+      { name: "new match", formType: "default", _creationTime: 6 },
+      { name: "second", formType: "default", sortOrder: 1, _creationTime: 1 },
+      { name: "first", formType: "spy", sortOrder: 0, _creationTime: 2 },
+      { name: "older match", formType: undefined, _creationTime: 3 },
+    ];
+    expect(sortForms(forms).map((f) => f.name)).toEqual(["first", "second", "older match", "new match", "new spy"]);
   });
 
   it("validates a `form=` deep-link param the way ScoutMatchPage does", () => {

@@ -27,6 +27,16 @@ export function formTypeRank(t: string | undefined): number {
   return i === -1 ? 0 : i;
 }
 
+/** Form Builder sidebar order: the admin's drag order first, then forms nobody
+ *  has placed yet (by type, oldest first). */
+export function sortForms<T extends { sortOrder?: number; formType?: string; _creationTime: number }>(forms: T[]): T[] {
+  return [...forms].sort((a, b) =>
+    (a.sortOrder ?? Infinity) - (b.sortOrder ?? Infinity) ||
+    formTypeRank(a.formType) - formTypeRank(b.formType) ||
+    a._creationTime - b._creationTime
+  );
+}
+
 export interface FormField {
   id: string;
   type: FieldType;

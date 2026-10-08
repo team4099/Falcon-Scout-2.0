@@ -6,7 +6,7 @@ import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { formatKey } from "../../convex/formFormat";
 import type { FormField, FieldType, FormType } from "@/types";
-import { formTypeRank, FORM_TYPE_LABEL, FORM_TYPE_ORDER, hasChoiceOptions } from "@/types";
+import { FORM_TYPE_LABEL, hasChoiceOptions, sortForms } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -78,6 +78,7 @@ import { toast } from "sonner";
 import {
   DndContext,
   closestCorners,
+  KeyboardSensor,
   PointerSensor,
   useDroppable,
   useSensor,
@@ -89,6 +90,7 @@ import {
   SortableContext,
   useSortable,
   verticalListSortingStrategy,
+  sortableKeyboardCoordinates,
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -628,6 +630,53 @@ function FormTypeBadge({ type }: { type: FormType }) {
 }
 
 // ──────────────────────────────────────────────
+// Sidebar form row — drag the grip to reorder
+// ──────────────────────────────────────────────
+function SortableFormItem({
+  id, name, type, isActive, selected, onPick,
+}: {
+  id: string;
+  name: string;
+  type: FormType;
+  isActive: boolean;
+  selected: boolean;
+  onPick: () => void;
+}) {
+  const {
+    attributes, listeners, setNodeRef, setActivatorNodeRef,
+    transform, transition, isDragging,
+  } = useSortable({ id });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1, zIndex: isDragging ? 50 : undefined }}
+      className={`flex items-stretch rounded-lg text-sm border ${
+        selected
+          ? "bg-primary text-primary-foreground border-primary"
+          : "bg-card border-border hover:border-primary/50"
+      }`}
+    >
+      <button
+        ref={setActivatorNodeRef} {...attributes} {...listeners}
+        type="button"
+        className="px-2.5 sm:px-1.5 cursor-grab active:cursor-grabbing opacity-60 hover:opacity-100 touch-none"
+        aria-label={`Drag to reorder ${name}`}
+      >
+        <GripVertical className="h-4 w-4" />
+      </button>
+      <button type="button" onClick={onPick} className="flex-1 min-w-0 text-left pr-3 py-2">
+        <p className="font-medium truncate">{name}</p>
+        <div className="flex items-center gap-1.5 mt-0.5">
+          <FormTypeBadge type={type} />
+          {isActive && <span className={`text-[10px] font-semibold ${selected ? "text-green-900" : "text-green-400"}`}>● active</span>}
+        </div>
+      </button>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────
 // Main Form Builder Page
 // ──────────────────────────────────────────────
 
@@ -668,6 +717,7 @@ function FormBuilderContent() {
   const deleteTemplate = useAdminMutation(api.forms.deleteTemplate);
   const activateTemplate = useAdminMutation(api.forms.activateTemplate);
   const deactivateTemplate = useAdminMutation(api.forms.deactivateTemplate);
+  const reorderTemplates = useAdminMutation(api.forms.reorderTemplates);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [name, setName] = useState("New Scouting Form");
@@ -692,12 +742,31 @@ function FormBuilderContent() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
-  // Form list order: FORM_TYPE_ORDER (match → pit → note → spying), with the
-  // backend's own order (creation time) as the tie-break inside a type.
-  const orderedTemplates = templates
-    ? [...templates].sort((a, b) => formTypeRank(a.formType) - formTypeRank(b.formType))
-    : templates;
+  const listSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  // A just-dropped order, shown until the server's copy catches up.
+  const [droppedOrder, setDroppedOrder] = useState<string[] | null>(null);
+  const orderedTemplates = templates && sortForms(
+    droppedOrder
+      ? templates.map((t) => ({ ...t, sortOrder: droppedOrder.indexOf(t._id) === -1 ? undefined : droppedOrder.indexOf(t._id) }))
+      : templates,
+  );
 
+  async function handleReorder({ active, over }: DragEndEvent) {
+    if (!orderedTemplates || !over || active.id === over.id) return;
+    const ids = orderedTemplates.map((t) => t._id);
+    const moved = arrayMove(ids, ids.indexOf(active.id as Id<"formTemplates">), ids.indexOf(over.id as Id<"formTemplates">));
+    setDroppedOrder(moved);
+    try {
+      await reorderTemplates({ ids: moved });
+    } catch {
+      toast.error("Failed to save the new order.");
+    } finally {
+      setDroppedOrder(null);
+    }
+  }
 
   function loadTemplate(t: NonNullable<typeof templates>[number]) {
     setSelectedId(t._id);
@@ -733,68 +802,35 @@ function FormBuilderContent() {
     return `${name} (${n})`;
   }
 
-  /** One form per type: picking a type opens the existing template of that
-   *  type (active one first). Only when none exists does it start a fresh
-   *  draft of that type. */
-  function selectType(type: FormType) {
-    const existing = orderedTemplates?.filter((t) => ((t.formType as FormType) ?? "default") === type);
-    const target = existing?.find((t) => t.isActive) ?? existing?.[0];
-    if (target) { loadTemplate(target); return; }
-    // Fresh draft — never retype the form that's currently open.
-    setSelectedId(null);
-    setName(uniqueName(type === "default" ? "Match Scouting" : FORM_TYPE_LABEL[type]));
-    setDescription("");
-    setFormType(type);
-    setFields([]);
-    setSectionNames(["General"]);
-  }
-
-  // Types with no template yet — listed as "set up" slots under the forms.
-  const missingTypes = templates
-    ? FORM_TYPE_ORDER.filter((type) => !templates.some((t) => ((t.formType as FormType) ?? "default") === type))
-    : [];
-
   function renderFormList(onPick: () => void) {
     return (
       <>
         {templates === undefined && <p className="text-sm text-muted-foreground">Loading…</p>}
-        {orderedTemplates?.map((t) => {
-          const tType: FormType = (t.formType as FormType) ?? "default";
-          return (
-            <button
-              key={t._id}
-              onClick={() => { loadTemplate(t); onPick(); }}
-              className={`text-left px-3 py-2 rounded-lg text-sm transition-colors border ${
-                selectedId === t._id
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "bg-card border-border hover:border-primary/50"
-              }`}
-            >
-              <p className="font-medium truncate">{t.name}</p>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <FormTypeBadge type={tType} />
-                {t.isActive && <span className="text-[10px] text-green-400 font-semibold">● active</span>}
-              </div>
-            </button>
-          );
-        })}
-        {missingTypes.map((type) => (
-          <button
-            key={`new-${type}`}
-            onClick={() => { selectType(type); onPick(); }}
-            className={`text-left px-3 py-2 rounded-lg text-sm transition-colors border border-dashed ${
-              !selectedId && formType === type
-                ? "border-primary bg-primary/10"
-                : "border-border text-muted-foreground hover:border-primary/50"
-            }`}
-          >
-            <p className="font-medium truncate flex items-center gap-1"><Plus className="h-3.5 w-3.5" /> {FORM_TYPE_LABEL[type]}</p>
+        <DndContext sensors={listSensors} collisionDetection={closestCorners} onDragEnd={handleReorder}>
+          <SortableContext items={orderedTemplates?.map((t) => t._id) ?? []} strategy={verticalListSortingStrategy}>
+            {orderedTemplates?.map((t) => (
+              <SortableFormItem
+                key={t._id}
+                id={t._id}
+                name={t.name}
+                type={(t.formType as FormType) ?? "default"}
+                isActive={t.isActive}
+                selected={selectedId === t._id}
+                onPick={() => { loadTemplate(t); onPick(); }}
+              />
+            ))}
+          </SortableContext>
+        </DndContext>
+        {/* The form being drafted, until Create Form saves it */}
+        {!selectedId && (
+          <div className="px-3 py-2 rounded-lg text-sm border border-dashed border-primary bg-primary/10">
+            <p className="font-medium truncate">{name || "Untitled Form"}</p>
             <div className="flex items-center gap-1.5 mt-0.5">
-              <FormTypeBadge type={type} />
-              <span className="text-[10px] font-semibold">not created</span>
+              <FormTypeBadge type={formType} />
+              <span className="text-[10px] font-semibold text-muted-foreground">not saved yet</span>
             </div>
-          </button>
-        ))}
+          </div>
+        )}
       </>
     );
   }
@@ -837,7 +873,7 @@ function FormBuilderContent() {
         // Deduplicate name against all other templates (excluding self)
         const safeName = uniqueName(name.trim() || "Untitled Form", selectedId);
         if (safeName !== name) setName(safeName);
-        await updateTemplate({
+        const saved = await updateTemplate({
           id: selectedId as Id<"formTemplates">,
           // Send "" rather than undefined so a cleared description is removed
           // server-side (undefined args are dropped and would be a no-op).
@@ -847,7 +883,12 @@ function FormBuilderContent() {
           coinReward,
           ...(keepCurrentEvent ? { keepCurrentEvent: true } : {}),
         });
-        toast.success("Form saved!");
+        // Only one form per type is active (enforced in forms.updateTemplate).
+        if (currentlyActive && saved?.isActive === false) {
+          toast.info(`Form saved, and deactivated: another ${FORM_TYPE_LABEL[formType]} form is already active.`);
+        } else {
+          toast.success("Form saved!");
+        }
       } else {
         const safeName = uniqueName(name.trim() || "Untitled Form");
         if (safeName !== name) setName(safeName);
@@ -876,8 +917,11 @@ function FormBuilderContent() {
     if (!selectedId) return;
     await saveTemplate(keepCurrentEvent);
     try {
-      await activateTemplate({ id: selectedId as Id<"formTemplates"> });
-      toast.success(`Activated as ${FORM_TYPE_LABEL[formType]} form!`);
+      const replaced = (await activateTemplate({ id: selectedId as Id<"formTemplates"> }))?.deactivated ?? [];
+      toast.success(
+        `Activated as ${FORM_TYPE_LABEL[formType]} form!` +
+        (replaced.length ? ` ${replaced.join(", ")} was deactivated.` : ""),
+      );
     } catch {
       toast.error("Failed to activate.");
     }
@@ -1122,7 +1166,7 @@ function FormBuilderContent() {
                   <Label>Form Type</Label>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     <button
-                      onClick={() => selectType("default")}
+                      onClick={() => setFormType("default")}
                       className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm transition-all ${
                         formType === "default"
                           ? "border-primary bg-primary/10 text-primary font-semibold"
@@ -1136,7 +1180,7 @@ function FormBuilderContent() {
                       </div>
                     </button>
                     <button
-                      onClick={() => selectType("pit")}
+                      onClick={() => setFormType("pit")}
                       className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm transition-all ${
                         formType === "pit"
                           ? "border-cyan-500 bg-cyan-500/10 text-cyan-400 font-semibold"
@@ -1150,7 +1194,7 @@ function FormBuilderContent() {
                       </div>
                     </button>
                     <button
-                      onClick={() => selectType("super")}
+                      onClick={() => setFormType("super")}
                       className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm transition-all ${
                         formType === "super"
                           ? "border-amber-500 bg-amber-500/10 text-amber-400 font-semibold"
@@ -1164,7 +1208,7 @@ function FormBuilderContent() {
                       </div>
                     </button>
                     <button
-                      onClick={() => selectType("spy")}
+                      onClick={() => setFormType("spy")}
                       className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm transition-all ${
                         formType === "spy"
                           ? "border-violet-500 bg-violet-500/10 text-violet-400 font-semibold"

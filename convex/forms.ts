@@ -423,9 +423,26 @@ export const createTemplate = mutation({
   },
   handler: async (ctx, { adminKey, ...args }) => {
     await requireAdmin(ctx, adminKey);
-    return await ctx.db.insert("formTemplates", args);
+    const id = await ctx.db.insert("formTemplates", args);
+    if (args.isActive) await deactivateOthers(ctx, id, args.formType ?? "default");
+    return id;
   },
 });
+
+/**
+ * Any number of forms may exist per type, but only one of a type is active.
+ * Turns off every other active form of `formType` (they are kept, not deleted)
+ * and returns their names.
+ */
+async function deactivateOthers(ctx: MutationCtx, id: Id<"formTemplates">, formType: string): Promise<string[]> {
+  const names: string[] = [];
+  for (const t of await ctx.db.query("formTemplates").collect()) {
+    if (t._id === id || !t.isActive || (t.formType ?? "default") !== formType) continue;
+    await ctx.db.patch(t._id, { isActive: false });
+    names.push(t.name);
+  }
+  return names;
+}
 
 export const updateTemplate = mutation({
   args: {
@@ -458,9 +475,25 @@ export const updateTemplate = mutation({
     // The client can't send `undefined` (it's stripped in transit), so a
     // cleared description arrives as "" — map it to undefined, which makes
     // patch remove the field. Omitted entirely = leave it alone.
-    await ctx.db.patch(id, description === undefined
-      ? updates
-      : { ...updates, description: description.trim() || undefined });
+    // One active form per type. Turning this form on replaces the active form
+    // of its type. An already-active form moved to a type that has an active
+    // form goes inactive instead — retyping a form shouldn't quietly pull the
+    // form scouts are filling in right now.
+    const type = after.formType ?? "default";
+    let isActive = updates.isActive ?? before.isActive;
+    if (isActive && !before.isActive) {
+      await deactivateOthers(ctx, id, type);
+    } else if (isActive && type !== (before.formType ?? "default")) {
+      const taken = (await ctx.db.query("formTemplates").collect())
+        .some((t) => t._id !== id && t.isActive && (t.formType ?? "default") === type);
+      if (taken) isActive = false;
+    }
+    await ctx.db.patch(id, {
+      ...updates,
+      isActive,
+      ...(description === undefined ? {} : { description: description.trim() || undefined }),
+    });
+    return { isActive };
   },
 });
 
@@ -471,16 +504,21 @@ export const activateTemplate = mutation({
     await requireAdmin(ctx, adminKey);
     const template = await ctx.db.get(id);
     if (!template) throw new Error("Template not found");
-    const myType = template.formType ?? "default";
-
-    const all = await ctx.db.query("formTemplates").collect();
-    for (const t of all) {
-      if (t._id !== id && (t.formType ?? "default") === myType && t.isActive) {
-        await ctx.db.patch(t._id, { isActive: false });
-      }
-    }
-
+    const deactivated = await deactivateOthers(ctx, id, template.formType ?? "default");
     await ctx.db.patch(id, { isActive: true });
+    return { deactivated };
+  },
+});
+
+/** Save the Form Builder sidebar order: `ids` top to bottom. */
+export const reorderTemplates = mutation({
+  args: { ids: v.array(v.id("formTemplates")), adminKey: v.optional(v.string()) },
+  handler: async (ctx, { ids, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
+    for (const [sortOrder, id] of ids.entries()) {
+      const template = await ctx.db.get(id);
+      if (template && template.sortOrder !== sortOrder) await ctx.db.patch(id, { sortOrder });
+    }
   },
 });
 
