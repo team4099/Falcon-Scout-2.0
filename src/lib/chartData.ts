@@ -347,3 +347,30 @@ export function buildTimelines(opts: {
   }
   return out;
 }
+
+// ── One team's season trend (team panel) ─────────────────────────────────────
+
+export interface SeasonTrend {
+  /** `i` = 1-based match index for the season; `score` = that match's own
+   *  value when `value` is a running average of it. */
+  rows: Array<{ i: number; event: string; label: string; value: number; score?: number }>;
+  /** Each event in play order, with the index of its first match. */
+  events: Array<{ event: string; start: number }>;
+}
+
+/** A season-scope timeline → one plotted series plus where each event starts.
+ *  `runningAvg` plots the average of every match so far instead of the raw value. */
+export function seasonTrend(points: TimelinePoint[], metric: string, runningAvg = false): SeasonTrend {
+  const rows: SeasonTrend["rows"] = [];
+  const events: SeasonTrend["events"] = [];
+  let sum = 0;
+  for (const p of points) {
+    const v = p.values[metric];
+    if (v === undefined) continue;
+    const i = rows.length + 1;
+    sum += v;
+    if (events[events.length - 1]?.event !== p.event) events.push({ event: p.event, start: i });
+    rows.push({ i, event: p.event, label: p.label, value: runningAvg ? sum / i : v, ...(runningAvg ? { score: v } : {}) });
+  }
+  return { rows, events };
+}

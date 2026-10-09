@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { matchLabel, matchSortValue } from "@/lib/utils";
+import { matchLabel } from "@/lib/utils";
 import { aggregateField } from "@/lib/rankingColumns";
 import {
   rankIn,
@@ -23,13 +23,12 @@ import {
   fetchTBATeamInfo,
   fetchTBATeamAvatar,
   fetchTBAEventMatches,
+  fetchStatboticsEventTeamMatches,
+  fetchStatboticsTeamSeason,
 } from "@/lib/api";
-import type { TBAMatch } from "@/lib/api";
+import { buildTimelines, seasonTrend, slimTbaMatch } from "@/lib/chartData";
+import type { SeasonTrend, SlimMatch, SlimTeamMatch } from "@/lib/chartData";
 import {
-  RadarChart,
-  Radar,
-  PolarGrid,
-  PolarAngleAxis,
   LineChart,
   Line,
   XAxis,
@@ -37,7 +36,7 @@ import {
   Tooltip,
   ResponsiveContainer,
   CartesianGrid,
-  Legend,
+  ReferenceLine,
 } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -92,395 +91,94 @@ interface Template {
 
 type TeamEpa = { event: number | null; overall: number | null; auto: number | null; teleop: number | null; endgame: number | null };
 
-function getNumericVals(submissions: Submission[], fieldId: string): number[] {
-  return submissions
-    .map((s) => parseData(s)[fieldId])
-    .filter((v): v is number => typeof v === "number");
-}
+// ── Charts: season trends ─────────────────────────────────────────────────────
 
-function avg(vals: number[]): number | null {
-  if (!vals.length) return null;
-  return vals.reduce((a, b) => a + b, 0) / vals.length;
-}
+const GRID = { strokeDasharray: "3 3", stroke: "currentColor", opacity: 0.12 };
+const AXIS = { stroke: "currentColor", opacity: 0.35 };
+const AXIS_TICK = { fontSize: 10, fill: "currentColor", opacity: 0.7 };
 
-/** Compute box-plot statistics */
-function boxStats(vals: number[]) {
-  if (!vals.length) return null;
-  const sorted = [...vals].sort((a, b) => a - b);
-  const n = sorted.length;
-  const medianOf = (arr: number[]) =>
-    arr.length % 2 === 0
-      ? (arr[arr.length / 2 - 1] + arr[arr.length / 2]) / 2
-      : arr[Math.floor(arr.length / 2)];
-  const median = medianOf(sorted);
-  const lower = sorted.slice(0, Math.floor(n / 2));
-  const upper = sorted.slice(Math.ceil(n / 2));
-  return {
-    min: sorted[0],
-    q1: lower.length ? medianOf(lower) : median,
-    median,
-    q3: upper.length ? medianOf(upper) : median,
-    max: sorted[n - 1],
-    mean: vals.reduce((a, b) => a + b, 0) / n,
-    n,
-  };
-}
-
-// ── Stat toggle chips ──────────────────────────────────────────────────────────
-
-function StatToggle({
-  label,
-  active,
+function SeasonTrendChart({
+  title,
+  hint,
+  valueLabel,
+  trend,
   color,
-  onClick,
+  loading,
 }: {
-  label: string;
-  active: boolean;
-  color?: string;
-  onClick: () => void;
+  title: string;
+  hint: string;
+  valueLabel: string;
+  trend: SeasonTrend;
+  color: string;
+  loading: boolean;
 }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`text-xs px-2.5 py-1 rounded-full border font-medium transition-all ${
-        active
-          ? "border-primary bg-primary/15 text-primary"
-          : "border-border text-muted-foreground hover:border-primary/50"
-      }`}
-      style={active && color ? { borderColor: color, color, backgroundColor: color + "22" } : {}}
-    >
-      {label}
-    </button>
-  );
-}
-
-// ── Custom tooltip ─────────────────────────────────────────────────────────────
-
-function ChartTip({ active, payload, label }: {
-  active?: boolean;
-  payload?: Array<{ value: number; name: string; color?: string }>;
-  label?: string | number;
-}) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="bg-popover border border-border rounded-lg px-3 py-2 text-xs shadow-xl">
-      {label !== undefined && <p className="text-muted-foreground mb-1 font-mono">Match {label}</p>}
-      {payload.map((p, i) => (
-        <p key={i} className="font-semibold" style={{ color: p.color ?? "inherit" }}>
-          {p.name}: {typeof p.value === "number" ? p.value.toFixed(2) : p.value}
-        </p>
-      ))}
-    </div>
-  );
-}
-
-// ── CHART 1: Radar ─────────────────────────────────────────────────────────────
-
-const YELLOW = "#eab308";
-
-function RadarStatsChart({
-  fields,
-  submissions,
-}: {
-  fields: FormField[];
-  submissions: Submission[];
-}) {
-  const numericFields = fields.filter((f) =>
-    ["number", "counter", "rating"].includes(f.type)
-  );
-  const checkboxFields = fields.filter((f) => f.type === "checkbox");
-  const allFields = [...numericFields, ...checkboxFields];
-
-  const [selected, setSelected] = useState<Set<string>>(
-    () => new Set(allFields.slice(0, 6).map((f) => f.id))
-  );
-
-  function toggle(id: string) {
-    setSelected((prev) => {
-      // Enforce minimum 3 selected
-      if (prev.has(id) && prev.size <= 3) return prev;
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  const activeFields = allFields.filter((f) => selected.has(f.id));
-
-  // Build radar data: one entry per field, value = avg
-  const radarData = useMemo(() => {
-    return activeFields.map((f) => {
-      let raw: number | null;
-      if (f.type === "checkbox") {
-        const vals = submissions.map((s) => parseData(s)[f.id]);
-        const filled = vals.filter((v) => v !== undefined);
-        raw = filled.length ? (filled.filter(Boolean).length / filled.length) * 100 : null;
-      } else {
-        const vals = getNumericVals(submissions, f.id);
-        raw = avg(vals);
-      }
-      return { subject: f.label, value: raw ?? 0, fullMark: 100, rawVal: raw };
-    });
-  }, [activeFields, submissions]);
-
-  // Normalize non-checkbox fields: scale so max across active fields = 100
-  const maxVal = useMemo(() => {
-    const nonBool = activeFields
-      .filter((f) => f.type !== "checkbox")
-      .map((f) => avg(getNumericVals(submissions, f.id)) ?? 0);
-    return Math.max(...nonBool, 1);
-  }, [activeFields, submissions]);
-
-  const normalizedData = radarData.map((d) => {
-    const field = activeFields.find((f) => f.label === d.subject);
-    const isCheckbox = field?.type === "checkbox";
-    return {
-      ...d,
-      value: isCheckbox ? d.value : (d.value / maxVal) * 100,
-    };
-  });
-
-  const hasData = submissions.length > 0 && activeFields.length > 0;
+  const { rows, events } = trend;
+  const step = Math.max(1, Math.ceil(rows.length / 8));
+  const ticks = rows.filter((r) => (r.i - 1) % step === 0).map((r) => r.i);
 
   return (
     <div className="bg-card border border-border rounded-xl p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold">Radar — Field Averages</h3>
-        <span className="text-[10px] text-muted-foreground">min 3 fields · normalized</span>
+      <div>
+        <h3 className="text-sm font-semibold">{title}</h3>
+        <p className="text-[10px] text-muted-foreground">{hint}</p>
       </div>
 
-      {/* Field toggles */}
-      <div className="flex flex-wrap gap-1.5">
-        {allFields.map((f) => {
-          const isActive = selected.has(f.id);
-          const wouldUnderflow = isActive && selected.size <= 3;
-          return (
-            <StatToggle
-              key={f.id}
-              label={f.label}
-              active={isActive}
-              color={isActive ? YELLOW : undefined}
-              onClick={() => !wouldUnderflow && toggle(f.id)}
-            />
-          );
-        })}
-      </div>
-
-      {!hasData || activeFields.length === 0 ? (
+      {rows.length === 0 ? (
         <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">
-          {submissions.length === 0 ? "No data yet" : "Select at least 3 fields"}
+          {loading ? "Loading season matches…" : "No data for this season yet"}
         </div>
       ) : (
-        <ResponsiveContainer width="100%" height={280}>
-          <RadarChart data={normalizedData} margin={{ top: 10, right: 30, bottom: 10, left: 30 }}>
-            <PolarGrid stroke="rgba(255,255,255,0.1)" />
-            <PolarAngleAxis
-              dataKey="subject"
-              tick={{ fontSize: 11, fill: "rgba(255,255,255,0.55)" }}
+        <ResponsiveContainer width="100%" height={240}>
+          <LineChart data={rows} margin={{ top: 20, right: 12, bottom: 0, left: -16 }}>
+            <CartesianGrid {...GRID} vertical={false} />
+            <XAxis
+              type="number"
+              dataKey="i"
+              domain={[0.5, rows.length + 0.5]}
+              ticks={ticks}
+              tick={AXIS_TICK}
+              tickLine={AXIS}
+              axisLine={AXIS}
             />
+            <YAxis tick={AXIS_TICK} tickLine={AXIS} axisLine={AXIS} domain={["auto", "auto"]} />
             <Tooltip
               content={({ active, payload }) => {
                 if (!active || !payload?.length) return null;
-                const d = payload[0].payload as { subject: string; rawVal: number | null };
+                const r = payload[0].payload as SeasonTrend["rows"][number];
                 return (
                   <div className="bg-popover border border-border rounded-lg px-3 py-2 text-xs shadow-xl">
-                    <p className="font-semibold text-foreground">{d.subject}</p>
-                    <p className="text-muted-foreground">
-                      avg: {d.rawVal !== null ? d.rawVal.toFixed(2) : "—"}
-                    </p>
+                    <p className="text-muted-foreground mb-1 font-mono">{r.event.slice(4)} {r.label}</p>
+                    <p className="font-semibold" style={{ color }}>{valueLabel}: {fmt(r.value)}</p>
+                    {r.score !== undefined && <p className="text-muted-foreground">This match: {fmt(r.score)}</p>}
                   </div>
                 );
               }}
             />
-            <Radar
-              name="Average"
-              dataKey="value"
-              stroke={YELLOW}
-              fill={YELLOW}
-              fillOpacity={0.25}
-              strokeWidth={2}
-              dot={{ r: 3, fill: YELLOW }}
-            />
-          </RadarChart>
-        </ResponsiveContainer>
-      )}
-    </div>
-  );
-}
-
-// ── CHART 2: Line — Performance over Matches ───────────────────────────────────
-
-const LINE_COLORS = [
-  "hsl(var(--primary))",
-  "#60a5fa", "#34d399", "#f97316", "#c084fc", "#f43f5e", "#fbbf24",
-];
-
-function MatchTrendChart({
-  fields,
-  submissions,
-  eventKey,
-  teamNumber,
-}: {
-  fields: FormField[];
-  submissions: Submission[];
-  eventKey: string;
-  teamNumber: number;
-}) {
-  const numericFields = fields.filter((f) =>
-    ["number", "counter", "rating"].includes(f.type)
-  );
-
-  const [selected, setSelected] = useState<Set<string>>(
-    () => new Set(numericFields.slice(0, 3).map((f) => f.id))
-  );
-
-  // TBA match score overlay
-  const [matchScores, setMatchScores] = useState<Record<number, number>>({});
-
-  useEffect(() => {
-    if (!eventKey) return;
-    fetchTBAEventMatches(eventKey).then((data) => {
-      if (!Array.isArray(data)) return;
-      const scores: Record<number, number> = {};
-      for (const m of data as TBAMatch[]) {
-        const key = `frc${teamNumber}`;
-        const redTeams = m.alliances.red.team_keys;
-        const blueTeams = m.alliances.blue.team_keys;
-        if (!redTeams.includes(key) && !blueTeams.includes(key)) continue;
-        const side = redTeams.includes(key) ? "red" : "blue";
-        const score = m.alliances[side].score;
-        if (score >= 0) scores[m.match_number] = score;
-      }
-      setMatchScores(scores);
-    }).catch(() => {});
-  }, [eventKey, teamNumber]);
-
-  // Sort quals before elims, each by number — a bare matchNumber sort
-  // interleaves elim 1 with qual 1.
-  const sorted = [...submissions].sort(
-    (a, b) =>
-      matchSortValue(a.matchNumber, a.compLevel) -
-      matchSortValue(b.matchNumber, b.compLevel),
-  );
-
-  const data = sorted.map((s) => {
-    const d = parseData(s);
-    const row: Record<string, number | string | undefined> = {
-      match: matchLabel(s.matchNumber, s.compLevel),
-      __sort: matchSortValue(s.matchNumber, s.compLevel),
-    };
-    for (const f of numericFields) {
-      const v = d[f.id];
-      if (typeof v === "number") row[f.id] = v;
-    }
-    // TBA scores are indexed by qual match number, so only attach them to
-    // qualification rows — an elim row would otherwise pick up an unrelated
-    // qual match's score.
-    if (s.compLevel !== "elim" && matchScores[s.matchNumber] !== undefined) {
-      row["__tbaScore"] = matchScores[s.matchNumber];
-    }
-    return row;
-  });
-
-  // Add matches with TBA scores but no submission. TBA's match_number here is
-  // a qualification number, so label these as quals to match the rows above.
-  for (const [matchNum, score] of Object.entries(matchScores)) {
-    const mn = Number(matchNum);
-    const label = matchLabel(mn, "qm");
-    if (!data.find((d) => d.match === label)) {
-      data.push({ match: label, __sort: matchSortValue(mn, "qm"), __tbaScore: score });
-    }
-  }
-  data.sort((a, b) => (Number(a.__sort) || 0) - (Number(b.__sort) || 0));
-
-  function toggle(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  const hasTBA = Object.keys(matchScores).length > 0;
-  const [showTBA, setShowTBA] = useState(true);
-
-  return (
-    <div className="bg-card border border-border rounded-xl p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold">Performance Over Matches</h3>
-        <span className="text-[10px] text-muted-foreground">by match number</span>
-      </div>
-
-      {/* Toggles */}
-      <div className="flex flex-wrap gap-1.5">
-        {hasTBA && (
-          <StatToggle
-            label="TBA Score"
-            active={showTBA}
-            color="#94a3b8"
-            onClick={() => setShowTBA((v) => !v)}
-          />
-        )}
-        {numericFields.map((f, i) => (
-          <StatToggle
-            key={f.id}
-            label={f.label}
-            active={selected.has(f.id)}
-            color={LINE_COLORS[(i + 1) % LINE_COLORS.length]}
-            onClick={() => toggle(f.id)}
-          />
-        ))}
-      </div>
-
-      {data.length === 0 ? (
-        <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">
-          No data yet
-        </div>
-      ) : (
-        <ResponsiveContainer width="100%" height={240}>
-          <LineChart data={data} margin={{ top: 4, right: 12, bottom: 0, left: -16 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-            <XAxis
-              dataKey="match"
-              tick={{ fontSize: 10 }}
-              stroke="rgba(255,255,255,0.15)"
-              label={{ value: "Match #", position: "insideBottomRight", offset: -4, fontSize: 10, fill: "rgba(255,255,255,0.4)" }}
-            />
-            <YAxis tick={{ fontSize: 10 }} stroke="rgba(255,255,255,0.15)" />
-            <Tooltip content={<ChartTip />} />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
-
-            {/* TBA match score */}
-            {hasTBA && showTBA && (
-              <Line
-                type="monotone"
-                dataKey="__tbaScore"
-                name="TBA Score"
-                stroke="#94a3b8"
-                strokeWidth={1.5}
+            {/* One divider where each event starts, labelled with its event code. */}
+            {events.map((e) => (
+              <ReferenceLine
+                key={e.event}
+                x={e.start - 0.5}
+                stroke="currentColor"
+                strokeOpacity={0.45}
                 strokeDasharray="4 3"
-                dot={false}
-                connectNulls={false}
+                label={({ viewBox }: { viewBox: { x: number; y: number } }) => (
+                  <text x={viewBox.x + 4} y={viewBox.y - 6} fontSize={10} fill="currentColor" opacity={0.75}>
+                    {e.event.slice(4)}
+                  </text>
+                )}
               />
-            )}
-
-            {/* Scouted fields */}
-            {numericFields
-              .filter((f) => selected.has(f.id))
-              .map((f, i) => (
-                <Line
-                  key={f.id}
-                  type="monotone"
-                  dataKey={f.id}
-                  name={f.label}
-                  stroke={LINE_COLORS[(i + 1) % LINE_COLORS.length]}
-                  strokeWidth={2}
-                  dot={{ r: 3 }}
-                  connectNulls={false}
-                />
-              ))}
+            ))}
+            <Line
+              type="monotone"
+              dataKey="value"
+              name={valueLabel}
+              stroke={color}
+              strokeWidth={2}
+              dot={rows.length <= 40 ? { r: 2, fill: color } : false}
+              activeDot={{ r: 4 }}
+              isAnimationActive={false}
+            />
           </LineChart>
         </ResponsiveContainer>
       )}
@@ -488,268 +186,65 @@ function MatchTrendChart({
   );
 }
 
-// ── CHART 3: Box Plot ─────────────────────────────────────────────────────────
+/** EPA and average score across the team's whole season. Mounted only while
+ *  the Charts tab is open, so the season fetch waits until it's wanted. */
+function SeasonCharts({ teamNumber, eventKey, eventYear }: { teamNumber: number; eventKey: string; eventYear: number }) {
+  const want = `${teamNumber}|${eventKey}|${eventYear}`;
+  const [loaded, setLoaded] = useState<{ key: string; matches: SlimMatch[]; teamMatches: SlimTeamMatch[] } | null>(null);
+  // Ignore a previous team's data while this one loads.
+  const src = loaded?.key === want ? loaded : null;
 
-interface BoxData {
-  label: string;
-  min: number;
-  q1: number;
-  median: number;
-  q3: number;
-  max: number;
-  mean: number;
-  n: number;
-}
-
-function BoxPlotSVG({ boxes }: { boxes: BoxData[] }) {
-  if (!boxes.length) return null;
-
-  const PAD_T = 24, PAD_B = 46, PAD_L = 38, PAD_R = 100; // PAD_R leaves room for legend
-  const HEIGHT = 240;
-  const COL_W = 80;
-  const WIDTH = PAD_L + PAD_R + COL_W * boxes.length;
-  const PLOT_H = HEIGHT - PAD_T - PAD_B;
-
-  // Y scale (use unique names to avoid any shadowing confusion)
-  const allVals = boxes.flatMap((b) => [b.min, b.max]);
-  const scaleMin = Math.min(0, ...allVals);
-  const scaleMax = Math.max(...allVals, 1);
-  const scaleRange = scaleMax - scaleMin || 1;
-
-  const toY = (v: number) =>
-    PAD_T + PLOT_H - ((v - scaleMin) / scaleRange) * PLOT_H;
-
-  const gridVals = Array.from({ length: 6 }, (_, i) =>
-    scaleMin + (scaleRange * i) / 5
-  );
-
-  return (
-    <svg
-      width="100%"
-      height={HEIGHT}
-      viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-      preserveAspectRatio="xMinYMid meet"
-    >
-      {/* Grid lines */}
-      {gridVals.map((v, i) => (
-        <g key={i}>
-          <line
-            x1={PAD_L} y1={toY(v)} x2={WIDTH - PAD_R} y2={toY(v)}
-            stroke="rgba(255,255,255,0.07)" strokeWidth={1}
-          />
-          <text
-            x={PAD_L - 5} y={toY(v)}
-            textAnchor="end" dominantBaseline="middle"
-            fontSize={9} fill="rgba(255,255,255,0.4)"
-          >
-            {Number.isInteger(v) ? v : v.toFixed(1)}
-          </text>
-        </g>
-      ))}
-
-      {/* Per-field boxes */}
-      {boxes.map((b, i) => {
-        const cx = PAD_L + COL_W * i + COL_W / 2;
-        const BOX_W = 32;
-        const CAP_W = BOX_W * 0.45;
-
-        // Compute SVG y positions with unique variable names
-        const svgYMax  = toY(b.max);
-        const svgYQ3   = toY(b.q3);
-        const svgYMed  = toY(b.median);
-        const svgYQ1   = toY(b.q1);
-        const svgYMin  = toY(b.min);
-        const svgYMean = toY(b.mean);
-
-        // IQR box: top = Q3 (small y), height = Q1 - Q3 (must be >= 2)
-        const boxTop = svgYQ3;
-        const boxH   = Math.max(svgYQ1 - svgYQ3, 2);
-
-        return (
-          <g key={b.label}>
-            {/* Top whisker stem: from box top (Q3) up to max */}
-            <line
-              x1={cx} y1={svgYMax}
-              x2={cx} y2={svgYQ3}
-              stroke={YELLOW} strokeWidth={1.5} strokeDasharray="3 2"
-            />
-            {/* Top cap at max */}
-            <line
-              x1={cx - CAP_W} y1={svgYMax}
-              x2={cx + CAP_W} y2={svgYMax}
-              stroke={YELLOW} strokeWidth={2}
-            />
-
-            {/* Bottom whisker stem: from box bottom (Q1) down to min */}
-            <line
-              x1={cx} y1={svgYQ1}
-              x2={cx} y2={svgYMin}
-              stroke={YELLOW} strokeWidth={1.5} strokeDasharray="3 2"
-            />
-            {/* Bottom cap at min */}
-            <line
-              x1={cx - CAP_W} y1={svgYMin}
-              x2={cx + CAP_W} y2={svgYMin}
-              stroke={YELLOW} strokeWidth={2}
-            />
-
-            {/* IQR box */}
-            <rect
-              x={cx - BOX_W / 2} y={boxTop}
-              width={BOX_W} height={boxH}
-              fill="rgba(234,179,8,0.18)"
-              stroke={YELLOW}
-              strokeWidth={1.5}
-              rx={3}
-            />
-
-            {/* Median line — white, inside box */}
-            <line
-              x1={cx - BOX_W / 2} y1={svgYMed}
-              x2={cx + BOX_W / 2} y2={svgYMed}
-              stroke="white" strokeWidth={2.5}
-            />
-
-            {/* Mean dot — orange */}
-            <circle cx={cx} cy={svgYMean} r={3.5} fill="#f97316" />
-
-            {/* Median value label above median line */}
-            <text
-              x={cx} y={svgYMed - 7}
-              textAnchor="middle" fontSize={9}
-              fill="white" fontWeight="bold"
-            >
-              {b.median % 1 === 0 ? b.median : b.median.toFixed(1)}
-            </text>
-
-            {/* Field name below the plot */}
-            <text
-              x={cx} y={HEIGHT - PAD_B + 14}
-              textAnchor="middle" fontSize={10}
-              fill="rgba(255,255,255,0.65)"
-            >
-              {b.label.length > 9 ? b.label.slice(0, 8) + "…" : b.label}
-            </text>
-            <text
-              x={cx} y={HEIGHT - PAD_B + 26}
-              textAnchor="middle" fontSize={8}
-              fill="rgba(255,255,255,0.35)"
-            >
-              n={b.n}
-            </text>
-          </g>
-        );
-      })}
-
-      {/* Legend — fixed to the right */}
-      <g transform={`translate(${WIDTH - PAD_R + 8}, ${PAD_T})`}>
-        <rect x={0} y={0} width={9} height={9} fill="rgba(234,179,8,0.18)" stroke={YELLOW} strokeWidth={1} rx={1} />
-        <text x={13} y={8} fontSize={9} fill="rgba(255,255,255,0.5)">IQR (Q1–Q3)</text>
-        <line x1={0} y1={20} x2={9} y2={20} stroke="white" strokeWidth={2.5} />
-        <text x={13} y={24} fontSize={9} fill="rgba(255,255,255,0.5)">Median</text>
-        <circle cx={4.5} cy={35} r={3.5} fill="#f97316" />
-        <text x={13} y={38} fontSize={9} fill="rgba(255,255,255,0.5)">Mean</text>
-      </g>
-    </svg>
-  );
-}
-
-function BoxPlotChart({ fields, submissions }: { fields: FormField[]; submissions: Submission[] }) {
-  const numericFields = fields.filter((f) =>
-    ["number", "counter", "rating"].includes(f.type)
-  );
-  const [selected, setSelected] = useState<Set<string>>(
-    () => new Set(numericFields.slice(0, 5).map((f) => f.id))
-  );
-
-  function toggle(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([
+      fetchStatboticsTeamSeason(teamNumber, eventYear).catch(() => ({ matches: [], teamMatches: [] })),
+      eventKey ? fetchTBAEventMatches(eventKey).catch(() => null) : null,
+      eventKey ? fetchStatboticsEventTeamMatches(eventKey).catch(() => null) : null,
+    ]).then(([season, tba, eventTeamMatches]) => {
+      if (cancelled) return;
+      setLoaded({
+        key: `${teamNumber}|${eventKey}|${eventYear}`,
+        // Current-event TBA matches first: the first copy of a key wins, and
+        // TBA has scores before Statbotics does.
+        matches: [...(Array.isArray(tba) ? tba.map(slimTbaMatch) : []), ...season.matches],
+        teamMatches: [...(eventTeamMatches ?? []), ...season.teamMatches],
+      });
     });
-  }
+    return () => { cancelled = true; };
+  }, [teamNumber, eventKey, eventYear]);
 
-  const boxes: BoxData[] = useMemo(() => {
-    return numericFields
-      .filter((f) => selected.has(f.id))
-      .map((f) => {
-        const vals = getNumericVals(submissions, f.id);
-        const stats = boxStats(vals);
-        if (!stats) return null;
-        return { label: f.label, ...stats };
-      })
-      .filter((b): b is BoxData => b !== null);
-  }, [selected, submissions, numericFields]);
+  const { epa, score } = useMemo(() => {
+    const timeline = (metric: string) =>
+      buildTimelines({
+        teams: [teamNumber], scope: "season", eventKey, metric,
+        matches: src?.matches ?? [], teamMatches: src?.teamMatches ?? [],
+        submissions: [], fieldColumns: [],
+      })[teamNumber] ?? [];
+    return {
+      epa: seasonTrend(timeline("epaEvent"), "epaEvent"),
+      score: seasonTrend(timeline("avgScore"), "avgScore", true),
+    };
+  }, [src, teamNumber, eventKey]);
 
   return (
-    <div className="bg-card border border-border rounded-xl p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold">Box Plot — Distribution</h3>
-        <span className="text-[10px] text-muted-foreground">
-          white line = median · orange dot = mean
-        </span>
-      </div>
-
-      {/* Field toggles */}
-      <div className="flex flex-wrap gap-1.5">
-        {numericFields.map((f) => (
-          <StatToggle
-            key={f.id}
-            label={f.label}
-            active={selected.has(f.id)}
-            onClick={() => toggle(f.id)}
-          />
-        ))}
-      </div>
-
-      {submissions.length === 0 || boxes.length === 0 ? (
-        <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">
-          {submissions.length === 0 ? "No data yet" : "Select at least one field"}
-        </div>
-      ) : (
-        <div className="overflow-x-auto">
-          <div style={{ minWidth: Math.max(300, boxes.length * 80) }}>
-            <BoxPlotSVG boxes={boxes} />
-          </div>
-        </div>
-      )}
-
-      {/* Stats table */}
-      {boxes.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-[10px] text-muted-foreground">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="text-left py-1 pr-2 font-semibold">Field</th>
-                <th className="text-right py-1 px-1">n</th>
-                <th className="text-right py-1 px-1">Min</th>
-                <th className="text-right py-1 px-1">Q1</th>
-                <th className="text-right py-1 px-1 text-white">Med</th>
-                <th className="text-right py-1 px-1">Q3</th>
-                <th className="text-right py-1 px-1">Max</th>
-                <th className="text-right py-1 pl-1 text-orange-400">Mean</th>
-              </tr>
-            </thead>
-            <tbody>
-              {boxes.map((b) => (
-                <tr key={b.label} className="border-b border-border/30">
-                  <td className="py-1 pr-2 font-medium truncate max-w-[100px]">{b.label}</td>
-                  <td className="text-right px-1">{b.n}</td>
-                  <td className="text-right px-1">{b.min % 1 === 0 ? b.min : b.min.toFixed(1)}</td>
-                  <td className="text-right px-1">{b.q1 % 1 === 0 ? b.q1 : b.q1.toFixed(1)}</td>
-                  <td className="text-right px-1 text-white font-bold">{b.median % 1 === 0 ? b.median : b.median.toFixed(1)}</td>
-                  <td className="text-right px-1">{b.q3 % 1 === 0 ? b.q3 : b.q3.toFixed(1)}</td>
-                  <td className="text-right px-1">{b.max % 1 === 0 ? b.max : b.max.toFixed(1)}</td>
-                  <td className="text-right pl-1 text-orange-400 font-semibold">{b.mean.toFixed(1)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
+    <>
+      <SeasonTrendChart
+        title="EPA Over Time"
+        hint="going into each match · dashed line = new event"
+        valueLabel="EPA"
+        trend={epa}
+        color="var(--primary)"
+        loading={src === null}
+      />
+      <SeasonTrendChart
+        title="Avg Score Over Time"
+        hint="running average of alliance score · dashed line = new event"
+        valueLabel="Avg score"
+        trend={score}
+        color="#60a5fa"
+        loading={src === null}
+      />
+    </>
   );
 }
 
@@ -1031,7 +526,7 @@ export interface TeamDetailProps {
 export default function TeamDetailPanel({
   teamNumber,
   eventKey,
-  eventYear: _eventYear,
+  eventYear,
   submissions,
   fields,
   epa,
@@ -1270,19 +765,7 @@ export default function TeamDetailPanel({
           <TabsContent value="charts" className="flex-1 min-h-0 mt-0">
             <ScrollArea className="h-full">
               <div className="px-5 py-4 space-y-4 pb-8">
-                {/* Radar */}
-                <RadarStatsChart fields={fields} submissions={submissions} />
-
-                {/* Line: performance over matches */}
-                <MatchTrendChart
-                  fields={fields}
-                  submissions={submissions}
-                  eventKey={eventKey}
-                  teamNumber={teamNumber}
-                />
-
-                {/* Box plot */}
-                <BoxPlotChart fields={fields} submissions={submissions} />
+                <SeasonCharts teamNumber={teamNumber} eventKey={eventKey} eventYear={eventYear} />
               </div>
             </ScrollArea>
           </TabsContent>

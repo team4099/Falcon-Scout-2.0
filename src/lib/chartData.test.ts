@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildTimelines, chartMetrics, parseMatchKey, scatterValue,
+  buildTimelines, chartMetrics, parseMatchKey, scatterValue, seasonTrend,
   slimStatboticsMatches, slimStatboticsTeamMatches, slimTbaMatch,
 } from "./chartData";
 import type { FieldColumn, SlimMatch } from "./chartData";
@@ -154,5 +154,38 @@ describe("buildTimelines", () => {
     expect(out.map((p) => [p.order, p.key, p.values.epaEvent])).toEqual([
       [1, "early_qm1", 20], [2, `${EV}_qm1`, 25],
     ]);
+  });
+});
+
+describe("seasonTrend", () => {
+  const pts = buildTimelines({
+    teams: [1], scope: "season", eventKey: EV,
+    matches: [
+      m(`${EV}_qm1`, [1], [2], 90, 30, 3000),
+      m(`early_qm1`, [1], [2], 40, 30, 1000),
+      m(`early_qm2`, [2], [1], 30, 60, 1100),
+      m(`early_qm3`, [1], [2], null, null, 1200), // unplayed: no slot
+    ],
+    teamMatches: [{ team: 1, k: `early_qm2`, e: [20, 5, 10, 5] }, { team: 1, k: `${EV}_qm1`, e: [25, 5, 15, 5] }],
+    submissions: [], fieldColumns: [],
+  })[1];
+
+  it("marks where each event starts, in play order", () => {
+    const t = seasonTrend(pts, "avgScore");
+    expect(t.rows.map((r) => [r.i, r.event, r.label, r.value])).toEqual([
+      [1, "early", "Q1", 40], [2, "early", "Q2", 60], [3, EV, "Q1", 90],
+    ]);
+    expect(t.events).toEqual([{ event: "early", start: 1 }, { event: EV, start: 3 }]);
+  });
+
+  it("running average keeps each match's own score", () => {
+    const t = seasonTrend(pts, "avgScore", true);
+    expect(t.rows.map((r) => [r.value, r.score])).toEqual([[40, 40], [50, 60], [190 / 3, 90]]);
+  });
+
+  it("indexes only matches that have the metric", () => {
+    const t = seasonTrend(pts, "epaEvent");
+    expect(t.rows.map((r) => [r.i, r.value])).toEqual([[1, 20], [2, 25]]);
+    expect(t.events).toEqual([{ event: "early", start: 2 - 1 }, { event: EV, start: 2 }]);
   });
 });
