@@ -190,9 +190,6 @@ export interface TimelinePoint {
   event: string;
   /** "Q12", "E3" (current event), "SF3" / "F1" (other events). */
   label: string;
-  /** X position: event scope → Q# or 100000+E# (a shared axis across teams);
-   *  season scope → the team's 1-based match index for the season. */
-  order: number;
   values: Record<string, number>;
 }
 
@@ -333,19 +330,44 @@ export function buildTimelines(opts: {
         ? bracketOrder(a.p) - bracketOrder(b.p)
         : evTime(a.p.event) - evTime(b.p.event) || a.p.event.localeCompare(b.p.event));
 
-    out[team] = list.map((d, i) => {
+    out[team] = list.map((d) => {
       const e = d.p.event === eventKey ? elimIndex.get(d.key) : undefined;
       const label = d.p.level === "qm" ? `Q${d.p.num}` : e !== undefined ? `E${e}` : elimLabel(d.p);
-      return {
-        key: d.key,
-        event: d.p.event,
-        label,
-        order: scope === "season" ? i + 1 : d.p.level === "qm" ? d.p.num : 100_000 + (e ?? 0),
-        values: d.values,
-      };
+      return { key: d.key, event: d.p.event, label, values: d.values };
     });
   }
   return out;
+}
+
+/** One X slot of a line chart: `x` = 1-based slot, `t<team>` = value,
+ *  `l<team>` = that team's own match at this slot. */
+export type AlignedRow = { x: number } & Record<string, number | string>;
+
+/**
+ * Timelines → line-chart rows on a shared "Nth match played" axis. Each team's
+ * matches with the metric are packed in play order and right-aligned, so every
+ * team ends on the last slot: a team with 5 matches next to one with 7 fills
+ * slots 3–7.
+ */
+export function alignTimelines(
+  timelines: Record<number, TimelinePoint[]>,
+  teams: number[],
+  metric: string,
+  labelOf: (p: TimelinePoint) => string = (p) => p.label,
+): { rows: AlignedRow[]; teams: number[] } {
+  const series = teams
+    .map((team) => ({ team, pts: (timelines[team] ?? []).filter((p) => p.values[metric] !== undefined) }))
+    .filter((s) => s.pts.length > 0);
+  const slots = Math.max(0, ...series.map((s) => s.pts.length));
+  const rows: AlignedRow[] = Array.from({ length: slots }, (_, i) => ({ x: i + 1 }));
+  for (const { team, pts } of series) {
+    const offset = slots - pts.length;
+    pts.forEach((p, i) => {
+      rows[offset + i][`t${team}`] = p.values[metric];
+      rows[offset + i][`l${team}`] = labelOf(p);
+    });
+  }
+  return { rows, teams: series.map((s) => s.team) };
 }
 
 // ── One team's season trend (team panel) ─────────────────────────────────────

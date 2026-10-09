@@ -19,7 +19,7 @@ import { fetchStatboticsEventTeamMatches, fetchStatboticsTeamSeason } from "@/li
 import { EMPTY_TEAM_EPA } from "@/lib/epa";
 import type { TeamStats } from "@/lib/rankingColumns";
 import {
-  buildTimelines, chartMetrics, scatterValue, slimTbaMatch,
+  alignTimelines, buildTimelines, chartMetrics, scatterValue, slimTbaMatch,
 } from "@/lib/chartData";
 import type {
   ChartCfg, ChartMetric, ChartType, FieldColumn, LineScope, SlimMatch, SlimTeamMatch,
@@ -193,23 +193,10 @@ function LineView({ cfg, ctx }: { cfg: ChartCfg; ctx: ChartContext }) {
       metric: cfg.yAxis,
     });
 
-    // One row per X position; each team is a column (absent where it didn't play).
-    const rows = new Map<number, Record<string, unknown>>();
-    const withData: number[] = [];
-    for (const team of teamList) {
-      let any = false;
-      for (const p of timelines[team] ?? []) {
-        const v = p.values[cfg.yAxis];
-        if (v === undefined) continue;
-        any = true;
-        const row = rows.get(p.order) ?? { order: p.order, x: scope === "season" ? p.order : p.label };
-        row[`t${team}`] = v;
-        row[`l${team}`] = scope === "season" ? `${p.event.slice(4)} ${p.label}` : p.label;
-        rows.set(p.order, row);
-      }
-      if (any) withData.push(team);
-    }
-    return { data: [...rows.values()].sort((a, b) => (a.order as number) - (b.order as number)), teams: withData };
+    // X = each team's Nth match played, lined up on the latest match.
+    const aligned = alignTimelines(timelines, teamList, cfg.yAxis,
+      scope === "season" ? (p) => `${p.event.slice(4)} ${p.label}` : undefined);
+    return { data: aligned.rows, teams: aligned.teams };
   }, [cfg, ctx, scope]);
 
   if (!yLabel) return <Empty msg="This chart uses a column that no longer exists — click Edit to pick a new one" />;
@@ -218,7 +205,7 @@ function LineView({ cfg, ctx }: { cfg: ChartCfg; ctx: ChartContext }) {
     return <Empty msg={`No ${yLabel} data for ${scope === "season" ? "this season" : "this event"}'s matches yet`} />;
   }
 
-  const xLabel = scope === "season" ? "Match # this season" : "Match";
+  const xLabel = scope === "season" ? "Matches played this season" : "Matches played";
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       {teams.length > LINE_SPAGHETTI_THRESHOLD && <TooManyLinesHint count={teams.length} />}
@@ -236,14 +223,14 @@ function LineView({ cfg, ctx }: { cfg: ChartCfg; ctx: ChartContext }) {
               const entries = payload.filter((p) => typeof p.value === "number");
               return (
                 <div className="rounded-lg border border-border bg-popover px-3 py-2 shadow-xl text-xs space-y-1">
-                  <p className="font-bold">{scope === "season" ? `Match #${label}` : String(label)}</p>
+                  <p className="font-bold">Match {label} of {data.length}</p>
                   {entries.map((p) => {
                     const team = String(p.dataKey).slice(1);
                     return (
                       <div key={team} className="flex items-center gap-2">
                         <span className="h-2 w-2 rounded-full shrink-0" style={{ background: p.color }} />
                         <span className="text-muted-foreground">#{team}</span>
-                        {scope === "season" && <span className="text-muted-foreground/70">{String(row[`l${team}`] ?? "")}</span>}
+                        <span className="text-muted-foreground/70">{String(row[`l${team}`] ?? "")}</span>
                         <span className="ml-auto pl-2 font-mono font-semibold">{fmt(p.value as number)}</span>
                       </div>
                     );

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildTimelines, chartMetrics, parseMatchKey, scatterValue, seasonTrend,
+  alignTimelines, buildTimelines, chartMetrics, parseMatchKey, scatterValue, seasonTrend,
   slimStatboticsMatches, slimStatboticsTeamMatches, slimTbaMatch,
 } from "./chartData";
 import type { FieldColumn, SlimMatch } from "./chartData";
@@ -107,7 +107,6 @@ describe("buildTimelines", () => {
     })[1];
 
     expect(out.map((p) => p.label)).toEqual(["Q1", "Q2", "E1", "E2"]);
-    expect(out.map((p) => p.order)).toEqual([1, 2, 100_001, 100_002]);
     expect(out[0].values).toEqual({ avgScore: 70, epaEvent: 45, epaAuto: 10, epaTeleop: 25, epaEndgame: 10, "f:tpl:driver": 3 });
     expect(out[1].values.avgScore).toBe(60);
     // Scout-entered E1 = the first playoff match in bracket order (sf2 before f1).
@@ -120,7 +119,7 @@ describe("buildTimelines", () => {
       teams: [1], scope: "event", eventKey: EV, matches: [], teamMatches: [],
       submissions: [sub(1, 7, 4)], fieldColumns: [driver],
     })[1];
-    expect(out).toEqual([{ key: `${EV}_qm7`, event: EV, label: "Q7", order: 7, values: { "f:tpl:driver": 4 } }]);
+    expect(out).toEqual([{ key: `${EV}_qm7`, event: EV, label: "Q7", values: { "f:tpl:driver": 4 } }]);
   });
 
   it("season scope: events in time order, 1-based index per team, other events' playoffs keep their names", () => {
@@ -137,8 +136,8 @@ describe("buildTimelines", () => {
       submissions: [],
       fieldColumns: [],
     })[1];
-    expect(out.map((p) => [p.order, p.event, p.label])).toEqual([
-      [1, "early", "Q1"], [2, "early", "F2"], [3, EV, "Q1"],
+    expect(out.map((p) => [p.event, p.label])).toEqual([
+      ["early", "Q1"], ["early", "F2"], [EV, "Q1"],
     ]);
   });
 
@@ -151,9 +150,37 @@ describe("buildTimelines", () => {
       submissions: [sub(1, 9, 4)],
       fieldColumns: [driver],
     })[1];
-    expect(out.map((p) => [p.order, p.key, p.values.epaEvent])).toEqual([
-      [1, "early_qm1", 20], [2, `${EV}_qm1`, 25],
+    expect(out.map((p) => [p.key, p.values.epaEvent])).toEqual([
+      ["early_qm1", 20], [`${EV}_qm1`, 25],
     ]);
+  });
+});
+
+describe("alignTimelines", () => {
+  const pt = (label: string, epa?: number) => {
+    const values: Record<string, number> = epa === undefined ? { avgScore: 1 } : { epaEvent: epa };
+    return { key: label, event: EV, label, values };
+  };
+
+  it("packs each team's matches and lines every team up on the last slot", () => {
+    const { rows, teams } = alignTimelines({
+      1: [pt("Q2", 10), pt("Q5", 11), pt("Q9", 12), pt("Q14", 13)],
+      // Played fewer, plus a match without the metric: fills the last 2 slots.
+      2: [pt("Q3", 20), pt("Q7"), pt("Q11", 21)],
+      3: [pt("Q4")], // nothing to plot
+    }, [1, 2, 3, 4], "epaEvent");
+
+    expect(teams).toEqual([1, 2]);
+    expect(rows).toEqual([
+      { x: 1, t1: 10, l1: "Q2" },
+      { x: 2, t1: 11, l1: "Q5" },
+      { x: 3, t1: 12, l1: "Q9", t2: 20, l2: "Q3" },
+      { x: 4, t1: 13, l1: "Q14", t2: 21, l2: "Q11" },
+    ]);
+  });
+
+  it("no data → no rows", () => {
+    expect(alignTimelines({}, [1], "epaEvent")).toEqual({ rows: [], teams: [] });
   });
 });
 
