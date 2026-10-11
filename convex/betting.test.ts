@@ -308,6 +308,29 @@ describe("batchCreateMatchWinnerMarkets", () => {
     expect(q10.options.map((o) => o.winProb)).toEqual([70, 30]);
   });
 
+  test("playoff matches all share matchNumber 1 but each get their own market", async () => {
+    const t = convexTest(schema, modules);
+    const { as } = await setup(t);
+    const matches = [
+      { matchNumber: 1, matchLabel: "Q1", winRed: 60, winBlue: 40 },
+      { matchNumber: 1, matchLabel: "SF7M1", winRed: 55, winBlue: 45 },
+      { matchNumber: 1, matchLabel: "SF8M1", winRed: 89, winBlue: 11 },
+    ];
+    expect((await as.mutation(api.betting.batchCreateMatchWinnerMarkets, {
+      eventKey: EVENT, matches,
+    })).created).toBe(3);
+
+    // Re-running neither duplicates them nor lets SF odds overwrite Q1's.
+    expect(await as.mutation(api.betting.batchCreateMatchWinnerMarkets, {
+      eventKey: EVENT, matches,
+    })).toEqual({ created: 0, refreshed: 0 });
+
+    const all = await t.run((ctx) => ctx.db.query("bettingMarkets").collect());
+    const prob = (title: string) => all.find((m) => m.title === title)!.options[0].winProb;
+    expect(prob("Q1 — Match Winner")).toBe(60);
+    expect(prob("SF8M1 — Match Winner")).toBe(89);
+  });
+
   test("re-running fixes 50/50 odds on markets with no bets, but never touches one with a bet", async () => {
     const t = convexTest(schema, modules);
     const { as } = await setup(t);

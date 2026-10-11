@@ -416,8 +416,11 @@ export const batchCreateMatchWinnerMarkets = mutation({
       .query("bettingMarkets")
       .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
       .collect();
+    // Keyed by title ("Q12 — Match Winner", "SF8M1 — Match Winner"), not
+    // matchNumber: every playoff match is match 1 of its set, so matchNumber
+    // collided across the bracket and with Q1, silently dropping those markets.
     const existingByMatch = new Map(
-      existing.filter((m) => m.type === "match_winner").map((m) => [m.matchNumber, m])
+      existing.filter((m) => m.type === "match_winner").map((m) => [m.title, m])
     );
 
     let created = 0;
@@ -437,7 +440,8 @@ export const batchCreateMatchWinnerMarkets = mutation({
         { id: "blue", label: "Blue Alliance", winProb: winBlue, seedPool: winBlue },
       ];
 
-      const prior = existingByMatch.get(m.matchNumber);
+      const title = `${m.matchLabel} — Match Winner`;
+      const prior = existingByMatch.get(title);
       if (prior) {
         // Re-derive odds only for a market nobody has bet on yet: a placed bet
         // has its multiplier locked already, and the market must not shift
@@ -458,7 +462,7 @@ export const batchCreateMatchWinnerMarkets = mutation({
       if (!create || (limit !== undefined && created >= limit)) continue;
       await ctx.db.insert("bettingMarkets", {
         eventKey,
-        title:       `${m.matchLabel} — Match Winner`,
+        title,
         description,
         type:        "match_winner",
         matchNumber: m.matchNumber,

@@ -85,6 +85,18 @@ function matchLabel(m: TBAMatch): string {
   return `${prefix}${m.set_number}M${m.match_number}`;
 }
 
+/**
+ * Play order from a market title ("Q12 — …", "SF8M1 — …"): quals, then
+ * eliminations by level and set. `matchNumber` can't do this — it is 1 for
+ * every playoff match. Null when the title isn't a match label.
+ */
+function scheduleOrder(title: string): number | null {
+  const m = /^(Q|EF|QF|SF|F)(\d+)(?:M(\d+))?/.exec(title);
+  if (!m) return null;
+  const rank = { Q: 0, EF: 1, QF: 2, SF: 3, F: 4 }[m[1] as "Q" | "EF" | "QF" | "SF" | "F"];
+  return rank * 1_000_000 + Number(m[2]) * 1_000 + Number(m[3] ?? 0);
+}
+
 function isPlayed(m: TBAMatch): boolean {
   return m.alliances.red.score >= 0 && m.alliances.blue.score >= 0;
 }
@@ -203,14 +215,20 @@ function BetPanel({
   market,
   myBalance,
   myBet,
+  selectedOption,
 }: {
   market: Market;
   myBalance: number;
   myBet?: MyBet;
+  /** Picked by tapping an alliance card in MarketCard. */
+  selectedOption: string;
 }) {
-  const [selectedOption, setSelectedOption] = useState(market.options[0]?.id ?? "");
   const [amount, setAmount] = useState(50);
-  const [confirming, setConfirming] = useState(false);
+  // The option the confirm step was opened for. Switching alliances makes this
+  // stop matching, which drops back to the normal button without an effect.
+  const [confirmedFor, setConfirmedFor] = useState<string | null>(null);
+  const confirming = confirmedFor === selectedOption;
+  const setConfirming = (on: boolean) => setConfirmedFor(on ? selectedOption : null);
   const placeBet = useMutation(api.betting.placeBet);
   const [placing, setPlacing] = useState(false);
 
@@ -263,27 +281,6 @@ function BetPanel({
 
   return (
     <div className="border-t border-border/60 pt-4 mt-4 space-y-3">
-      {/* Option selector — odds are fixed, so they ride on the button itself */}
-      <div className="grid gap-2">
-        {market.options.map((opt) => (
-          <button
-            key={opt.id}
-            onClick={() => { setSelectedOption(opt.id); setConfirming(false); }}
-            className={`flex items-center justify-between px-3 py-2 rounded-lg border text-sm font-medium transition-all ${
-              selectedOption === opt.id
-                ? "border-primary bg-primary/10 text-primary"
-                : "border-border bg-card hover:border-primary/40 hover:bg-primary/5 text-muted-foreground"
-            }`}
-          >
-            <AllianceLabel label={opt.label} />
-            <span className="text-xs font-mono">
-              <span className="opacity-60">{winProbPct(opt).toFixed(0)}%</span>{" "}
-              <span className="text-amber-400 font-bold">{multiplierFor(opt).toFixed(2)}x</span>
-            </span>
-          </button>
-        ))}
-      </div>
-
       {/* Amount */}
       <div className="space-y-2">
         <div className="flex gap-1.5 flex-wrap">
@@ -369,13 +366,17 @@ function MarketCard({
   myBalance,
   myBet,
   isAdmin,
+  teams,
 }: {
   market: Market;
   myBalance: number;
   myBet?: MyBet;
   isAdmin: boolean;
+  /** Team numbers per alliance, from the TBA schedule. Absent until TBA lists them. */
+  teams?: Record<string, number[]>;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [selectedOption, setSelectedOption] = useState(market.options[0]?.id ?? "");
   const [resolveOpen, setResolveOpen] = useState(false);
   const [resolveOption, setResolveOption] = useState(market.options[0]?.id ?? "");
 
@@ -448,7 +449,7 @@ function MarketCard({
                   <Coins className="h-3 w-3" /> {formatCoins(totalRealBets)} wagered
                 </span>
               )}
-              {market.matchNumber !== undefined && <span>Match #{market.matchNumber}</span>}
+              {market.matchNumber !== undefined && /^Q\d/.test(market.title) && <span>Match #{market.matchNumber}</span>}
               {myBet && myOption && (
                 <span className="text-amber-400 font-semibold">
                   You: {formatCoins(myBet.amount)} on {stripEmojis(myOption.label)}
@@ -471,29 +472,56 @@ function MarketCard({
         {/* Expanded content */}
         {expanded && (
           <div className="px-4 pb-4 space-y-4 border-t border-border/40 pt-4">
-            <ProbBar options={market.options} resolvedOptionId={market.resolvedOptionId} />
-
-            {/* Fixed odds per side. These never move, so this is a fact about the
-                market rather than a live pool readout. */}
+            {/* The alliance cards are the bet selector: odds are fixed, so the card
+                carries teams, win chance and payout, and tapping one picks it. */}
             <div className="grid grid-cols-2 gap-2">
-              {market.options.map((opt) => (
-                <div key={opt.id} className="rounded-xl bg-muted/60 p-3 space-y-1">
-                  <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">
-                    <AllianceLabel label={opt.label} />
-                  </p>
-                  <p className="text-sm font-mono font-bold text-amber-400">
-                    {multiplierFor(opt).toFixed(2)}x
-                  </p>
-                  <p className="text-[10px] text-muted-foreground">
-                    {winProbPct(opt).toFixed(0)}% to win &middot; {formatCoins(realBets[opt.id] ?? 0)} wagered
-                  </p>
-                </div>
-              ))}
+              {market.options.map((opt) => {
+                const pickable = market.status === "open" && !myBet;
+                const isPicked = pickable ? selectedOption === opt.id : myBet?.optionId === opt.id;
+                const isWinner = market.resolvedOptionId === opt.id;
+                const isLoser = !!market.resolvedOptionId && !isWinner;
+                const nums = teams?.[opt.id] ?? [];
+                const body = (
+                  <>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider flex items-center gap-1">
+                      {isWinner && <CheckCircle2 className="h-3 w-3 text-amber-400" />}
+                      <AllianceLabel label={opt.label} />
+                    </p>
+                    {nums.length > 0 && (
+                      <p className="text-xs font-mono font-semibold text-foreground">
+                        {nums.join(" · ")}
+                      </p>
+                    )}
+                    <p className="text-sm font-mono font-bold text-amber-400">
+                      {multiplierFor(opt).toFixed(2)}x
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {winProbPct(opt).toFixed(0)}% to win &middot; {formatCoins(realBets[opt.id] ?? 0)} wagered
+                    </p>
+                  </>
+                );
+                const cls = `rounded-xl border p-3 space-y-1 text-left transition-all ${
+                  isPicked ? "border-primary bg-primary/10" : "border-transparent bg-muted/60"
+                } ${isLoser ? "opacity-40" : ""}`;
+                return pickable ? (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    aria-pressed={isPicked}
+                    onClick={() => setSelectedOption(opt.id)}
+                    className={`${cls} hover:border-primary/40 cursor-pointer`}
+                  >
+                    {body}
+                  </button>
+                ) : (
+                  <div key={opt.id} className={cls}>{body}</div>
+                );
+              })}
             </div>
 
             {/* Bet panel — read-only once the scout has a bet on this match */}
             {market.status === "open" && (
-              <BetPanel market={market} myBalance={myBalance} myBet={myBet} />
+              <BetPanel market={market} myBalance={myBalance} myBet={myBet} selectedOption={selectedOption} />
             )}
 
             {market.status === "locked" && !myBet && (
@@ -502,7 +530,7 @@ function MarketCard({
               </p>
             )}
             {market.status === "locked" && myBet && (
-              <BetPanel market={market} myBalance={myBalance} myBet={myBet} />
+              <BetPanel market={market} myBalance={myBalance} myBet={myBet} selectedOption={selectedOption} />
             )}
 
             {/* Resolved outcome */}
@@ -680,9 +708,11 @@ function MarketsTab({
       // Odds are refreshed for every match (only ones with no bets change);
       // markets are created only for the requested subset.
       const all = await buildMatchSeeds(tbaMatches);
-      const wanted = new Set(matches.map((m) => m.match_number));
-      const seeds = all && all.filter((s) => wanted.has(s.matchNumber));
-      const refreshMatches = all ? all.filter((s) => !wanted.has(s.matchNumber)) : [];
+      // Keyed by label, not match_number: every playoff match is "match 1" of
+      // its set, so match_number collides across SF1M1..SF13M1 and with Q1.
+      const wanted = new Set(matches.map(matchLabel));
+      const seeds = all && all.filter((s) => wanted.has(s.matchLabel));
+      const refreshMatches = all ? all.filter((s) => !wanted.has(s.matchLabel)) : [];
       if (!seeds) {
         toast.error("Couldn't get predictions from Statbotics, so no odds were set. Try again in a minute.");
         return;
@@ -751,7 +781,7 @@ function MarketsTab({
   // Two tabs, no overlap. Upcoming = still open for bets, soonest first.
   // Locked = closed (about to start, playing, or done), most recent first.
   const { upcoming, locked } = useMemo(() => {
-    const num = (m: Market) => m.matchNumber ?? 9999;
+    const num = (m: Market) => scheduleOrder(m.title) ?? m.matchNumber ?? 9999;
     return {
       upcoming: markets.filter((m) => m.status === "open").sort((a, b) => num(a) - num(b)),
       locked: markets.filter((m) => m.status !== "open").sort((a, b) => num(b) - num(a)),
@@ -760,6 +790,15 @@ function MarketsTab({
   const shown = tab === "upcoming" ? upcoming : locked;
 
   const unplayed = tbaMatches.filter((m) => !isPlayed(m));
+
+  // "SF8M1" -> { red: [...], blue: [...] }, so cards can show who is playing.
+  const teamsByLabel = useMemo(() => {
+    const nums = (keys: string[]) => keys.map((k) => parseInt(k.replace("frc", ""), 10)).filter(Number.isFinite);
+    return new Map(tbaMatches.map((m) => [
+      matchLabel(m),
+      { red: nums(m.alliances.red.team_keys), blue: nums(m.alliances.blue.team_keys) },
+    ]));
+  }, [tbaMatches]);
 
   return (
     <div className="space-y-4">
@@ -858,6 +897,7 @@ function MarketsTab({
             myBalance={myBalance}
             myBet={myBetByMarket.get(m._id)}
             isAdmin={isAdmin}
+            teams={teamsByLabel.get(m.title.split(" — ")[0])}
           />
         ))}
         {shown.length === 0 && markets.length > 0 && (
