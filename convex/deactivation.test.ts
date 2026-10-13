@@ -109,7 +109,7 @@ describe("addScoutByEmail", () => {
     const users = await chiefAs.query(api.users.listUsers, {});
     const added = users.find((u) => u._id === newId);
     expect(added?.email).toBe("new.scout@team4099.com");
-    expect(added?.name).toBe("new.scout");
+    expect(added?.name).toBe("New Scout");
   });
 
   test("rejects a non-team4099.com email", async () => {

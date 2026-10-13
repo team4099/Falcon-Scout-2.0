@@ -74,6 +74,21 @@ export function isTeamEmail(email: string | null | undefined): boolean {
 }
 
 /**
+ * Display name guessed from an email for someone added before they've signed
+ * in: "first.last@…" → "First Last". Google's profile name replaces it on
+ * their first sign-in.
+ */
+export function nameFromEmail(email: string): string {
+  const local = email.slice(0, email.indexOf("@")).split("+")[0];
+  const name = local
+    .split(/[._]+/)
+    .filter(Boolean)
+    .map((word) => word.replace(/(^|-)[a-z]/g, (c) => c.toUpperCase()))
+    .join(" ");
+  return name || local;
+}
+
+/**
  * Whether the signed-in caller may touch team data: any @team4099.com account,
  * or a guest an admin has approved (guestAccess table). Reads the email from
  * the signed JWT claim (see authCustomClaims in convex/auth.ts), falling back

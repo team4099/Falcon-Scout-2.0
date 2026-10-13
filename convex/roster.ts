@@ -14,7 +14,7 @@ import { v } from "convex/values";
 import { mutation } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import { approvedGuestEmails, hasAccess, isTeamEmail, requireAdmin } from "./adminAuth";
+import { approvedGuestEmails, hasAccess, isTeamEmail, nameFromEmail, requireAdmin } from "./adminAuth";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -95,7 +95,7 @@ export const addToRosterByEmail = mutation({
       .query("users")
       .withIndex("email", (q) => q.eq("email", normalized))
       .first();
-    const name = existing?.name ?? normalized.slice(0, normalized.indexOf("@"));
+    const name = existing?.name ?? nameFromEmail(normalized);
     const userId =
       existing?._id ??
       (await ctx.db.insert("users", { email: normalized, name, emailVerificationTime: Date.now() }));

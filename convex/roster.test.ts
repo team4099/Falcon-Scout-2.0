@@ -77,7 +77,7 @@ describe("event roster", () => {
     const { t, admin } = await setup();
     const id = await admin.mutation(api.roster.addToRosterByEmail, { email: "  New@Team4099.com " });
     const user = await t.run((ctx) => ctx.db.get(id));
-    expect(user).toMatchObject({ email: "new@team4099.com", name: "new" });
+    expect(user).toMatchObject({ email: "new@team4099.com", name: "New" });
     expect(user?.emailVerificationTime).toBeTypeOf("number");
     const listed = (await admin.query(api.users.listUsers, {})).find((u) => u._id === id);
     expect(listed?.onRoster).toBe(true);
@@ -92,6 +92,16 @@ describe("event roster", () => {
     expect(await onRoster(guestId)).toBe(true);
     const row = (await admin.query(api.guests.listRequests, {})).find((r) => r.email === GUEST_EMAIL);
     expect(row).toMatchObject({ userId: guestId, onRoster: true });
+  });
+
+  test("names a placeholder from a firstname.lastname email", async () => {
+    const { t, admin } = await setup();
+    const nameFor = async (email: string) => {
+      const id = await admin.mutation(api.roster.addToRosterByEmail, { email });
+      return (await t.run((ctx) => ctx.db.get(id)))?.name;
+    };
+    expect(await nameFor("warot.jiratanakoon@team4099.com")).toBe("Warot Jiratanakoon");
+    expect(await nameFor("mary-jane_smith+frc@gmail.com")).toBe("Mary-Jane Smith");
   });
 
   test("rejects a malformed email", async () => {

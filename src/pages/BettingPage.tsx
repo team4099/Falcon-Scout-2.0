@@ -169,9 +169,12 @@ function ColorizedDescription({ text }: { text: string }) {
 function ProbBar({
   options,
   resolvedOptionId,
+  teams,
 }: {
   options: BetOption[];
   resolvedOptionId?: string;
+  /** Team numbers per option id; omitted until TBA lists them. */
+  teams?: Record<string, number[]>;
 }) {
   return (
     <div className="space-y-2">
@@ -185,6 +188,11 @@ function ProbBar({
               <span className={`font-medium ${isLoser ? "opacity-40" : isWinner ? "text-amber-400" : "text-foreground"}`}>
                 {isWinner && <CheckCircle2 className="inline h-3 w-3 mr-1" />}
                 <AllianceLabel label={opt.label} />
+                {(teams?.[opt.id]?.length ?? 0) > 0 && (
+                  <span className="ml-2 font-mono font-semibold text-foreground">
+                    {teams![opt.id].join(" · ")}
+                  </span>
+                )}
               </span>
               <span className="font-mono text-muted-foreground">
                 {pct.toFixed(0)}% &middot;{" "}
@@ -465,7 +473,7 @@ function MarketCard({
         {/* Collapsed odds preview */}
         {!expanded && (
           <div className="px-4 pb-3">
-            <ProbBar options={market.options} resolvedOptionId={market.resolvedOptionId} />
+            <ProbBar options={market.options} resolvedOptionId={market.resolvedOptionId} teams={teams} />
           </div>
         )}
 

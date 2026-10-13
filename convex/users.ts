@@ -4,6 +4,7 @@ import { v } from "convex/values";
 import {
   getApprovedUserId,
   hasAccess,
+  nameFromEmail,
   requireAdmin,
   requireUser,
 } from "./adminAuth";
@@ -102,10 +103,9 @@ export const addScoutByEmail = mutation({
       .withIndex("email", (q) => q.eq("email", normalized))
       .first();
     if (existing) throw new Error("A scout with that email already exists.");
-    const name = normalized.slice(0, normalized.indexOf("@"));
     return await ctx.db.insert("users", {
       email: normalized,
-      name,
+      name: nameFromEmail(normalized),
       emailVerificationTime: Date.now(),
     });
   },
