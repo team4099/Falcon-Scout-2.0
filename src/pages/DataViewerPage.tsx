@@ -11,7 +11,7 @@ import {
 import { BarChart2, ListOrdered, ScatterChart as ScatterIcon, TrendingUp, Plus, X } from "lucide-react";
 import {
   ScatterChart as ReScatterChart, Scatter, LabelList,
-  LineChart, Line, ComposedChart,
+  LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer,
 } from "recharts";
@@ -217,7 +217,8 @@ function SeedView({ cfg, ctx }: { cfg: ChartCfg; ctx: ChartContext }) {
     const range = Math.max(...vals) - Math.min(...vals) || 1;
     const outliers = [...pts].sort((a, b) => Math.abs(b.residual) - Math.abs(a.residual))
       .filter((p) => Math.abs(p.residual) > range * 0.1).slice(0, maxLabels);
-    return { points: pts, curve: r.curve, labelled: new Set(outliers.map((p) => p.team)), faint: range * 0.03 };
+    // The curve rides the dots' y dataKey so one ScatterChart draws both.
+    return { points: pts, curve: r.curve.map((c) => ({ seed: c.seed, value: c.expected })), labelled: new Set(outliers.map((p) => p.team)), faint: range * 0.03 };
   }, [cfg, ctx, yLabel, maxLabels]);
 
   if (!yLabel) return <Empty msg="This chart uses a column that no longer exists — click Edit to pick a new one" />;
@@ -239,7 +240,7 @@ function SeedView({ cfg, ctx }: { cfg: ChartCfg; ctx: ChartContext }) {
       </div>
       <div className="min-h-0 flex-1">
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart margin={MARGIN}>
+          <ReScatterChart margin={MARGIN}>
             <CartesianGrid {...GRID_PROPS} />
             <XAxis type="number" dataKey="seed" name="Seed" domain={[1, curve.length]} allowDecimals={false}
               tick={<AxisTickX />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
@@ -247,6 +248,9 @@ function SeedView({ cfg, ctx }: { cfg: ChartCfg; ctx: ChartContext }) {
             <YAxis type="number" dataKey="value" name={yLabel} domain={["auto", "auto"]}
               tick={<AxisTickY />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
               label={{ value: yLabel, angle: -90, position: "insideLeft", fill: "currentColor", fontSize: 11 }} />
+            {/* A ScatterChart, not a ComposedChart: ComposedChart only allows the
+                axis tooltip, which matched dots by array index (team-number
+                order, not seed order) and so described the wrong team. */}
             <Tooltip
               cursor={{ strokeDasharray: "3 3" }}
               content={({ active, payload }) => {
@@ -264,11 +268,11 @@ function SeedView({ cfg, ctx }: { cfg: ChartCfg; ctx: ChartContext }) {
                 );
               }}
             />
-            <Line data={curve} dataKey="expected" type="basis" stroke="currentColor" strokeOpacity={0.4}
-              strokeWidth={2} dot={false} activeDot={false} isAnimationActive={false} legendType="none" />
+            <Scatter data={curve} isAnimationActive={false} legendType="none" shape={() => <g />}
+              line={{ stroke: "currentColor", strokeOpacity: 0.4, strokeWidth: 2 }} lineJointType="basis" />
             <Scatter data={points} isAnimationActive={false}
               shape={(p: unknown) => <SeedDot {...(p as object)} labelled={labelled} faint={faint} />} />
-          </ComposedChart>
+          </ReScatterChart>
         </ResponsiveContainer>
       </div>
     </div>
