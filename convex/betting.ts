@@ -318,18 +318,21 @@ export const beg = mutation({
     // coins. The button stays clickable on purpose: an early beg pays nothing,
     // and from the BEG_ROB_FROM_STRIKE-th early beg on, the beggar is robbed.
     // lastBegAt is untouched, so impatience never resets the cooldown.
+    // Every press counts toward totalBegs (the shame counter), paid or not;
+    // totalBegCoins is always written so legacy rows stop falling back to it.
     if (bal && now - (bal.lastBegAt ?? 0) < BEG_COOLDOWN_MS) {
       const begStrikes = (bal.begStrikes ?? 0) + 1;
+      const totalBegs = bal.totalBegs + 1;
       if (begStrikes < BEG_ROB_FROM_STRIKE) {
-        await ctx.db.patch(bal._id, { begStrikes });
-        return { outcome: "ignored" as BegOutcome, amount: 0, jackpot: false, newBalance: bal.balance, totalBegs: bal.totalBegs };
+        await ctx.db.patch(bal._id, { begStrikes, totalBegs, totalBegCoins: prevBegCoins });
+        return { outcome: "ignored" as BegOutcome, amount: 0, jackpot: false, newBalance: bal.balance, totalBegs };
       }
       // Never below zero: a broke beggar has nothing left to steal.
       const stolen = Math.min(rollRobbery(), bal.balance);
       const balanceAfter = bal.balance - stolen;
-      await ctx.db.patch(bal._id, { begStrikes, balance: balanceAfter, totalBegCoins: prevBegCoins - stolen });
+      await ctx.db.patch(bal._id, { begStrikes, totalBegs, balance: balanceAfter, totalBegCoins: prevBegCoins - stolen });
       if (stolen > 0) await logTransaction(ctx, userId, eventKey, "beg", -stolen, balanceAfter, "Robbed while begging");
-      return { outcome: "robbed" as BegOutcome, amount: -stolen || 0, jackpot: false, newBalance: balanceAfter, totalBegs: bal.totalBegs };
+      return { outcome: "robbed" as BegOutcome, amount: -stolen || 0, jackpot: false, newBalance: balanceAfter, totalBegs };
     }
 
     // Rolled server-side: the client only learns the result.

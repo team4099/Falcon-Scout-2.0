@@ -203,12 +203,13 @@ describe("beg", () => {
     await as.mutation(api.betting.beg, { eventKey: EVENT }); // paid 1 → 5
     const beg = () => as.mutation(api.betting.beg, { eventKey: EVENT });
 
-    expect(await beg()).toMatchObject({ outcome: "ignored", amount: 0 });
-    expect(await beg()).toMatchObject({ outcome: "ignored", amount: 0 });
+    // Every press counts toward totalBegs, even unpaid ones.
+    expect(await beg()).toMatchObject({ outcome: "ignored", amount: 0, totalBegs: 2 });
+    expect(await beg()).toMatchObject({ outcome: "ignored", amount: 0, totalBegs: 3 });
     // Math.random pinned at 0.5 → robbery of 1 + floor(0.5 * 5) = 3.
-    expect(await beg()).toMatchObject({ outcome: "robbed", amount: -3, newBalance: 2 });
-    expect(await beg()).toMatchObject({ outcome: "robbed", amount: -2, newBalance: 0 });
-    expect(await beg()).toMatchObject({ outcome: "robbed", amount: 0, newBalance: 0 });
+    expect(await beg()).toMatchObject({ outcome: "robbed", amount: -3, newBalance: 2, totalBegs: 4 });
+    expect(await beg()).toMatchObject({ outcome: "robbed", amount: -2, newBalance: 0, totalBegs: 5 });
+    expect(await beg()).toMatchObject({ outcome: "robbed", amount: 0, newBalance: 0, totalBegs: 6 });
     expect(await bal()).toBe(0);
 
     const robs = (await txns()).filter((r) => r.amount < 0);
