@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import {
   Settings2,
@@ -331,6 +332,12 @@ function ViewEventCard({ currentEvent }: { currentEvent: { eventKey: string; eve
   const viewingKey = viewEvent?.eventKey ?? currentEvent?.eventKey;
   const blocked = isGuest && !events.some((e) => e.eventKey === viewingKey);
 
+  function eventLabel(k: string) {
+    const e = events.find((x) => x.eventKey === k);
+    const name = e && e.eventName !== k ? ` — ${e.eventName}` : "";
+    return `${k}${name}${e?.isCurrent ? " (current)" : ""}`;
+  }
+
   function view(eventKey: string) {
     const k = eventKey.trim().toLowerCase();
     if (!/^\d{4}[a-z0-9]{1,20}$/.test(k)) {
@@ -367,25 +374,20 @@ function ViewEventCard({ currentEvent }: { currentEvent: { eventKey: string; eve
 
       {events.length > 0 && (
         <div className="space-y-1.5">
-          {events.map((e) => {
-            const active = e.eventKey === viewingKey;
-            return (
-              <button
-                key={e.eventKey}
-                onClick={() => view(e.eventKey)}
-                className={`w-full flex items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-sm transition-colors ${
-                  active ? "border-primary/40 bg-primary/10" : "border-border hover:bg-muted/50"
-                }`}
-              >
-                <span className="font-mono font-bold text-primary shrink-0">{e.eventKey}</span>
-                <span className="truncate text-muted-foreground">{e.eventName !== e.eventKey ? e.eventName : ""}</span>
-                <span className="ml-auto flex shrink-0 items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
-                  {e.isCurrent && <span className="rounded-full bg-muted px-2 py-0.5">Current</span>}
-                  {active && <CheckCircle2 className="h-4 w-4 text-primary" />}
-                </span>
-              </button>
-            );
-          })}
+          <Label htmlFor="view-event">{isGuest ? "Event" : "Saved events"}</Label>
+          <Select
+            value={events.some((e) => e.eventKey === viewingKey) ? viewingKey : null}
+            onValueChange={(v) => { if (v && v !== viewingKey) view(v); }}
+          >
+            <SelectTrigger id="view-event" className="w-full">
+              <SelectValue>{(v: string | null) => (v ? eventLabel(v) : "Pick an event")}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {events.map((e) => (
+                <SelectItem key={e.eventKey} value={e.eventKey}>{eventLabel(e.eventKey)}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       )}
 
