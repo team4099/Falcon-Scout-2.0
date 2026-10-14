@@ -7,7 +7,7 @@
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
-import { BEG_JACKPOT, BEG_JACKPOT_ODDS, BEG_MAX, rollBeg } from "./betting";
+import { BEG_JACKPOT, BEG_JACKPOT_ODDS, BEG_MAX, BEG_ROB_MAX, rollBeg, rollRobbery } from "./betting";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -117,24 +117,43 @@ describe("placeBet", () => {
   });
 });
 
-// Begging pays a random 0–10 on a 60s cooldown so that scouting, not gambling
+// Begging mostly pays 1 coin on a 60s cooldown so that scouting, not gambling
 // or begging, is the way to earn. Pin Math.random so the server's roll is
-// deterministic: 0.5 skips the jackpot and lands on floor(0.5 * 11) = 5.
-const BEG_AMOUNT = 5;
+// deterministic: 0.5 skips the jackpot and lands in the 1-coin band.
+const BEG_AMOUNT = 1;
 
 describe("rollBeg", () => {
-  test("stays in 0..BEG_MAX outside the jackpot", () => {
-    expect(rollBeg(() => 0.5)).toEqual({ amount: 5, jackpot: false });
-    let calls = 0;
-    expect(rollBeg(() => (calls++ === 0 ? 0.5 : 0))).toEqual({ amount: 0, jackpot: false });
-    calls = 0;
-    expect(rollBeg(() => (calls++ === 0 ? 0.5 : 0.9999999))).toEqual({ amount: BEG_MAX, jackpot: false });
+  // First draw decides the jackpot, second the payout.
+  const draws = (second: number) => { let n = 0; return () => (n++ === 0 ? 0.5 : second); };
+
+  test("maps the payout draw onto 0 / 1 / 2 / 3..BEG_MAX", () => {
+    expect(rollBeg(draws(0)).amount).toBe(0);
+    expect(rollBeg(draws(0.1499)).amount).toBe(0);
+    expect(rollBeg(draws(0.15)).amount).toBe(1);
+    expect(rollBeg(draws(0.7999)).amount).toBe(1);
+    expect(rollBeg(draws(0.80)).amount).toBe(2);
+    expect(rollBeg(draws(0.92)).amount).toBe(3);
+    expect(rollBeg(draws(0.9999999))).toEqual({ amount: BEG_MAX, jackpot: false });
   });
 
-  test("jackpot is 1-in-10,000 and pays 100", () => {
-    expect(BEG_JACKPOT_ODDS).toBe(1 / 10_000);
-    expect(rollBeg(() => 0.00005)).toEqual({ amount: BEG_JACKPOT, jackpot: true });
-    expect(rollBeg(() => 0.0001).jackpot).toBe(false);
+  test("mostly pays 1; 3+ is rare", () => {
+    const counts = new Map<number, number>();
+    const N = 100_000;
+    for (let i = 0; i < N; i++) {
+      const { amount } = rollBeg();
+      counts.set(amount, (counts.get(amount) ?? 0) + 1);
+    }
+    const share = (pred: (a: number) => boolean) =>
+      [...counts].filter(([a]) => pred(a)).reduce((s, [, c]) => s + c, 0) / N;
+    expect(share((a) => a === 1)).toBeGreaterThan(0.6);
+    expect(share((a) => a >= 3 && a <= BEG_MAX)).toBeLessThan(0.1);
+    expect(Math.max(...[...counts.keys()].filter((a) => a !== BEG_JACKPOT))).toBeLessThanOrEqual(BEG_MAX);
+  });
+
+  test("jackpot is 1-in-100,000 and pays 100", () => {
+    expect(BEG_JACKPOT_ODDS).toBe(1 / 100_000);
+    expect(rollBeg(() => 0.000005)).toEqual({ amount: BEG_JACKPOT, jackpot: true });
+    expect(rollBeg(() => 0.00001).jackpot).toBe(false);
   });
 });
 
@@ -170,12 +189,36 @@ describe("beg", () => {
     expect(await bal()).toBe(BEG_AMOUNT);
 
     // The 3s cooldown used to live only in the UI, so a scripted loop was free
-    // money. Ten rapid calls should all be refused.
+    // money. Rapid calls now pay nothing, then start costing coins.
     for (let i = 0; i < 10; i++) {
-      await expect(as.mutation(api.betting.beg, { eventKey: EVENT }))
-        .rejects.toThrow(/Slow down/i);
+      const res = await as.mutation(api.betting.beg, { eventKey: EVENT });
+      expect(res.amount).toBeLessThanOrEqual(0);
     }
-    expect(await bal()).toBe(BEG_AMOUNT);
+    expect(await bal()).toBe(0);
+  });
+
+  test("early begs are ignored twice, then robbed 1-5, never below zero", async () => {
+    const t = convexTest(schema, modules);
+    const { as, bal, txns } = await setup(t, 4);
+    await as.mutation(api.betting.beg, { eventKey: EVENT }); // paid 1 → 5
+    const beg = () => as.mutation(api.betting.beg, { eventKey: EVENT });
+
+    expect(await beg()).toMatchObject({ outcome: "ignored", amount: 0 });
+    expect(await beg()).toMatchObject({ outcome: "ignored", amount: 0 });
+    // Math.random pinned at 0.5 → robbery of 1 + floor(0.5 * 5) = 3.
+    expect(await beg()).toMatchObject({ outcome: "robbed", amount: -3, newBalance: 2 });
+    expect(await beg()).toMatchObject({ outcome: "robbed", amount: -2, newBalance: 0 });
+    expect(await beg()).toMatchObject({ outcome: "robbed", amount: 0, newBalance: 0 });
+    expect(await bal()).toBe(0);
+
+    const robs = (await txns()).filter((r) => r.amount < 0);
+    expect(robs.map((r) => r.amount).sort()).toEqual([-2, -3]);
+    expect(robs.every((r) => r.type === "beg" && r.note === "Robbed while begging")).toBe(true);
+  });
+
+  test("rollRobbery stays in 1..5", () => {
+    expect(rollRobbery(() => 0)).toBe(1);
+    expect(rollRobbery(() => 0.9999999)).toBe(BEG_ROB_MAX);
   });
 
   test("works again once the cooldown has elapsed", async () => {
@@ -194,6 +237,21 @@ describe("beg", () => {
 
     await as.mutation(api.betting.beg, { eventKey: EVENT });
     expect(await bal()).toBe(BEG_AMOUNT * 2);
+  });
+
+  test("a paid beg resets the strike count", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, as } = await setup(t, 0);
+    const beg = () => as.mutation(api.betting.beg, { eventKey: EVENT });
+    await beg();
+    await beg(); await beg(); // two strikes
+    await t.run(async (ctx) => {
+      const row = await ctx.db.query("userBalances")
+        .withIndex("by_user_event", (q) => q.eq("userId", userId).eq("eventKey", EVENT)).first();
+      if (row) await ctx.db.patch(row._id, { lastBegAt: Date.now() - 120_000 });
+    });
+    expect(await beg()).toMatchObject({ outcome: "paid" });
+    expect(await beg()).toMatchObject({ outcome: "ignored" });
   });
 });
 

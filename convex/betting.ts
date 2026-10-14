@@ -258,20 +258,45 @@ export const getMyBalance = query({
   },
 });
 
-/** Cooldown between begs. Mirrored in the UI, but enforced here. */
+/** Cooldown between paid begs. Server-only; the UI no longer shows it. */
 // Begging is the fallback for a scout who is genuinely broke, not an income
-// stream. 0–10 coins (avg 5) on a 60s cooldown keeps it a last resort rather
-// than a way to out-earn scouting.
+// stream. Mostly 1 coin (avg ~1.4) on a 60s cooldown keeps it a last resort
+// rather than a way to out-earn scouting.
 const BEG_COOLDOWN_MS = 60_000;
 export const BEG_MAX = 10;
 export const BEG_JACKPOT = 100;
-export const BEG_JACKPOT_ODDS = 1 / 10_000;
+export const BEG_JACKPOT_ODDS = 1 / 100_000;
 
-/** One beg roll: 1-in-10,000 jackpot, otherwise a uniform 0..BEG_MAX. */
+/**
+ * Non-jackpot payout odds, as cumulative upper bounds on one uniform draw:
+ * 0 coins 15%, 1 coin 65%, 2 coins 12%, 3..BEG_MAX 8% (1% each).
+ */
+const BEG_ZERO_UNDER = 0.15;
+const BEG_ONE_UNDER = 0.80;
+const BEG_TWO_UNDER = 0.92;
+
+/** Early begs (inside the cooldown) from this one on get robbed instead of ignored. */
+export const BEG_ROB_FROM_STRIKE = 3;
+export const BEG_ROB_MAX = 5;
+
+/** One beg roll: 1-in-100,000 jackpot, otherwise mostly 1 coin (see odds above). */
 export function rollBeg(rand: () => number = Math.random): { amount: number; jackpot: boolean } {
   if (rand() < BEG_JACKPOT_ODDS) return { amount: BEG_JACKPOT, jackpot: true };
-  return { amount: Math.floor(rand() * (BEG_MAX + 1)), jackpot: false };
+  const r = rand();
+  if (r < BEG_ZERO_UNDER) return { amount: 0, jackpot: false };
+  if (r < BEG_ONE_UNDER) return { amount: 1, jackpot: false };
+  if (r < BEG_TWO_UNDER) return { amount: 2, jackpot: false };
+  // Spread the rare tail evenly over 3..BEG_MAX.
+  const tail = Math.floor(((r - BEG_TWO_UNDER) / (1 - BEG_TWO_UNDER)) * (BEG_MAX - 2));
+  return { amount: Math.min(3 + tail, BEG_MAX), jackpot: false };
 }
+
+/** Coins stolen from an impatient beggar: uniform 1..BEG_ROB_MAX. */
+export function rollRobbery(rand: () => number = Math.random): number {
+  return 1 + Math.floor(rand() * BEG_ROB_MAX);
+}
+
+export type BegOutcome = "paid" | "ignored" | "robbed";
 
 export const beg = mutation({
   args: { eventKey: v.string() },
@@ -286,21 +311,31 @@ export const beg = mutation({
       .withIndex("by_user_event", (q) => q.eq("userId", userId).eq("eventKey", eventKey))
       .first();
 
-    // The 3s cooldown used to live only in BettingPage, so it constrained the
-    // button and not the mutation — a loop could mint unlimited coins.
-    if (bal) {
-      const since = now - (bal.lastBegAt ?? 0);
-      if (since < BEG_COOLDOWN_MS) {
-        const wait = Math.ceil((BEG_COOLDOWN_MS - since) / 1000);
-        throw new Error(`Slow down — you can beg again in ${wait}s.`);
+    // Rows from before totalBegCoins existed only ever got 1 coin per beg.
+    const prevBegCoins = bal ? (bal.totalBegCoins ?? bal.totalBegs) : 0;
+
+    // The cooldown is enforced here, not in the UI — a loop must not mint
+    // coins. The button stays clickable on purpose: an early beg pays nothing,
+    // and from the BEG_ROB_FROM_STRIKE-th early beg on, the beggar is robbed.
+    // lastBegAt is untouched, so impatience never resets the cooldown.
+    if (bal && now - (bal.lastBegAt ?? 0) < BEG_COOLDOWN_MS) {
+      const begStrikes = (bal.begStrikes ?? 0) + 1;
+      if (begStrikes < BEG_ROB_FROM_STRIKE) {
+        await ctx.db.patch(bal._id, { begStrikes });
+        return { outcome: "ignored" as BegOutcome, amount: 0, jackpot: false, newBalance: bal.balance, totalBegs: bal.totalBegs };
       }
+      // Never below zero: a broke beggar has nothing left to steal.
+      const stolen = Math.min(rollRobbery(), bal.balance);
+      const balanceAfter = bal.balance - stolen;
+      await ctx.db.patch(bal._id, { begStrikes, balance: balanceAfter, totalBegCoins: prevBegCoins - stolen });
+      if (stolen > 0) await logTransaction(ctx, userId, eventKey, "beg", -stolen, balanceAfter, "Robbed while begging");
+      return { outcome: "robbed" as BegOutcome, amount: -stolen || 0, jackpot: false, newBalance: balanceAfter, totalBegs: bal.totalBegs };
     }
 
     // Rolled server-side: the client only learns the result.
     const { amount, jackpot } = rollBeg();
     const totalBegs = (bal?.totalBegs ?? 0) + 1;
-    // Rows from before totalBegCoins existed only ever got 1 coin per beg.
-    const totalBegCoins = (bal ? (bal.totalBegCoins ?? bal.totalBegs) : 0) + amount;
+    const totalBegCoins = prevBegCoins + amount;
     const balanceAfter = (bal?.balance ?? STARTING_BALANCE) + amount;
 
     if (!bal) {
@@ -316,10 +351,10 @@ export const beg = mutation({
         lastBegAt: now,
       });
     } else {
-      await ctx.db.patch(bal._id, { balance: balanceAfter, totalBegs, totalBegCoins, lastBegAt: now });
+      await ctx.db.patch(bal._id, { balance: balanceAfter, totalBegs, totalBegCoins, lastBegAt: now, begStrikes: 0 });
     }
     await logTransaction(ctx, userId, eventKey, "beg", amount, balanceAfter, jackpot ? "JACKPOT" : undefined);
-    return { newBalance: balanceAfter, totalBegs, amount, jackpot };
+    return { outcome: "paid" as BegOutcome, newBalance: balanceAfter, totalBegs, amount, jackpot };
   },
 });
 

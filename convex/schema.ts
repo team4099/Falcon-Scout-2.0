@@ -408,6 +408,8 @@ export default defineSchema({
     lastBegAt:      v.optional(v.number()), // server-enforced beg cooldown
     // Coins won by begging. Optional: older rows predate it (each beg was 1 coin).
     totalBegCoins:  v.optional(v.number()),
+    // Begs attempted inside the cooldown since the last paid one (3rd+ gets robbed).
+    begStrikes:     v.optional(v.number()),
     totalPenalties: v.optional(v.number()), // coins lost for skipping markets
   })
     .index("by_user_event", ["userId", "eventKey"]),

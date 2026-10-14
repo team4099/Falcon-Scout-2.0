@@ -107,12 +107,26 @@ function formatCoins(n: number): string {
   return String(n);
 }
 
-/** Mirrors BEG_COOLDOWN_MS in convex/betting.ts, which is what actually enforces it. */
-const BEG_COOLDOWN_MS = 60_000;
-
-// Beg toasts, picked at random from the tier the server's roll landed in.
-// `{n}` is replaced with the amount.
-const BEG_LINES: Record<"zero" | "low" | "mid" | "high" | "jackpot", string[]> = {
+// Beg toasts, picked at random from the tier the server's result landed in.
+// `{n}` is replaced with the amount (coins stolen, for "robbed").
+const BEG_LINES: Record<"ignored" | "robbed" | "zero" | "low" | "mid" | "high" | "jackpot", string[]> = {
+  // Begged again inside the 60s cooldown: nothing.
+  ignored: [
+    "Even begging failed. Impressive.",
+    "No luck from society.",
+    "Everyone suddenly got very interested in their phones.",
+    "The crowd remembers you from a minute ago. Nope.",
+    "You've been left on read by humanity.",
+    "Your cup echoes. It's empty.",
+  ],
+  // 3rd+ early beg: robbed.
+  robbed: [
+    "While you were begging, someone stole {n} coin(s) from your cup.",
+    "-{n}. A pickpocket noticed your desperation.",
+    "-{n}. The pigeon came back. It took {n} coin(s).",
+    "-{n}. Begging this hard draws a crowd. The wrong crowd.",
+    "Coins were stolen. {n} of them. Maybe stop begging?",
+  ],
   zero: [
     "0 coins. Even the void looked away.",
     "Someone tossed you a button. Not a coin. A button.",
@@ -140,15 +154,21 @@ const BEG_LINES: Record<"zero" | "low" | "mid" | "high" | "jackpot", string[]> =
     "+{n}! The pit crew passed the hat for you.",
   ],
   jackpot: [
-    "💰 JACKPOT! +{n}! A billionaire tripped over you. 1-in-10,000 desperation pays off.",
+    "💰 JACKPOT! +{n}! A billionaire tripped over you. 1-in-100,000 desperation pays off.",
     "💰 JACKPOT! +{n}! The FalconBet gods have noticed your suffering.",
   ],
 };
 
-function begMessage(amount: number, jackpot: boolean): string {
-  const tier = jackpot ? "jackpot" : amount === 0 ? "zero" : amount <= 3 ? "low" : amount <= 7 ? "mid" : "high";
+type BegOutcome = "paid" | "ignored" | "robbed";
+
+function begMessage(outcome: BegOutcome, amount: number, jackpot: boolean): string {
+  const tier = outcome !== "paid" ? outcome
+    : jackpot ? "jackpot" : amount === 0 ? "zero" : amount <= 3 ? "low" : amount <= 7 ? "mid" : "high";
   const lines = BEG_LINES[tier];
-  return lines[Math.floor(Math.random() * lines.length)].replace("{n}", String(amount));
+  const n = Math.abs(amount);
+  return lines[Math.floor(Math.random() * lines.length)]
+    .replace(/{n}/g, String(n))
+    .replace("coin(s)", n === 1 ? "coin" : "coins");
 }
 
 // Odds mirror convex/betting.ts exactly. They are fixed when a market is
@@ -975,7 +995,6 @@ function MyBetsTab({ eventKey }: { eventKey: string }) {
   const beg = useMutation(api.betting.beg);
   const [begging, setBegging] = useState(false);
   const [lastBegResult, setLastBegResult] = useState<number | null>(null);
-  const [now, setNow] = useState(() => Date.now());
 
   // Ensure balance exists
   useEffect(() => {
@@ -987,35 +1006,24 @@ function MyBetsTab({ eventKey }: { eventKey: string }) {
   const markets = (marketsLive ?? []) as Market[];
   const marketMap = Object.fromEntries(markets.map((m) => [m._id, m]));
 
-  // Cooldown is derived from the server's lastBegAt, so it survives a reload
-  // and matches the 60s the mutation enforces (the old local 3s timer let the
-  // button re-enable long before the server would accept another beg).
-  const begReadyAt = (balance?.lastBegAt ?? 0) + BEG_COOLDOWN_MS;
-  const begCooldown = Math.max(0, Math.ceil((begReadyAt - now) / 1000));
-  useEffect(() => {
-    if (begReadyAt <= Date.now()) return;
-    const id = setInterval(() => {
-      setNow(Date.now());
-      if (Date.now() >= begReadyAt) clearInterval(id);
-    }, 1000);
-    return () => clearInterval(id);
-  }, [begReadyAt]);
-
+  // No countdown on purpose: the 60s cooldown is server-side and a secret.
+  // Begging early pays nothing, and pestering gets you robbed (convex/betting.ts).
   async function handleBeg() {
-    if (begCooldown > 0) return;
     setBegging(true);
     try {
       const result = await beg({ eventKey });
-      // A not-yet-redeployed server returns no amount; it always paid 1.
+      // A not-yet-redeployed server returns no amount or outcome; it always paid 1.
+      const outcome: BegOutcome = result.outcome ?? "paid";
       const amount = result.amount ?? 1;
-      setLastBegResult(amount);
-      setNow(Date.now());
-      if (result.jackpot) toast.success(begMessage(amount, true), { duration: 8000 });
-      else toast(begMessage(amount, false), { duration: 3000 });
+      setLastBegResult(outcome === "ignored" ? 0 : amount);
+      const msg = begMessage(outcome, amount, result.jackpot);
+      if (result.jackpot) toast.success(msg, { duration: 8000 });
+      else if (outcome === "robbed") toast.error(msg, { duration: 3000 });
+      else toast(msg, { duration: 3000 });
     } catch (e) {
-      // Convex wraps server errors in "[CONVEX M(...)] Uncaught Error: …".
-      const slowDown = e instanceof Error ? e.message.match(/Slow down[^\n]*?s\./)?.[0] : undefined;
-      toast.error(slowDown ?? "Even begging failed. Impressive.");
+      // An old server still throws "Slow down" inside the cooldown.
+      const early = e instanceof Error && /Slow down/.test(e.message);
+      toast.error(early ? begMessage("ignored", 0, false) : "Begging is broken right now. Try again later.");
     } finally {
       setBegging(false);
       setTimeout(() => setLastBegResult(null), 2000);
@@ -1062,17 +1070,17 @@ function MyBetsTab({ eventKey }: { eventKey: string }) {
               variant="outline"
               size="sm"
               onClick={handleBeg}
-              disabled={begging || begCooldown > 0}
+              disabled={begging}
               className="border-amber-500/40 text-amber-400 hover:bg-amber-500/10 font-semibold gap-2"
             >
               <HandCoins className="h-4 w-4" />
-              {begging ? "begging..." : begCooldown > 0 ? `wait ${begCooldown}s...` : "pls beg"}
+              {begging ? "begging..." : "pls beg"}
             </Button>
             {lastBegResult !== null && (
-              <span className="text-amber-400 font-bold text-sm font-mono animate-bounce">+{lastBegResult}</span>
+              <span className={`font-bold text-sm font-mono animate-bounce ${lastBegResult < 0 ? "text-red-400" : "text-amber-400"}`}>{lastBegResult < 0 ? "" : "+"}{lastBegResult}</span>
             )}
           </div>
-          <p className="text-[10px] text-muted-foreground/50 mt-1">Try your luck in desperation: 0–10 coins, every 60s. Scout to actually earn.</p>
+          <p className="text-[10px] text-muted-foreground/50 mt-1">Try your luck in desperation every 60s. Scout to actually earn.</p>
         </div>
       </div>
 
@@ -1285,7 +1293,7 @@ function LeaderboardTab({ eventKey }: { eventKey: string }) {
                   <span className="text-muted-foreground/50 w-5 text-right text-xs">{i + 1}.</span>
                   <span className="flex-1 text-muted-foreground truncate">{e.displayName}</span>
                   <span className="font-mono text-xs text-muted-foreground/70 flex items-center gap-1"><HandCoins className="h-3 w-3" /> {e.totalBegs}x</span>
-                  <span className="font-mono text-xs text-amber-400/70 flex items-center gap-1 w-16 justify-end">+{(e.totalBegCoins ?? e.totalBegs).toLocaleString()} <Coins className="h-3 w-3" /></span>
+                  <span className="font-mono text-xs text-amber-400/70 flex items-center gap-1 w-16 justify-end">{(e.totalBegCoins ?? e.totalBegs) < 0 ? "" : "+"}{(e.totalBegCoins ?? e.totalBegs).toLocaleString()} <Coins className="h-3 w-3" /></span>
                 </div>
               ))
             }
