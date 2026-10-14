@@ -8,21 +8,22 @@ import {
   Select, SelectContent, SelectGroup, SelectItem, SelectLabel,
   SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { BarChart2, ScatterChart as ScatterIcon, TrendingUp, Plus, X } from "lucide-react";
+import { BarChart2, ListOrdered, ScatterChart as ScatterIcon, TrendingUp, Plus, X } from "lucide-react";
 import {
   ScatterChart as ReScatterChart, Scatter, LabelList,
-  LineChart, Line,
+  LineChart, Line, ComposedChart,
   XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer,
 } from "recharts";
 import { fetchStatboticsEventTeamMatches, fetchStatboticsTeamSeason } from "@/lib/api";
 import { EMPTY_TEAM_EPA } from "@/lib/epa";
+import { isLowerBetter } from "@/lib/teamProfile";
 import type { TeamStats } from "@/lib/rankingColumns";
 import {
-  alignTimelines, buildTimelines, chartMetrics, scatterValue, slimTbaMatch,
+  alignTimelines, buildTimelines, chartMetrics, scatterValue, seedVsMetric, slimTbaMatch,
 } from "@/lib/chartData";
 import type {
-  ChartCfg, ChartMetric, ChartType, FieldColumn, LineScope, SlimMatch, SlimTeamMatch,
+  ChartCfg, ChartMetric, ChartType, FieldColumn, LineScope, SeedPoint, SlimMatch, SlimTeamMatch,
 } from "@/lib/chartData";
 
 // ─────────────────────────────── Mobile hook ──────────────────────────────────
@@ -45,6 +46,7 @@ function useIsMobile(breakpoint = 640) {
 
 const CHART_DEFS: { type: ChartType; label: string; icon: React.ElementType; desc: string }[] = [
   { type: "scatter", label: "Scatter", icon: ScatterIcon, desc: "One dot per team" },
+  { type: "seed",    label: "Seed",    icon: ListOrdered, desc: "Rank vs what it's worth" },
   { type: "line",    label: "Line",    icon: TrendingUp,  desc: "Trend over matches" },
 ];
 
@@ -175,6 +177,104 @@ function ScatterView({ cfg, ctx }: { cfg: ChartCfg; ctx: ChartContext }) {
   );
 }
 
+/** How many of the biggest over/under-seeded teams get a number label (fewer on phones). */
+const SEED_LABELS = 8;
+const SEED_LABELS_MOBILE = 4;
+
+function SeedDot({ cx, cy, payload, labelled, faint }: {
+  cx?: number; cy?: number; payload?: SeedPoint; labelled: Set<number>; faint: number;
+}) {
+  if (cx === undefined || cy === undefined || !payload) return null;
+  const under = payload.residual >= 0;
+  const near = Math.abs(payload.residual) < faint;
+  return (
+    <g>
+      <circle cx={cx} cy={cy} r={5} stroke={COLORS[0]} strokeWidth={1.75}
+        style={{ fill: under ? COLORS[0] : "var(--card)" }} opacity={near ? 0.45 : 1} />
+      {labelled.has(payload.team) && (
+        <text x={cx} y={under ? cy - 10 : cy + 17} textAnchor="middle"
+          style={{ fill: "currentColor", fontSize: 10, fontWeight: 700, opacity: 0.8 }}>
+          {payload.team}
+        </text>
+      )}
+    </g>
+  );
+}
+
+function SeedView({ cfg, ctx }: { cfg: ChartCfg; ctx: ChartContext }) {
+  const yLabel = metricLabel(ctx, "seed", cfg.yAxis);
+  const maxLabels = useIsMobile() ? SEED_LABELS_MOBILE : SEED_LABELS;
+  const { points, curve, labelled, faint } = useMemo(() => {
+    // The curve is the whole field; the dots are just the chart's teams.
+    const shown = new Set(chartTeams(cfg, ctx));
+    const lowerBetter = cfg.yAxis.startsWith("f:") && isLowerBetter(yLabel ?? "");
+    const r = seedVsMetric(ctx.allTeams.map((team) => {
+      const s = ctx.statsFor(team);
+      return { team, seed: s.rank, value: scatterValue(cfg.yAxis, s) };
+    }), lowerBetter);
+    const pts = r.points.filter((p) => shown.has(p.team));
+    const vals = r.curve.map((c) => c.expected);
+    const range = Math.max(...vals) - Math.min(...vals) || 1;
+    const outliers = [...pts].sort((a, b) => Math.abs(b.residual) - Math.abs(a.residual))
+      .filter((p) => Math.abs(p.residual) > range * 0.1).slice(0, maxLabels);
+    return { points: pts, curve: r.curve, labelled: new Set(outliers.map((p) => p.team)), faint: range * 0.03 };
+  }, [cfg, ctx, yLabel, maxLabels]);
+
+  if (!yLabel) return <Empty msg="This chart uses a column that no longer exists — click Edit to pick a new one" />;
+  if (!curve.length) return <Empty msg="No rankings yet — seeds show up once qualification matches are played" />;
+  if (!points.length) return <Empty msg={`No ranked teams have ${yLabel} yet`} />;
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex flex-wrap justify-end gap-x-3 gap-y-0.5 px-1 text-[10px] text-muted-foreground">
+        <span className="flex items-center gap-1">
+          <span className="h-2 w-2 rounded-full" style={{ background: COLORS[0] }} />Seeded under its {yLabel}
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="h-2 w-2 rounded-full border-[1.5px]" style={{ borderColor: COLORS[0] }} />Seeded over it
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="h-0.5 w-3 rounded-full bg-current opacity-40" />What each seed is worth here
+        </span>
+      </div>
+      <div className="min-h-0 flex-1">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart margin={MARGIN}>
+            <CartesianGrid {...GRID_PROPS} />
+            <XAxis type="number" dataKey="seed" name="Seed" domain={[1, curve.length]} allowDecimals={false}
+              tick={<AxisTickX />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
+              label={{ value: "Seed (event rank)", position: "insideBottom", offset: -28, fill: "currentColor", fontSize: 11 }} />
+            <YAxis type="number" dataKey="value" name={yLabel} domain={["auto", "auto"]}
+              tick={<AxisTickY />} tickLine={AXIS_LINE} axisLine={AXIS_LINE}
+              label={{ value: yLabel, angle: -90, position: "insideLeft", fill: "currentColor", fontSize: 11 }} />
+            <Tooltip
+              cursor={{ strokeDasharray: "3 3" }}
+              content={({ active, payload }) => {
+                const d = payload?.find((p) => (p.payload as SeedPoint)?.team)?.payload as SeedPoint | undefined;
+                if (!active || !d) return null;
+                return (
+                  <div className="rounded-lg border border-border bg-popover px-3 py-2 shadow-xl text-xs space-y-0.5">
+                    <p className="font-bold text-sm">#{d.team} · Seed {d.seed}</p>
+                    <p>{yLabel}: <span className="font-mono font-semibold">{fmt(d.value)}</span></p>
+                    <p>Seed {d.seed} is worth: <span className="font-mono font-semibold">{fmt(d.expected)}</span></p>
+                    <p className={d.residual >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
+                      {d.residual >= 0 ? "Better" : "Worse"} than its seed by {fmt(Math.abs(d.residual))}
+                    </p>
+                  </div>
+                );
+              }}
+            />
+            <Line data={curve} dataKey="expected" type="basis" stroke="currentColor" strokeOpacity={0.4}
+              strokeWidth={2} dot={false} activeDot={false} isAnimationActive={false} legendType="none" />
+            <Scatter data={points} isAnimationActive={false}
+              shape={(p: unknown) => <SeedDot {...(p as object)} labelled={labelled} faint={faint} />} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
 function LineView({ cfg, ctx }: { cfg: ChartCfg; ctx: ChartContext }) {
   const scope: LineScope = cfg.scope ?? "event";
   const yLabel = metricLabel(ctx, "line", cfg.yAxis);
@@ -274,6 +374,7 @@ function ChartCard({
   const yLabel = metricLabel(ctx, cfg.type, cfg.yAxis) ?? "?";
   const subtitle = cfg.type === "scatter"
     ? `Scatter · ${yLabel} vs ${metricLabel(ctx, "scatter", cfg.xAxis) ?? "?"}`
+    : cfg.type === "seed" ? `Seed · ${yLabel} vs event rank`
     : `Line · ${yLabel} · ${SCOPE_LABEL[cfg.scope ?? "event"]}`;
 
   // ── Resizable card via custom drag handle ────────────────────────────────
@@ -378,7 +479,9 @@ function ChartCard({
           chrome resolves against, which keeps axes legible in both themes. */}
       <div className="flex-1 min-h-0 p-2 text-foreground" style={{ minHeight: 180 }}>
         <div style={{ width: "100%", height: "100%", minHeight: 180 }}>
-          {cfg.type === "scatter" ? <ScatterView cfg={cfg} ctx={ctx} /> : <LineView cfg={cfg} ctx={ctx} />}
+          {cfg.type === "scatter" ? <ScatterView cfg={cfg} ctx={ctx} />
+            : cfg.type === "seed" ? <SeedView cfg={cfg} ctx={ctx} />
+            : <LineView cfg={cfg} ctx={ctx} />}
         </div>
       </div>
 
@@ -497,14 +600,15 @@ function Builder({ metrics, allTeams, initial, onSave, onCancel }: {
   const valid = (id: string) => opts.some((m) => m.id === id);
   // Keep the pick when switching chart type if the other type offers it too.
   const x = valid(xAxis) ? xAxis : defaultAxis(opts, ["epaEvent"]);
-  const y = valid(yAxis) ? yAxis : defaultAxis(opts, type === "line" ? ["epaEvent"] : ["avgScore"]);
-  const canSave = !!y && (type === "line" || !!x) && (teamMode === "all" || selTeams.length > 0);
+  const y = valid(yAxis) ? yAxis : defaultAxis(opts, type === "scatter" ? ["avgScore"] : ["epaEvent"]);
+  const canSave = !!y && (type !== "scatter" || !!x) && (teamMode === "all" || selTeams.length > 0);
 
   function save() {
     if (!canSave) return;
     const yLabel = opts.find((m) => m.id === y)?.label ?? y;
     const autoTitle = type === "scatter"
       ? `${yLabel} vs ${opts.find((m) => m.id === x)?.label ?? x}`
+      : type === "seed" ? `Seed against ${yLabel}`
       : `${yLabel} by match`;
     onSave({
       id: initial?.id ?? crypto.randomUUID(),
@@ -521,7 +625,7 @@ function Builder({ metrics, allTeams, initial, onSave, onCancel }: {
     <div className="flex flex-col gap-4 p-4">
       <div>
         <p className={SECTION}>Chart Type</p>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-3 gap-2">
           {CHART_DEFS.map(({ type: t, label, icon: Icon, desc }) => (
             <button key={t} type="button" onClick={() => setType(t)} aria-pressed={type === t}
               className={`flex flex-col items-center gap-1 p-3 rounded-lg border text-xs transition-all ${
@@ -547,6 +651,13 @@ function Builder({ metrics, allTeams, initial, onSave, onCancel }: {
           <div>
             <label className={SECTION} htmlFor="cv-x">X Axis</label>
             <AxisSelect id="cv-x" value={x} onChange={setXAxis} metrics={opts} />
+          </div>
+        ) : type === "seed" ? (
+          <div>
+            <p className={SECTION}>X Axis</p>
+            <p className="text-xs text-muted-foreground">
+              Seed (event rank). The line is what each seed is worth in this field: the Nth-best value goes to seed N.
+            </p>
           </div>
         ) : (
           <div>
@@ -642,7 +753,7 @@ function useSeasonData(teams: number[], year: number) {
 
 // ─────────────────────────────── Page ─────────────────────────────────────────
 
-const KNOWN_TYPES = new Set<ChartType>(["scatter", "line"]);
+const KNOWN_TYPES = new Set<ChartType>(["scatter", "seed", "line"]);
 
 export default function DataViewerPage() {
   const currentEvent = useCurrentEvent();
@@ -773,6 +884,7 @@ export default function DataViewerPage() {
   const eventMatches = useMemo(() => data.matchData.map(slimTbaMatch), [data.matchData]);
   const metrics = useMemo(() => ({
     scatter: chartMetrics("scatter", data.fieldColumns),
+    seed: chartMetrics("seed", data.fieldColumns),
     line: chartMetrics("line", data.fieldColumns),
   }), [data.fieldColumns]);
 

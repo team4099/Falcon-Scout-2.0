@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  alignTimelines, buildTimelines, chartMetrics, parseMatchKey, scatterValue, seasonTrend,
+  alignTimelines, buildTimelines, chartMetrics, parseMatchKey, scatterValue, seasonTrend, seedVsMetric,
   slimStatboticsMatches, slimStatboticsTeamMatches, slimTbaMatch,
 } from "./chartData";
 import type { FieldColumn, SlimMatch } from "./chartData";
@@ -214,5 +214,38 @@ describe("seasonTrend", () => {
     const t = seasonTrend(pts, "epaEvent");
     expect(t.rows.map((r) => [r.i, r.value])).toEqual([[1, 20], [2, 25]]);
     expect(t.events).toEqual([{ event: "early", start: 2 - 1 }, { event: EV, start: 2 }]);
+  });
+});
+
+describe("seedVsMetric", () => {
+  it("curve is the field's values best-first; above it = better than the seed", () => {
+    const { points, curve } = seedVsMetric([
+      { team: 1, seed: 1, value: 30 },
+      { team: 2, seed: 2, value: 50 }, // best team, seeded 2nd
+      { team: 3, seed: 3, value: 10 },
+      { team: 4, seed: null, value: 99 }, // unranked: not in the field
+    ]);
+    expect(curve.map((c) => c.expected)).toEqual([50, 30, 10]);
+    expect(points.map((p) => [p.team, p.residual])).toEqual([[1, -20], [2, 20], [3, 0]]);
+  });
+
+  it("interpolates when fewer teams have the stat than are ranked", () => {
+    const { curve, points } = seedVsMetric([
+      { team: 1, seed: 1, value: 40 }, { team: 2, seed: 2, value: null }, { team: 3, seed: 3, value: 20 },
+    ]);
+    expect(curve.map((c) => c.expected)).toEqual([40, 30, 20]);
+    expect(points.map((p) => p.team)).toEqual([1, 3]);
+  });
+
+  it("flips for lower-is-better stats", () => {
+    const { curve, points } = seedVsMetric([
+      { team: 1, seed: 1, value: 5 }, { team: 2, seed: 2, value: 1 },
+    ], true);
+    expect(curve.map((c) => c.expected)).toEqual([1, 5]);
+    expect(points.find((p) => p.team === 2)!.residual).toBe(4);
+  });
+
+  it("seed charts don't offer Rank as the Y axis", () => {
+    expect(chartMetrics("seed", []).map((x) => x.id)).not.toContain("rank");
   });
 });

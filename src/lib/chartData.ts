@@ -1,19 +1,20 @@
 // Data layer for the Data Viewer charts. Scatter plots one dot per team using
-// the Dashboard rankings column values; line charts plot a per-match timeline
-// (TBA/Statbotics scores, Statbotics per-match EPA, scouting submissions).
+// the Dashboard rankings column values; seed charts plot event rank against a
+// stat with the value each seed "should" have; line charts plot a per-match
+// timeline (TBA/Statbotics scores, Statbotics per-match EPA, scouting submissions).
 import { BUILTIN_COLUMNS, EPA_KEYS, REPORTS_COLUMN_ID, aggregateField } from "./rankingColumns";
 import type { RankingColumn, TeamStats } from "./rankingColumns";
 import { findInEpa, readMean } from "./epa";
 import type { FormField } from "@/types";
 
-export type ChartType = "scatter" | "line";
+export type ChartType = "scatter" | "seed" | "line";
 export type LineScope = "event" | "season";
 
 export interface ChartCfg {
   id: string;
   title: string;
   type: ChartType;
-  /** Scatter only; a line chart's X axis is always matches. */
+  /** Scatter only; a seed chart's X axis is always rank, a line chart's matches. */
   xAxis: string;
   yAxis: string;
   /** Empty = all teams. */
@@ -56,7 +57,10 @@ export function chartMetrics(type: ChartType, fieldColumns: FieldColumn[]): Char
     }));
   const builtins = type === "line"
     ? LINE_BUILTINS
-    : BUILTIN_COLUMNS.map((c) => ({ id: c.id, label: CHART_LABELS[c.id] ?? c.label, group: "Stats" }));
+    : BUILTIN_COLUMNS
+      // A seed chart's X axis is already rank.
+      .filter((c) => type === "scatter" || c.id !== "rank")
+      .map((c) => ({ id: c.id, label: CHART_LABELS[c.id] ?? c.label, group: "Stats" }));
   return [...builtins, ...fields];
 }
 
@@ -69,6 +73,52 @@ export function scatterValue(id: string, t: TeamStats): number | null {
   if (epaKey) return t.epa[epaKey];
   const f = t.fieldCells[id];
   return f && typeof f.sort === "number" ? f.sort : null;
+}
+
+// ── Seed vs a stat ───────────────────────────────────────────────────────────
+
+export interface SeedPoint {
+  team: number;
+  seed: number;
+  value: number;
+  /** What this seed is worth in this field (see `seedVsMetric`). */
+  expected: number;
+  /** value − expected, sign-flipped for lower-is-better stats: > 0 = the team
+   *  is better than its seed ("seeded under its rating"). */
+  residual: number;
+}
+
+/**
+ * Event rank against a stat. The curve is what each seed is worth in this
+ * field: the field's values sorted best-first, so seed k's expected value is
+ * the k-th best ranked value (interpolated when fewer teams have the stat than are
+ * ranked). Teams above the curve are better than their seed suggests.
+ */
+export function seedVsMetric(
+  rows: Array<{ team: number; seed: number | null; value: number | null }>,
+  lowerBetter = false,
+): { points: SeedPoint[]; curve: Array<{ seed: number; expected: number }> } {
+  const ranked = rows.filter((r) => r.seed !== null && r.seed > 0);
+  const vals = ranked.flatMap((r) => (r.value === null ? [] : [r.value]))
+    .sort((a, b) => (lowerBetter ? a - b : b - a));
+  const maxSeed = Math.max(0, ...ranked.map((r) => r.seed!));
+  if (!vals.length || !maxSeed) return { points: [], curve: [] };
+
+  const expectedAt = (seed: number) => {
+    if (vals.length === 1 || maxSeed === 1) return vals[0];
+    const pos = ((seed - 1) * (vals.length - 1)) / (maxSeed - 1);
+    const lo = Math.floor(pos);
+    const hi = Math.min(vals.length - 1, lo + 1);
+    return vals[lo] + (vals[hi] - vals[lo]) * (pos - lo);
+  };
+  const curve = Array.from({ length: maxSeed }, (_, i) => ({ seed: i + 1, expected: expectedAt(i + 1) }));
+  const points = ranked.flatMap((r) => {
+    if (r.value === null) return [];
+    const expected = curve[r.seed! - 1].expected;
+    return [{ team: r.team, seed: r.seed!, value: r.value, expected,
+      residual: (r.value - expected) * (lowerBetter ? -1 : 1) }];
+  });
+  return { points, curve };
 }
 
 // ── Per-match timelines ──────────────────────────────────────────────────────
