@@ -23,6 +23,7 @@ import {
 import { SortableContext, useSortable, rectSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  DEFAULT_MATCHES_PER_BLOCK,
   generateSchedule,
   generatePitScoutingTeams,
   type SchedulerOutput,
@@ -106,8 +107,8 @@ const SURF_BORD = "oklch(1 0 0 / 8%)";       // card border
 const SURF_HVR  = "oklch(1 0 0 / 6%)";       // hover surface
 const MUTED     = "var(--muted-foreground)";
 
-/** Scouts rotate in blocks of this many matches. */
-const SCOUT_CYCLE = 5;
+/** Upper bound for the admin-set rotation size (mirrors schedules.setRotationSize). */
+const MAX_ROTATION_SIZE = 20;
 const FG        = "var(--foreground)";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -558,6 +559,8 @@ interface MatchGridProps {
   onCellClick: (matchNum: number, matchLbl: string, pos: Position) => void;
   onCycleClick: (cycleMatches: TBAMatch[], pos: Position) => void;
   saving: Set<string>;
+  /** Matches per scouting rotation — how many quals merge into one row. */
+  rotationSize: number;
   isMobile?: boolean;
   isLandscapePhone?: boolean;
   stackLayout?: boolean;
@@ -565,20 +568,20 @@ interface MatchGridProps {
 }
 
 /** A qual-match grid row is either a single match (playoffs), or a merged
- *  block of up to 5 consecutive quals covering a scouting cycle — so
+ *  block of up to `rotationSize` consecutive quals covering a scouting cycle — so
  *  admins assign a cycle in one tap instead of once per match within it. */
 type GridRow =
   | { type: "single"; match: TBAMatch }
   | { type: "cycle"; matches: TBAMatch[]; cycleNumber: number };
 
-function buildGridRows(matches: TBAMatch[]): GridRow[] {
+function buildGridRows(matches: TBAMatch[], rotationSize: number): GridRow[] {
   const rows: GridRow[] = [];
   let cycleNumber = 0;
   for (let i = 0; i < matches.length; ) {
-    // Take up to 5 consecutive quals; a shorter run (leftovers at the end of
+    // Take up to rotationSize consecutive quals; a shorter run (leftovers at the end of
     // quals) still forms a single cycle rather than one row per match.
     let end = i;
-    while (end < matches.length && end - i < SCOUT_CYCLE && matches[end].comp_level === "qm") end++;
+    while (end < matches.length && end - i < rotationSize && matches[end].comp_level === "qm") end++;
     if (end > i) {
       cycleNumber += 1;
       rows.push({ type: "cycle", matches: matches.slice(i, end), cycleNumber });
@@ -591,10 +594,10 @@ function buildGridRows(matches: TBAMatch[]): GridRow[] {
   return rows;
 }
 
-function MatchGrid({ matches, assignMap, pinnedId, onCellClick, onCycleClick, saving, isMobile, isLandscapePhone, stackLayout, readOnly }: MatchGridProps) {
+function MatchGrid({ matches, assignMap, pinnedId, onCellClick, onCycleClick, saving, rotationSize, isMobile, isLandscapePhone, stackLayout, readOnly }: MatchGridProps) {
   const [expandedMatchKey, setExpandedMatchKey] = useState<string | null>(null);
   const canExpand = !!(stackLayout && !readOnly);
-  const gridRows = useMemo(() => buildGridRows(matches), [matches]);
+  const gridRows = useMemo(() => buildGridRows(matches, rotationSize), [matches, rotationSize]);
   if (matches.length === 0) {
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, color: MUTED }}>
@@ -883,7 +886,7 @@ function OrphanWarning({
 }
 
 // ── Single-match grid row (used for individual matches — playoffs and any
-// leftover quals that don't fill a full 5-match cycle) ─────────────────────
+// leftover quals that don't fill a full cycle) ─────────────────────
 
 interface SingleMatchRowProps {
   m: TBAMatch;
@@ -1116,7 +1119,7 @@ function SingleMatchRow({
   );
 }
 
-// ── Cycle grid row — merges a 5-match block into one row so an admin taps
+// ── Cycle grid row — merges one rotation's matches into one row so an admin taps
 // once per position to cover the whole cycle instead of once per match ─────
 
 interface CycleRowProps {
@@ -1170,7 +1173,9 @@ function CycleRow({
             ? slots[0]!.scoutId
             : null;
           const isPinned = uniformScoutId != null && uniformScoutId === pinnedId;
-          const isMixed = !allAssigned && slots.some(s => s != null);
+          // Partly filled, or filled by different scouts (e.g. after the
+          // rotation size changed under existing assignments).
+          const isMixed = uniformScoutId == null && slots.some(s => s != null);
 
           let cellBg     = "transparent";
           let cellBorder = `1.5px solid transparent`;
@@ -2110,6 +2115,78 @@ function AutoGenerateModal({
 // its own toggle button + panel so an admin doesn't have to switch to the
 // Match Assignments tab to adjust who's excluded while working on pit setup.
 
+/** Toolbar control for how many matches a scout group covers before rotating
+ *  out. Saved per event; regroups the grid and drives Auto-Generate. */
+function RotationSizeControl({ size, onSave }: { size: number; onSave: (n: number) => Promise<void> }) {
+  const [draft, setDraft]   = useState<string | null>(null); // null = not editing
+  const [saving, setSaving] = useState(false);
+  const [error, setError]   = useState<string | null>(null);
+  const parsed = parseInt(draft ?? "", 10);
+  const valid  = String(parsed) === draft?.trim() && parsed >= 1 && parsed <= MAX_ROTATION_SIZE;
+
+  async function save() {
+    if (!valid || saving) return;
+    if (parsed === size) { setDraft(null); return; }
+    setSaving(true); setError(null);
+    try {
+      await onSave(parsed);
+      setDraft(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't save rotation size");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const shell = {
+    display: "flex", alignItems: "center", gap: 6, flexShrink: 0,
+    padding: "7px 12px", borderRadius: 9, fontSize: 12, fontWeight: 700,
+    background: SURF_HVR, color: MUTED, border: `1.5px solid ${SURF_BORD}`,
+  } as const;
+
+  if (draft === null) {
+    return (
+      <button
+        onClick={() => { setError(null); setDraft(String(size)); }}
+        title="Change how many matches a scout group covers before rotating out"
+        style={{ ...shell, cursor: "pointer" }}
+      >
+        <Pencil size={12} />
+        {size} {size === 1 ? "match" : "matches"} / rotation
+      </button>
+    );
+  }
+  return (
+    <div style={{ ...shell, padding: "3px 4px 3px 12px" }}>
+      <input
+        type="number" inputMode="numeric" min={1} max={MAX_ROTATION_SIZE} value={draft} autoFocus
+        aria-label="Matches per rotation"
+        onChange={e => setDraft(e.target.value)}
+        onKeyDown={e => { if (e.key === "Enter") void save(); if (e.key === "Escape") setDraft(null); }}
+        style={{
+          width: 48, padding: "4px 6px", borderRadius: 6, fontSize: 13, fontWeight: 700,
+          background: SURFACE, border: `1.5px solid ${valid ? SURF_BORD : "var(--destructive)"}`, color: FG, outline: "none",
+        }}
+      />
+      <span style={{ color: error ? "var(--destructive)" : MUTED }}>
+        {error ?? `/ rotation (1–${MAX_ROTATION_SIZE})`}
+      </span>
+      <button
+        onClick={() => void save()}
+        disabled={!valid || saving}
+        aria-label="Save matches per rotation"
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "center", width: 30, height: 28,
+          borderRadius: 7, border: "none", background: G, color: G_TXT,
+          cursor: !valid || saving ? "not-allowed" : "pointer", opacity: !valid || saving ? 0.5 : 1,
+        }}
+      >
+        {saving ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Check size={13} />}
+      </button>
+    </div>
+  );
+}
+
 function ExcludeToggleButton({ count, onClick }: { count: number; onClick: () => void }) {
   return (
     <button
@@ -2589,9 +2666,9 @@ export default function SchedulingPage() {
     useQuery(
       api.schedules.getMatchPlan,
       eventKey ? { eventKey } : "skip"
-    ) as { qualMatchCount: number } | null | undefined,
+    ) as { qualMatchCount: number; matchesPerRotation?: number } | null | undefined,
     `sched_match_plan_${eventKey || "none"}`
-  ) as { qualMatchCount: number } | null | undefined;
+  ) as { qualMatchCount: number; matchesPerRotation?: number } | null | undefined;
 
   const allPreferences = useCached(
     useQuery(
@@ -2622,6 +2699,7 @@ export default function SchedulingPage() {
   const clearAllPitScouting      = useAdminMutation(api.pitScouting.clearAllPitScoutingAssignments);
   const batchUpsertPitScouting   = useAdminMutation(api.pitScouting.batchUpsertPitScoutingAssignments);
   const setMatchPlan             = useAdminMutation(api.schedules.setMatchPlan);
+  const setRotationSize          = useAdminMutation(api.schedules.setRotationSize);
   const clearAssignmentsAbove    = useAdminMutation(api.schedules.clearMatchAssignmentsAbove);
 
   const pitScoutingTeams = useCached(
@@ -2756,6 +2834,7 @@ export default function SchedulingPage() {
   // ("Q17") are exactly what tbaMatchLabel() produces for the real match.
   const tbaQualCount  = useMemo(() => matches.filter(m => m.comp_level === "qm").length, [matches]);
   const plannedCount  = matchPlan?.qualMatchCount ?? 0;
+  const rotationSize  = matchPlan?.matchesPerRotation ?? DEFAULT_MATCHES_PER_BLOCK;
   const usingPlanned  = tbaQualCount === 0 && plannedCount > 0;
 
   const effectiveMatches = useMemo(
@@ -2855,6 +2934,11 @@ export default function SchedulingPage() {
     await setMatchPlan({ eventKey: currentEvent.eventKey, qualMatchCount: count });
   }
 
+  async function handleSaveRotationSize(matchesPerRotation: number) {
+    if (!currentEvent) return;
+    await setRotationSize({ eventKey: currentEvent.eventKey, matchesPerRotation });
+  }
+
   async function handleClearOrphans() {
     if (!currentEvent || tbaQualCount === 0) return;
     await clearAssignmentsAbove({ eventKey: currentEvent.eventKey, maxMatchNumber: tbaQualCount });
@@ -2881,7 +2965,7 @@ export default function SchedulingPage() {
     }
   }
 
-  /** Assigns (or clears) the pinned scout across every match in one 5-match
+  /** Assigns (or clears) the pinned scout across every match in one
    *  cycle for a given position, in a single round trip. */
   async function handleCycleClick(cycleMatches: TBAMatch[], pos: Position) {
     if (!currentEvent || !pinnedScoutId) return;
@@ -3052,6 +3136,7 @@ export default function SchedulingPage() {
         excludedScoutIds: [...new Set([...excludedScoutIds, ...dbExcludedSet])],
         driveTeamScoutIds: driveTeamIds ?? [],
         pitScoutingAssignedScoutIds,
+        matchesPerBlock: rotationSize,
       });
 
       setAutoGenResult(mode === "pitOnly"
@@ -3294,6 +3379,11 @@ export default function SchedulingPage() {
                   />
                 )}
 
+                {/* Also on the pit tab: auto pit windows are 2 rotations long */}
+                {activeTab !== "pitScouting" && effectiveMatches.length > 0 && (
+                  <RotationSizeControl size={rotationSize} onSave={handleSaveRotationSize} />
+                )}
+
                 {activeTab === "matches" && filledSlots > 0 && (
                   <button
                     onClick={handleClearAll}
@@ -3437,6 +3527,7 @@ export default function SchedulingPage() {
                       onCellClick={handleCellClick}
                       onCycleClick={handleCycleClick}
                       saving={savingCells}
+                      rotationSize={rotationSize}
                       isMobile={isMobile}
                       isLandscapePhone={isLandscapePhone}
                       stackLayout={stackLayout}

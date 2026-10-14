@@ -7,7 +7,8 @@
  * Rules enforced:
  *  - Qual matches only (no elims) — elims pit rotation is always manual
  *    (see the separate ElimsRotationPanel UI; this generator never touches it)
- *  - Matches organised in blocks of 5; same 6 scouts cover all 5 matches in a block
+ *  - Matches organised in blocks of 5 (SchedulerInput.matchesPerBlock overrides;
+ *    the match counts quoted below assume 5); same 6 scouts cover a whole block
  *  - Each scout scouts at least 2 blocks (10 matches) minimum, except drive
  *    team scouts, who never scout matches at all (see below)
  *  - Scouts who opt into pit duty get one block of 10 consecutive qual matches
@@ -106,12 +107,20 @@ export interface ExistingMatchAssignment {
   scoutId: string;
 }
 
+/** Matches a scout group covers before rotating out, unless overridden. */
+export const DEFAULT_MATCHES_PER_BLOCK = 5;
+
 export interface SchedulerInput {
   qualMatches: QualMatch[];
   scouts: ScoutInfo[];
   preferences: ScoutPref[];
   existingPitRotations: ExistingPitRotation[];
   existingMatchAssignments: ExistingMatchAssignment[];
+  /**
+   * Matches per scouting block (default 5). Everything below counted in
+   * blocks scales with it — pit rotation windows stay 2 blocks long.
+   */
+  matchesPerBlock?: number;
   /** Scout IDs to skip entirely — they receive no auto-generated assignments. */
   excludedScoutIds?: string[];
   /**
@@ -266,9 +275,9 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
   );
   const matchPool = scouts.filter(s => !driveTeamIds.has(s._id));
 
-  // 1. Build 5-match blocks
+  // 1. Build blocks (5 matches unless the admin changed the rotation size)
   const sorted = [...qualMatches].sort((a, b) => a.matchNumber - b.matchNumber);
-  const blocks = chunk(sorted, 5);
+  const blocks = chunk(sorted, Math.max(1, Math.floor(input.matchesPerBlock ?? DEFAULT_MATCHES_PER_BLOCK)));
   const B = blocks.length;
   const blockStart = (bi: number) => blocks[bi][0].matchNumber;
   const blockEnd   = (bi: number) => blocks[bi][blocks[bi].length - 1].matchNumber;
@@ -1240,6 +1249,25 @@ export function runTests(): TestResult[] {
       assert(r.startMatch === expected[i][0] && r.endMatch === expected[i][1],
         `Window ${i}: expected Q${expected[i][0]}-Q${expected[i][1]}, got Q${r.startMatch}-Q${r.endMatch}`);
     });
+  });
+
+  // T23 ── A custom rotation size regroups blocks and scales pit windows with it
+  test("T23 matchesPerBlock=4: same 6 scouts per 4-match block, 8-match pit windows", () => {
+    const scouts = makeScouts(14); const matches = makeMatches(32);
+    const prefs = makePrefs(scouts, [{}, { wantsPitRotation: true }]);
+    const out = generateSchedule({
+      qualMatches: matches, scouts, preferences: prefs,
+      existingPitRotations: [], existingMatchAssignments: [],
+      driveTeamScoutIds: ["s1"], matchesPerBlock: 4,
+    });
+    assert(out.stats.totalBlocks === 8, `Expected 8 blocks, got ${out.stats.totalBlocks}`);
+    const crew = (mn: number) => POSITIONS.map(p => out.matchAssignments.find(a => a.matchNumber === mn && a.position === p)?.scoutId).join(",");
+    for (let start = 1; start <= 32; start += 4)
+      for (let mn = start; mn < start + 4; mn++)
+        assert(crew(mn) === crew(start), `Q${mn} has a different crew than Q${start}`);
+    assert(new Set([1, 5, 9, 13, 17, 21, 25, 29].map(crew)).size > 1, "Crew never rotates between blocks");
+    const windows = out.newPitRotations.map(r => `${r.startMatch}-${r.endMatch}`).join(" ");
+    assert(windows === "1-8 9-16 17-24 25-32", `Unexpected pit windows: ${windows}`);
   });
 
   return results;

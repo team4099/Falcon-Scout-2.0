@@ -201,6 +201,9 @@ export default defineSchema({
   eventMatchPlans: defineTable({
     eventKey:       v.string(),
     qualMatchCount: v.number(),
+    // Matches a scout group covers before rotating out (default 5). Applies
+    // whether or not TBA has published, so a row can exist with a 0 count.
+    matchesPerRotation: v.optional(v.number()),
     updatedAt:      v.number(),
   }).index("by_event", ["eventKey"]),
 

@@ -94,3 +94,45 @@ describe("match assignment vs pit rotation", () => {
     expect(await t.run(async (ctx) => ctx.db.query("matchAssignments").collect())).toHaveLength(3);
   });
 });
+
+describe("setRotationSize", () => {
+  async function setup() {
+    const t = convexTest(schema, modules);
+    const ids = await t.run(async (ctx) => ({
+      adminId: await ctx.db.insert("users", { name: "Admin", email: ADMIN_EMAIL }),
+      scoutId: await ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" }),
+    }));
+    const asAdmin = t.withIdentity({ subject: ids.adminId, issuer: "test", email: ADMIN_EMAIL });
+    const asScout = t.withIdentity({ subject: ids.scoutId, issuer: "test" });
+    return { asAdmin, asScout };
+  }
+  const plan = (as: Awaited<ReturnType<typeof setup>>["asAdmin"]) => as.query(api.schedules.getMatchPlan, { eventKey: EVENT });
+
+  test("admin-only, and rejects sizes outside 1-20", async () => {
+    const { asAdmin, asScout } = await setup();
+    await expect(asScout.mutation(api.schedules.setRotationSize, { eventKey: EVENT, matchesPerRotation: 4 })).rejects.toThrow(/[Aa]dmin/);
+    for (const bad of [0, 21, 2.5]) {
+      await expect(asAdmin.mutation(api.schedules.setRotationSize, { eventKey: EVENT, matchesPerRotation: bad })).rejects.toThrow(/between 1 and 20/);
+    }
+    expect(await plan(asAdmin)).toBeNull();
+  });
+
+  test("works without a planned count and survives the count being set or cleared", async () => {
+    const { asAdmin } = await setup();
+    await asAdmin.mutation(api.schedules.setRotationSize, { eventKey: EVENT, matchesPerRotation: 4 });
+    expect(await plan(asAdmin)).toMatchObject({ qualMatchCount: 0, matchesPerRotation: 4 });
+
+    await asAdmin.mutation(api.schedules.setMatchPlan, { eventKey: EVENT, qualMatchCount: 60 });
+    expect(await plan(asAdmin)).toMatchObject({ qualMatchCount: 60, matchesPerRotation: 4 });
+
+    await asAdmin.mutation(api.schedules.setMatchPlan, { eventKey: EVENT, qualMatchCount: 0 });
+    expect(await plan(asAdmin)).toMatchObject({ qualMatchCount: 0, matchesPerRotation: 4 });
+  });
+
+  test("clearing a count with no rotation size still drops the row", async () => {
+    const { asAdmin } = await setup();
+    await asAdmin.mutation(api.schedules.setMatchPlan, { eventKey: EVENT, qualMatchCount: 60 });
+    await asAdmin.mutation(api.schedules.setMatchPlan, { eventKey: EVENT, qualMatchCount: 0 });
+    expect(await plan(asAdmin)).toBeNull();
+  });
+});

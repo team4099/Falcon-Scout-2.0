@@ -51,7 +51,8 @@ export const setMatchPlan = mutation({
 
     // 0 means "no plan" — drop the row rather than storing a count that would
     // render an empty grid indistinguishable from a real zero-match event.
-    if (qualMatchCount === 0) {
+    // A row that also carries a rotation size is kept, with its count zeroed.
+    if (qualMatchCount === 0 && existing?.matchesPerRotation === undefined) {
       if (existing) await ctx.db.delete(existing._id);
       return;
     }
@@ -60,6 +61,35 @@ export const setMatchPlan = mutation({
       await ctx.db.patch(existing._id, { qualMatchCount, updatedAt: Date.now() });
     } else {
       await ctx.db.insert("eventMatchPlans", { eventKey, qualMatchCount, updatedAt: Date.now() });
+    }
+  },
+});
+
+/** Longest rotation an admin can set — past this a "rotation" is most of a day. */
+const MAX_MATCHES_PER_ROTATION = 20;
+
+/** Set how many matches a scout group covers before rotating out. Only changes
+ *  how the grid groups matches and what Auto-Generate fills from now on —
+ *  saved assignments are per match and are never touched. */
+export const setRotationSize = mutation({
+  args: {
+    eventKey: v.string(),
+    matchesPerRotation: v.number(),
+    adminKey: v.optional(v.string()),
+  },
+  handler: async (ctx, { eventKey, matchesPerRotation, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
+    if (!Number.isInteger(matchesPerRotation) || matchesPerRotation < 1 || matchesPerRotation > MAX_MATCHES_PER_ROTATION) {
+      throw new Error(`Matches per rotation must be a whole number between 1 and ${MAX_MATCHES_PER_ROTATION}`);
+    }
+    const existing = await ctx.db
+      .query("eventMatchPlans")
+      .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
+      .first();
+    if (existing) {
+      await ctx.db.patch(existing._id, { matchesPerRotation, updatedAt: Date.now() });
+    } else {
+      await ctx.db.insert("eventMatchPlans", { eventKey, qualMatchCount: 0, matchesPerRotation, updatedAt: Date.now() });
     }
   },
 });

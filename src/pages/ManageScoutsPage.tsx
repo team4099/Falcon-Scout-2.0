@@ -48,6 +48,8 @@ interface User {
   image?: string;
   /** Set by users.listUsers for approved guests: the FRC team they're from. */
   guestTeamNumber?: number;
+  /** Set by users.listUsers for approved guests (non-@team4099.com). */
+  isGuest?: boolean;
   /** Set by users.listUsers: on the current event's roster (convex/roster.ts). */
   onRoster?: boolean;
 }
@@ -502,8 +504,9 @@ export default function ManageScoutsPage() {
   // (convex/roster.ts). A pre-roster cached list has no flag → all on roster.
   const everyUser = useQuery(api.users.listUsers) as User[] | undefined;
   const allUsers = everyUser?.filter((u) => u.onRoster !== false);
+  // Team accounts only — off-roster guests are added from GuestRequestsPanel.
   const offRoster = (everyUser ?? [])
-    .filter((u) => u.onRoster === false)
+    .filter((u) => u.onRoster === false && !u.isGuest)
     .sort((a, b) => displayName(a).localeCompare(displayName(b)));
   const submissions = useQuery(
     api.forms.listSubmissionSummaries,
@@ -1346,11 +1349,6 @@ export default function ManageScoutsPage() {
                           <Avatar user={user} size={24} />
                           <div style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, color: "var(--muted-foreground)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                             {name}
-                            {user.guestTeamNumber !== undefined && (
-                              <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: "oklch(0.85 0.18 95 / 80%)" }}>
-                                Team {user.guestTeamNumber}
-                              </span>
-                            )}
                           </div>
                           <button
                             onClick={() => {
