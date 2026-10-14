@@ -258,16 +258,20 @@ export const getMyBalance = query({
   },
 });
 
-/**
- * The legendary "pls beg" button. Grants exactly +10 coins.
- * 3-second cooldown enforced on the frontend. Pure desperation energy.
- */
 /** Cooldown between begs. Mirrored in the UI, but enforced here. */
 // Begging is the fallback for a scout who is genuinely broke, not an income
-// stream. 1 coin on a 60s cooldown makes it a last resort rather than a way to
-// out-earn scouting.
+// stream. 0–10 coins (avg 5) on a 60s cooldown keeps it a last resort rather
+// than a way to out-earn scouting.
 const BEG_COOLDOWN_MS = 60_000;
-const BEG_AMOUNT = 1;
+export const BEG_MAX = 10;
+export const BEG_JACKPOT = 100;
+export const BEG_JACKPOT_ODDS = 1 / 10_000;
+
+/** One beg roll: 1-in-10,000 jackpot, otherwise a uniform 0..BEG_MAX. */
+export function rollBeg(rand: () => number = Math.random): { amount: number; jackpot: boolean } {
+  if (rand() < BEG_JACKPOT_ODDS) return { amount: BEG_JACKPOT, jackpot: true };
+  return { amount: Math.floor(rand() * (BEG_MAX + 1)), jackpot: false };
+}
 
 export const beg = mutation({
   args: { eventKey: v.string() },
@@ -282,8 +286,24 @@ export const beg = mutation({
       .withIndex("by_user_event", (q) => q.eq("userId", userId).eq("eventKey", eventKey))
       .first();
 
+    // The 3s cooldown used to live only in BettingPage, so it constrained the
+    // button and not the mutation — a loop could mint unlimited coins.
+    if (bal) {
+      const since = now - (bal.lastBegAt ?? 0);
+      if (since < BEG_COOLDOWN_MS) {
+        const wait = Math.ceil((BEG_COOLDOWN_MS - since) / 1000);
+        throw new Error(`Slow down — you can beg again in ${wait}s.`);
+      }
+    }
+
+    // Rolled server-side: the client only learns the result.
+    const { amount, jackpot } = rollBeg();
+    const totalBegs = (bal?.totalBegs ?? 0) + 1;
+    // Rows from before totalBegCoins existed only ever got 1 coin per beg.
+    const totalBegCoins = (bal ? (bal.totalBegCoins ?? bal.totalBegs) : 0) + amount;
+    const balanceAfter = (bal?.balance ?? STARTING_BALANCE) + amount;
+
     if (!bal) {
-      const balanceAfter = STARTING_BALANCE + BEG_AMOUNT;
       await ctx.db.insert("userBalances", {
         userId,
         eventKey,
@@ -291,29 +311,15 @@ export const beg = mutation({
         totalWon:  0,
         totalLost: 0,
         totalBet:  0,
-        totalBegs: 1,
+        totalBegs,
+        totalBegCoins,
         lastBegAt: now,
       });
-      await logTransaction(ctx, userId, eventKey, "beg", BEG_AMOUNT, balanceAfter);
-      return { newBalance: balanceAfter, totalBegs: 1 };
+    } else {
+      await ctx.db.patch(bal._id, { balance: balanceAfter, totalBegs, totalBegCoins, lastBegAt: now });
     }
-
-    // The 3s cooldown used to live only in BettingPage, so it constrained the
-    // button and not the mutation — a loop could mint unlimited coins.
-    const since = now - (bal.lastBegAt ?? 0);
-    if (since < BEG_COOLDOWN_MS) {
-      const wait = Math.ceil((BEG_COOLDOWN_MS - since) / 1000);
-      throw new Error(`Slow down — you can beg again in ${wait}s.`);
-    }
-
-    const balanceAfter = bal.balance + BEG_AMOUNT;
-    await ctx.db.patch(bal._id, {
-      balance:   balanceAfter,
-      totalBegs: (bal.totalBegs ?? 0) + 1,
-      lastBegAt: now,
-    });
-    await logTransaction(ctx, userId, eventKey, "beg", BEG_AMOUNT, balanceAfter);
-    return { newBalance: balanceAfter, totalBegs: (bal.totalBegs ?? 0) + 1 };
+    await logTransaction(ctx, userId, eventKey, "beg", amount, balanceAfter, jackpot ? "JACKPOT" : undefined);
+    return { newBalance: balanceAfter, totalBegs, amount, jackpot };
   },
 });
 
@@ -850,6 +856,7 @@ export const clearAllMarkets = mutation({
         totalLost: 0,
         totalBet:  0,
         totalBegs: 0,
+        totalBegCoins: 0,
       });
     }
 

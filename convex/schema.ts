@@ -406,6 +406,8 @@ export default defineSchema({
     // rows predate the payout; treat undefined as 0.
     totalEarned:    v.optional(v.number()),
     lastBegAt:      v.optional(v.number()), // server-enforced beg cooldown
+    // Coins won by begging. Optional: older rows predate it (each beg was 1 coin).
+    totalBegCoins:  v.optional(v.number()),
     totalPenalties: v.optional(v.number()), // coins lost for skipping markets
   })
     .index("by_user_event", ["userId", "eventKey"]),

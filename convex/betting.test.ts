@@ -5,8 +5,9 @@
  * nothing) and beg having no server-side cooldown (unlimited coins).
  */
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
+import { BEG_JACKPOT, BEG_JACKPOT_ODDS, BEG_MAX, rollBeg } from "./betting";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -116,12 +117,51 @@ describe("placeBet", () => {
   });
 });
 
-// Begging was nerfed to 1 coin on a 60s cooldown so that scouting, not
-// gambling or begging, is the way to earn. Kept as a constant so the intent of
-// these tests survives future rebalancing.
-const BEG_AMOUNT = 1;
+// Begging pays a random 0–10 on a 60s cooldown so that scouting, not gambling
+// or begging, is the way to earn. Pin Math.random so the server's roll is
+// deterministic: 0.5 skips the jackpot and lands on floor(0.5 * 11) = 5.
+const BEG_AMOUNT = 5;
+
+describe("rollBeg", () => {
+  test("stays in 0..BEG_MAX outside the jackpot", () => {
+    expect(rollBeg(() => 0.5)).toEqual({ amount: 5, jackpot: false });
+    let calls = 0;
+    expect(rollBeg(() => (calls++ === 0 ? 0.5 : 0))).toEqual({ amount: 0, jackpot: false });
+    calls = 0;
+    expect(rollBeg(() => (calls++ === 0 ? 0.5 : 0.9999999))).toEqual({ amount: BEG_MAX, jackpot: false });
+  });
+
+  test("jackpot is 1-in-10,000 and pays 100", () => {
+    expect(BEG_JACKPOT_ODDS).toBe(1 / 10_000);
+    expect(rollBeg(() => 0.00005)).toEqual({ amount: BEG_JACKPOT, jackpot: true });
+    expect(rollBeg(() => 0.0001).jackpot).toBe(false);
+  });
+});
 
 describe("beg", () => {
+  beforeEach(() => { vi.spyOn(Math, "random").mockReturnValue(0.5); });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  test("returns the rolled amount and tracks coins begged", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, as } = await setup(t, 0);
+    const res = await as.mutation(api.betting.beg, { eventKey: EVENT });
+    expect(res).toMatchObject({ amount: BEG_AMOUNT, jackpot: false, totalBegs: 1, newBalance: BEG_AMOUNT });
+    const row = await t.run((ctx) => ctx.db.query("userBalances")
+      .withIndex("by_user_event", (q) => q.eq("userId", userId).eq("eventKey", EVENT)).first());
+    expect(row).toMatchObject({ totalBegs: 1, totalBegCoins: BEG_AMOUNT });
+  });
+
+  test("jackpot pays 100 and is noted in the ledger", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const t = convexTest(schema, modules);
+    const { as, bal, txns } = await setup(t, 0);
+    const res = await as.mutation(api.betting.beg, { eventKey: EVENT });
+    expect(res).toMatchObject({ amount: BEG_JACKPOT, jackpot: true });
+    expect(await bal()).toBe(BEG_JACKPOT);
+    expect((await txns())[0]).toMatchObject({ type: "beg", amount: BEG_JACKPOT, note: "JACKPOT" });
+  });
+
   test("cannot be looped to mint unlimited coins", async () => {
     const t = convexTest(schema, modules);
     const { as, bal } = await setup(t, 0);
@@ -526,12 +566,14 @@ describe("coin transaction ledger", () => {
   });
 
   test("beg logs a beg entry", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
     const t = convexTest(schema, modules);
     const { as, txns } = await setup(t, 0);
 
     await as.mutation(api.betting.beg, { eventKey: EVENT });
+    vi.restoreAllMocks();
     const rows = await txns();
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ type: "beg", amount: 1 });
+    expect(rows[0]).toMatchObject({ type: "beg", amount: BEG_AMOUNT });
   });
 });
