@@ -1062,7 +1062,6 @@ export default function DashboardPage() {
       : "No teams found for this event.";
 
   const totalScouted = (allSubmissions ?? []).length;
-  const scoutedUniqueTeams = scoutedTeams.size;
 
   return (
     <div className="h-full flex flex-col gap-4">
@@ -1099,15 +1098,11 @@ export default function DashboardPage() {
         </div>
         <div className="flex gap-4 sm:gap-6">
           <div className="text-center">
-            <p className="text-xs text-muted-foreground">Scouted</p>
+            <p className="text-xs text-muted-foreground">Forms Scouted</p>
             <p className="text-xl sm:text-2xl font-bold text-primary">{totalScouted}</p>
           </div>
           <div className="text-center">
             <p className="text-xs text-muted-foreground">Teams</p>
-            <p className="text-xl sm:text-2xl font-bold text-primary">{scoutedUniqueTeams}</p>
-          </div>
-          <div className="text-center">
-            <p className="text-xs text-muted-foreground">At Event</p>
             <p className="text-xl sm:text-2xl font-bold">{allTeams.length}</p>
           </div>
         </div>
