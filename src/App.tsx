@@ -60,20 +60,23 @@ import BettingPage from "@/pages/BettingPage";
 import GuestAccessPage from "@/pages/GuestAccessPage";
 import { resolveAuthGate, type AccessStatus } from "@/lib/authGate";
 
-// Base nav items — always visible. Scheduling is here (not the admin-only
-// list below) because non-admins can view everyone's assignments read-only;
-// SchedulingPage itself gates editing on isAdminMode.
-const BASE_NAV = [
-  { to: "/",          label: "Dashboard",       icon: LayoutDashboard },
-  { to: "/matches",   label: "Matches",         icon: CalendarDays    },
+// The one nav order, shared by the desktop sidebar and the mobile bar (first
+// MOBILE_PRIMARY_COUNT items are tabs, the rest go under "More"). `short` is
+// the mobile label where the full one doesn't fit. Scheduling is here (not
+// the admin-only list below) because non-admins can view everyone's
+// assignments read-only; SchedulingPage itself gates editing on isAdminMode.
+const BASE_NAV: NavEntry[] = [
+  { to: "/",           label: "Dashboard",      icon: LayoutDashboard },
+  { to: "/matches",    label: "Matches",        icon: CalendarDays    },
+  { to: "/schedule",   label: "My Assignments", short: "Assignments", icon: CalendarDays },
+  { to: "/scout",      label: "Scout Match",    short: "Scout",       icon: ClipboardList },
+  { to: "/qrcodes",    label: "My QR Codes",    short: "QR Codes",    icon: QrCode },
+  { to: "/betting",    label: "FalconBet",      icon: DollarSign      },
+  { to: "/data",       label: "Data Viewer",    short: "Data",        icon: BarChart2 },
+  { to: "/kanban",     label: "Picklist",       icon: Columns         },
   { to: "/scheduling", label: "Scheduling",     icon: CalendarDays    },
-  { to: "/schedule",  label: "My Assignments",  icon: CalendarDays    },
-  { to: "/scout",     label: "Scout Match",     icon: ClipboardList   },
-  { to: "/betting",   label: "FalconBet",       icon: DollarSign      },
-  { to: "/qrcodes",   label: "My QR Codes",     icon: QrCode          },
-  { to: "/kanban",    label: "Picklist",        icon: Columns         },
-  { to: "/data",      label: "Data Viewer",     icon: BarChart2       },
 ];
+const MOBILE_PRIMARY_COUNT = 4;
 
 /** Red "needs attention" dot, e.g. pending guest requests on Manage Scouts. */
 function AlertDot({ className = "" }: { className?: string }) {
@@ -105,7 +108,7 @@ function NavItem({ to, label, icon: Icon, alert }: NavEntry) {
   );
 }
 
-type NavEntry = { to: string; label: string; icon: React.ElementType; alert?: boolean };
+type NavEntry = { to: string; label: string; short?: string; icon: React.ElementType; alert?: boolean };
 
 function MobileBottomNav({ primary, more }: { primary: NavEntry[]; more: NavEntry[] }) {
   const [moreOpen, setMoreOpen] = useState(false);
@@ -258,41 +261,22 @@ function AuthenticatedApp() {
   const guestsPending = (useQuery(api.guests.pendingCount, isAdminMode ? {} : "skip") ?? 0) > 0;
 
   // Build nav dynamically — admin-only items shown/hidden based on isAdminMode
-  const NAV = [
+  const NAV: NavEntry[] = [
     ...(locked ? [] : BASE_NAV),
     ...(isAdminMode && !locked
       ? [
-          { to: "/builder",     label: "Form Builder",  icon: WrenchIcon  },
-          { to: "/scouts",      label: "Manage Scouts", icon: Users, alert: guestsPending },
+          { to: "/scouts",      label: "Manage Scouts", short: "Scouts", icon: Users, alert: guestsPending },
           { to: "/submissions", label: "Submissions",   icon: Inbox },
+          { to: "/builder",     label: "Form Builder",  icon: WrenchIcon },
         ]
       : []),
     { to: "/settings", label: "Settings", icon: Settings },
   ];
 
-  // Bottom nav (most-used on mobile) — max 4 primary + More overflow
-  const BOTTOM_NAV_PRIMARY = locked ? [] : [
-    { to: "/",          label: "Dashboard", icon: LayoutDashboard },
-    { to: "/scout",     label: "Scout",     icon: ClipboardList   },
-    { to: "/schedule",  label: "Assignments", icon: CalendarDays  },
-    { to: "/matches",   label: "Matches",   icon: CalendarDays    },
-  ];
-
-  const BOTTOM_NAV_MORE = locked ? [] : [
-    { to: "/data",       label: "Data",       icon: BarChart2    },
-    { to: "/betting",    label: "FalconBet",  icon: DollarSign   },
-    { to: "/qrcodes",    label: "QR Codes",   icon: QrCode       },
-    { to: "/kanban",     label: "Picklist",   icon: Columns      },
-    { to: "/scheduling", label: "Scheduling", icon: CalendarDays },
-    ...(isAdminMode
-      ? [
-          { to: "/scouts",      label: "Scouts",       icon: Users, alert: guestsPending },
-          { to: "/submissions", label: "Submissions",  icon: Inbox },
-          { to: "/builder",     label: "Form Builder", icon: WrenchIcon  },
-        ]
-      : []),
-    { to: "/settings", label: "Settings",  icon: Settings    },
-  ];
+  // Mobile: same order as NAV — first few as tabs, the rest under "More".
+  const mobileNav = NAV.map((n) => ({ ...n, label: n.short ?? n.label }));
+  const BOTTOM_NAV_PRIMARY = locked ? [] : mobileNav.slice(0, MOBILE_PRIMARY_COUNT);
+  const BOTTOM_NAV_MORE = locked ? mobileNav : mobileNav.slice(MOBILE_PRIMARY_COUNT);
 
   // Stamp the sync time only once the backend is genuinely connected — this
   // used to fire on navigator.onLine, so "Synced now" appeared even when no
