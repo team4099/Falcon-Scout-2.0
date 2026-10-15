@@ -13,8 +13,8 @@ interface FormatField {
 
 /**
  * Equal for two forms exactly when a report filed with one reads the same
- * against the other. Description, coin reward, active state and the "Rankings
- * column" tag are settings, not format, so they are left out.
+ * against the other. Descriptions (form and field), coin reward, active state and
+ * the "Rankings column" tag are settings, not format, so they are left out.
  */
 export function formatKey(form: { name: string; formType?: string; fields: FormatField[] }): string {
   return JSON.stringify([

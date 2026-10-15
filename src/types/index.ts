@@ -45,6 +45,7 @@ export interface FormField {
   options?: string[];    // for select/radio fields; rating fields use options[0] as max (default "5")
   section?: string;
   showInRankings?: boolean; // offered as a hidden-by-default Dashboard rankings column
+  description?: string;     // help text shown under the label on the scouting form
 }
 
 export interface FormTemplate {

@@ -180,6 +180,7 @@ const fieldValidator = v.object({
   options: v.optional(v.array(v.string())),
   section: v.optional(v.string()),
   showInRankings: v.optional(v.boolean()),
+  description: v.optional(v.string()),
 });
 
 // ──────────────────────────────────────────────

@@ -192,6 +192,12 @@ function PhotoField({
   );
 }
 
+/** Admin-written help text for a field; form-only, never a rankings column. */
+function FieldDescription({ text }: { text?: string }) {
+  if (!text) return null;
+  return <p className="text-xs text-muted-foreground whitespace-pre-line">{text}</p>;
+}
+
 // ──────────────────────────────────────────────
 // Single field renderer
 // ──────────────────────────────────────────────
@@ -938,11 +944,13 @@ export default function ScoutMatchPage() {
                       )}
                     </Label>
                   )}
+                  {field.type !== "checkbox" && <FieldDescription text={field.description} />}
                   <FieldRenderer
                     field={field}
                     value={formData[field.id]}
                     onChange={(v) => setValue(field.id, v)}
                   />
+                  {field.type === "checkbox" && <FieldDescription text={field.description} />}
                 </div>
               ))}
             </div>

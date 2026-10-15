@@ -98,10 +98,12 @@ describe("editing a form", () => {
 
     await admin.mutation(api.forms.updateTemplate, {
       id: templateId, description: "notes", coinReward: 75,
-      fields: GAME_2025.map((f) => ({ ...f, showInRankings: true })),
+      fields: GAME_2025.map((f) => ({ ...f, showInRankings: true, description: `How many ${f.label}?` })),
     });
 
     expect(await t.run((ctx) => ctx.db.query("formTemplateSnapshots").collect())).toHaveLength(0);
+    const saved = await t.run((ctx) => ctx.db.get(templateId));
+    expect(saved?.fields.map((f) => f.description)).toEqual(["How many Coral scored?", "How many Algae scored?"]);
   });
 
   test("a Rankings-column tag still reaches a frozen event's surviving fields", async () => {

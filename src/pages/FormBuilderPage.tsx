@@ -253,7 +253,9 @@ function FieldEditor({
     const options = hasChoiceOptions(draft.type)
       ? [...new Set((draft.options ?? []).map((o) => o.trim()).filter(Boolean))]
       : draft.options;
-    onChange({ ...draft, label: draft.label.trim() || field.label, options });
+    const { description: rawDescription, ...rest } = draft;
+    const description = rawDescription?.trim();
+    onChange({ ...rest, label: draft.label.trim() || field.label, options, ...(description ? { description } : {}) });
     setOpen(false);
   }
 
@@ -291,6 +293,19 @@ function FieldEditor({
           <div className="space-y-1.5">
             <Label>{draft.type === "radio" ? "Question / prompt" : "Label"}</Label>
             <Input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="fieldDescription">
+              Description <span className="font-normal text-muted-foreground">(optional)</span>
+            </Label>
+            <Textarea
+              id="fieldDescription"
+              rows={2}
+              value={draft.description ?? ""}
+              placeholder="Shown to scouts under the label, e.g. how to judge this"
+              onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+            />
           </div>
 
           <div className="space-y-1.5">
@@ -1326,6 +1341,7 @@ function FormBuilderContent() {
                           {f.required && <span className="text-primary ml-1">*</span>}
                           {f.id === AUTO_TEAM_FIELD.id && <span className="text-xs text-muted-foreground ml-2 italic">auto</span>}
                         </Label>
+                        {f.description && <p className="text-xs text-muted-foreground whitespace-pre-line">{f.description}</p>}
                         {f.type === "teamNumber" && <Input type="number" placeholder="e.g. 4099" disabled />}
                         {f.type === "text" && <Input placeholder={f.label} disabled />}
                         {f.type === "textarea" && <Textarea placeholder={f.label} disabled rows={2} />}

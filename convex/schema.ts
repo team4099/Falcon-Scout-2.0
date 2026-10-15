@@ -38,6 +38,8 @@ const templateFormat = {
     section: v.optional(v.string()),
     // Dashboard rankings: offer this field as an (off-by-default) column.
     showInRankings: v.optional(v.boolean()),
+    // Help text shown under the label on the scouting form.
+    description: v.optional(v.string()),
   })),
 };
 
