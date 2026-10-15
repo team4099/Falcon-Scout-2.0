@@ -389,7 +389,7 @@ export function buildTimelines(opts: {
   return out;
 }
 
-/** One X slot of a line chart: `x` = 1-based slot, `t<team>` = value,
+/** One X slot of a line chart: `x` = matches back (latest = 1), `t<team>` = value,
  *  `l<team>` = that team's own match at this slot. */
 export type AlignedRow = { x: number } & Record<string, number | string>;
 
@@ -409,7 +409,8 @@ export function alignTimelines(
     .map((team) => ({ team, pts: (timelines[team] ?? []).filter((p) => p.values[metric] !== undefined) }))
     .filter((s) => s.pts.length > 0);
   const slots = Math.max(0, ...series.map((s) => s.pts.length));
-  const rows: AlignedRow[] = Array.from({ length: slots }, (_, i) => ({ x: i + 1 }));
+  // Numbered backwards: oldest slot = N … latest = 1 ("matches back").
+  const rows: AlignedRow[] = Array.from({ length: slots }, (_, i) => ({ x: slots - i }));
   for (const { team, pts } of series) {
     const offset = slots - pts.length;
     pts.forEach((p, i) => {

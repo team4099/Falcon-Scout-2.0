@@ -172,10 +172,10 @@ describe("alignTimelines", () => {
 
     expect(teams).toEqual([1, 2]);
     expect(rows).toEqual([
-      { x: 1, t1: 10, l1: "Q2" },
-      { x: 2, t1: 11, l1: "Q5" },
-      { x: 3, t1: 12, l1: "Q9", t2: 20, l2: "Q3" },
-      { x: 4, t1: 13, l1: "Q14", t2: 21, l2: "Q11" },
+      { x: 4, t1: 10, l1: "Q2" },
+      { x: 3, t1: 11, l1: "Q5" },
+      { x: 2, t1: 12, l1: "Q9", t2: 20, l2: "Q3" },
+      { x: 1, t1: 13, l1: "Q14", t2: 21, l2: "Q11" },
     ]);
   });
 

@@ -309,7 +309,7 @@ function LineView({ cfg, ctx }: { cfg: ChartCfg; ctx: ChartContext }) {
     return <Empty msg={`No ${yLabel} data for ${scope === "season" ? "this season" : "this event"}'s matches yet`} />;
   }
 
-  const xLabel = scope === "season" ? "Matches played this season" : "Matches played";
+  const xLabel = scope === "season" ? "Matches back this season (1 = latest)" : "Matches back (1 = latest)";
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       {teams.length > LINE_SPAGHETTI_THRESHOLD && <TooManyLinesHint count={teams.length} />}
@@ -324,10 +324,12 @@ function LineView({ cfg, ctx }: { cfg: ChartCfg; ctx: ChartContext }) {
             content={({ active, payload, label }) => {
               if (!active || !payload?.length) return null;
               const row = payload[0].payload as Record<string, unknown>;
-              const entries = payload.filter((p) => typeof p.value === "number");
+              // Highest first, so the list stacks like the lines at this X.
+              const entries = payload.filter((p) => typeof p.value === "number")
+                .sort((a, b) => (b.value as number) - (a.value as number));
               return (
                 <div className="rounded-lg border border-border bg-popover px-3 py-2 shadow-xl text-xs space-y-1">
-                  <p className="font-bold">Match {label} of {data.length}</p>
+                  <p className="font-bold">{label === 1 ? "Latest match" : `${label} matches back`}</p>
                   {entries.map((p) => {
                     const team = String(p.dataKey).slice(1);
                     return (
