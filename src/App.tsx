@@ -274,7 +274,7 @@ function AuthenticatedApp() {
   const BOTTOM_NAV_PRIMARY = locked ? [] : [
     { to: "/",          label: "Dashboard", icon: LayoutDashboard },
     { to: "/scout",     label: "Scout",     icon: ClipboardList   },
-    { to: "/schedule",  label: "Schedule",  icon: CalendarDays    },
+    { to: "/schedule",  label: "Assignments", icon: CalendarDays  },
     { to: "/matches",   label: "Matches",   icon: CalendarDays    },
   ];
 

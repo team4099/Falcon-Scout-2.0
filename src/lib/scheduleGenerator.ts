@@ -107,6 +107,19 @@ export interface ExistingMatchAssignment {
   scoutId: string;
 }
 
+/** Qual match numbers a scout can't be assigned to because they're on a qual
+ *  pit rotation covering it, mapped to that rotation's range label. Mirrors the
+ *  server check in convex/schedules.ts (elims rotations don't block matches). */
+export function pitBlockedMatches(rotations: ExistingPitRotation[], scoutId: string | null): Map<number, string> {
+  const blocked = new Map<number, string>();
+  if (!scoutId) return blocked;
+  for (const r of rotations) {
+    if (r.isElims || r.startMatch == null || r.endMatch == null || !r.scoutIds.includes(scoutId)) continue;
+    for (let n = r.startMatch; n <= r.endMatch; n++) blocked.set(n, `Q${r.startMatch}–Q${r.endMatch}`);
+  }
+  return blocked;
+}
+
 /** Matches a scout group covers before rotating out, unless overridden. */
 export const DEFAULT_MATCHES_PER_BLOCK = 5;
 

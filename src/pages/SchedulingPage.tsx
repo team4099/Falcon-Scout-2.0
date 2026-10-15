@@ -26,6 +26,7 @@ import {
   DEFAULT_MATCHES_PER_BLOCK,
   generateSchedule,
   generatePitScoutingTeams,
+  pitBlockedMatches,
   type SchedulerOutput,
   type Position as GenPosition,
   type ScoutPref as GenScoutPref,
@@ -110,6 +111,8 @@ const MUTED     = "var(--muted-foreground)";
 /** Upper bound for the admin-set rotation size (mirrors schedules.setRotationSize). */
 const MAX_ROTATION_SIZE = 20;
 const FG        = "var(--foreground)";
+/** Striped fill for grid cells the pinned scout can't take (on pit rotation then). */
+const PIT_BLOCKED_BG = "repeating-linear-gradient(135deg, oklch(1 0 0 / 5%) 0 4px, transparent 4px 8px)";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -559,6 +562,8 @@ interface MatchGridProps {
   onCellClick: (matchNum: number, matchLbl: string, pos: Position) => void;
   onCycleClick: (cycleMatches: TBAMatch[], pos: Position) => void;
   saving: Set<string>;
+  /** Match numbers the pinned scout is on pit rotation for → rotation range label. */
+  pitBlocked: Map<number, string>;
   /** Matches per scouting rotation — how many quals merge into one row. */
   rotationSize: number;
   isMobile?: boolean;
@@ -594,7 +599,7 @@ function buildGridRows(matches: TBAMatch[], rotationSize: number): GridRow[] {
   return rows;
 }
 
-function MatchGrid({ matches, assignMap, pinnedId, onCellClick, onCycleClick, saving, rotationSize, isMobile, isLandscapePhone, stackLayout, readOnly }: MatchGridProps) {
+function MatchGrid({ matches, assignMap, pinnedId, onCellClick, onCycleClick, saving, pitBlocked, rotationSize, isMobile, isLandscapePhone, stackLayout, readOnly }: MatchGridProps) {
   const [expandedMatchKey, setExpandedMatchKey] = useState<string | null>(null);
   const canExpand = !!(stackLayout && !readOnly);
   const gridRows = useMemo(() => buildGridRows(matches, rotationSize), [matches, rotationSize]);
@@ -673,6 +678,7 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, onCycleClick, sa
               pinnedId={pinnedId}
               onCycleClick={onCycleClick}
               saving={saving}
+              pitRange={row.matches.map(m => pitBlocked.get(m.match_number)).find(Boolean)}
               readOnly={readOnly}
               COL={COL}
               cellPad={cellPad}
@@ -689,6 +695,7 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, onCycleClick, sa
             pinnedId={pinnedId}
             onCellClick={onCellClick}
             saving={saving}
+            pitRange={pitBlocked.get(row.match.match_number)}
             readOnly={readOnly}
             canExpand={canExpand}
             isExpanded={canExpand && expandedMatchKey === row.match.key}
@@ -717,6 +724,12 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, onCycleClick, sa
           <div style={{ width: 10, height: 10, borderRadius: 3, background: SURF_HVR, border: `1px solid ${SURF_BORD}` }} />
           <span style={{ fontSize: 10, color: MUTED }}>Other scout</span>
         </div>
+        {pitBlocked.size > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <div style={{ width: 10, height: 10, borderRadius: 3, background: PIT_BLOCKED_BG, border: `1px solid ${SURF_BORD}` }} />
+            <span style={{ fontSize: 10, color: MUTED }}>Pinned scout on pit</span>
+          </div>
+        )}
         <span style={{ marginLeft: "auto", fontSize: 10, color: MUTED }}>
           {readOnly
             ? "View only — enable admin mode to edit assignments"
@@ -895,6 +908,8 @@ interface SingleMatchRowProps {
   pinnedId: string | null;
   onCellClick: (matchNum: number, matchLbl: string, pos: Position) => void;
   saving: Set<string>;
+  /** Set when the pinned scout is on a pit rotation covering this match. */
+  pitRange?: string;
   readOnly?: boolean;
   canExpand: boolean;
   isExpanded: boolean;
@@ -908,7 +923,7 @@ interface SingleMatchRowProps {
 }
 
 function SingleMatchRow({
-  m, lbl, row, pinnedId, onCellClick, saving, readOnly,
+  m, lbl, row, pinnedId, onCellClick, saving, pitRange, readOnly,
   canExpand, isExpanded, onToggleExpand, onCloseExpand,
   COL, cellPad, cellMinH, cellFontSize, isLandscapePhone,
 }: SingleMatchRowProps) {
@@ -968,12 +983,17 @@ function SingleMatchRow({
                     const isSaving = saving.has(savingKey);
                     const assigned = row[p];
                     const isPinned = assigned?.scoutId === pinnedId;
+                    // The server would refuse the pinned scout here (pit duty).
+                    const blocked = !!pitRange && !isPinned;
 
                     let cellBg     = "transparent";
                     let cellBorder = `1.5px solid transparent`;
                     let textColor  = MUTED;
 
-                    if (assigned) {
+                    if (blocked) {
+                      cellBg = PIT_BLOCKED_BG;
+                      cellBorder = `1.5px solid ${SURF_BORD}`;
+                    } else if (assigned) {
                       if (isPinned) {
                         cellBg = G_DIM;
                         cellBorder = `1.5px solid ${G_STR}`;
@@ -998,24 +1018,26 @@ function SingleMatchRow({
                         )}
                         <button
                           onClick={readOnly ? undefined : () => onCellClick(m.match_number, lbl, p)}
-                          disabled={isSaving || readOnly}
+                          disabled={isSaving || readOnly || blocked}
                           title={
-                            assigned
+                            blocked
+                              ? `Pinned scout is on pit rotation ${pitRange}${assigned ? ` · ${assigned.name}` : ""}`
+                              : assigned
                               ? `${assigned.name} (${POS_META[p].short})${readOnly ? "" : ` — click to ${isPinned ? "unassign" : "replace"}`}`
                               : readOnly ? "Unassigned" : pinnedId ? `Assign to ${POS_META[p].label}` : "Pin a scout first"
                           }
                           style={{
                             margin: isLandscapePhone ? "1px" : "2px",
                             padding: cellPad, borderRadius: 6,
-                            cursor: pinnedId && !readOnly ? "pointer" : "default",
+                            cursor: blocked && !readOnly ? "not-allowed" : pinnedId && !readOnly ? "pointer" : "default",
                             background: cellBg, border: cellBorder,
                             display: "flex", alignItems: "center", justifyContent: "center",
                             fontSize: cellFontSize, fontWeight: 700, color: textColor,
                             transition: "all 0.1s", minHeight: cellMinH, minWidth: 0, overflow: "hidden",
-                            opacity: isSaving ? 0.5 : 1,
+                            opacity: isSaving ? 0.5 : blocked ? 0.45 : 1,
                           }}
                           onMouseEnter={e => {
-                            if (pinnedId && !isSaving && !readOnly) {
+                            if (pinnedId && !isSaving && !readOnly && !blocked) {
                               e.currentTarget.style.background = G_DIM;
                               e.currentTarget.style.border = `1.5px solid ${G_MED}`;
                             }
@@ -1028,7 +1050,8 @@ function SingleMatchRow({
                           {isSaving
                             ? <Loader2 size={10} style={{ animation: "spin 1s linear infinite" }} />
                             : !assigned
-                              ? (pinnedId && !readOnly ? <span style={{ opacity: 0.25, fontSize: 14, fontWeight: 300 }}>+</span> : null)
+                              ? (blocked ? <span style={{ fontSize: cellFontSize - 1, letterSpacing: "0.05em" }}>PIT</span>
+                                : pinnedId && !readOnly ? <span style={{ opacity: 0.25, fontSize: 14, fontWeight: 300 }}>+</span> : null)
                               : <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%", padding: "0 2px" }}>
                                   {assigned.name}{assigned.guest && <GuestTag />}
                                 </span>
@@ -1129,6 +1152,8 @@ interface CycleRowProps {
   pinnedId: string | null;
   onCycleClick: (cycleMatches: TBAMatch[], pos: Position) => void;
   saving: Set<string>;
+  /** Set when the pinned scout is on a pit rotation overlapping this cycle. */
+  pitRange?: string;
   readOnly?: boolean;
   COL: string;
   cellPad: string;
@@ -1138,7 +1163,7 @@ interface CycleRowProps {
 }
 
 function CycleRow({
-  cycleMatches, assignMap, pinnedId, onCycleClick, saving, readOnly,
+  cycleMatches, assignMap, pinnedId, onCycleClick, saving, pitRange, readOnly,
   COL, cellPad, cellMinH, cellFontSize, isLandscapePhone,
 }: CycleRowProps) {
   const first = cycleMatches[0];
@@ -1176,12 +1201,16 @@ function CycleRow({
           // Partly filled, or filled by different scouts (e.g. after the
           // rotation size changed under existing assignments).
           const isMixed = uniformScoutId == null && slots.some(s => s != null);
+          // The server would refuse the pinned scout for this cycle (pit duty).
+          const blocked = !!pitRange && !isPinned;
 
           let cellBg     = "transparent";
           let cellBorder = `1.5px solid transparent`;
           let textColor  = MUTED;
 
-          if (uniformScoutId) {
+          if (blocked) {
+            cellBg = PIT_BLOCKED_BG; cellBorder = `1.5px solid ${SURF_BORD}`;
+          } else if (uniformScoutId) {
             if (isPinned) { cellBg = G_DIM; cellBorder = `1.5px solid ${G_STR}`; textColor = G; }
             else { cellBg = SURF_HVR; cellBorder = `1.5px solid ${SURF_BORD}`; textColor = FG; }
           } else if (isMixed) {
@@ -1197,9 +1226,11 @@ function CycleRow({
               )}
               <button
                 onClick={readOnly ? undefined : () => onCycleClick(cycleMatches, p)}
-                disabled={isSaving || readOnly}
+                disabled={isSaving || readOnly || blocked}
                 title={
-                  readOnly
+                  blocked
+                    ? `Pinned scout is on pit rotation ${pitRange}${uniformScoutId ? ` · ${slots[0]!.name}` : ""}`
+                    : readOnly
                     ? (uniformScoutId ? slots[0]!.name : isMixed ? "Mixed assignment across this cycle" : "Unassigned")
                     : uniformScoutId
                       ? `${slots[0]!.name} (${POS_META[p].short}) for the whole cycle — click to ${isPinned ? "unassign" : "replace"}`
@@ -1210,15 +1241,15 @@ function CycleRow({
                 style={{
                   margin: isLandscapePhone ? "1px" : "2px",
                   padding: cellPad, borderRadius: 6,
-                  cursor: pinnedId && !readOnly ? "pointer" : "default",
+                  cursor: blocked && !readOnly ? "not-allowed" : pinnedId && !readOnly ? "pointer" : "default",
                   background: cellBg, border: cellBorder,
                   display: "flex", alignItems: "center", justifyContent: "center",
                   fontSize: cellFontSize, fontWeight: 700, color: textColor,
                   transition: "all 0.1s", minHeight: cellMinH, minWidth: 0, overflow: "hidden",
-                  opacity: isSaving ? 0.5 : 1,
+                  opacity: isSaving ? 0.5 : blocked ? 0.45 : 1,
                 }}
                 onMouseEnter={e => {
-                  if (pinnedId && !isSaving && !readOnly) {
+                  if (pinnedId && !isSaving && !readOnly && !blocked) {
                     e.currentTarget.style.background = G_DIM;
                     e.currentTarget.style.border = `1.5px solid ${G_MED}`;
                   }
@@ -1236,7 +1267,9 @@ function CycleRow({
                       </span>
                     : isMixed
                       ? <span style={{ fontSize: cellFontSize - 1, opacity: 0.6 }}>···</span>
-                      : (pinnedId && !readOnly ? <span style={{ opacity: 0.25, fontSize: 14, fontWeight: 300 }}>+</span> : null)
+                      : blocked
+                        ? <span style={{ fontSize: cellFontSize - 1, letterSpacing: "0.05em" }}>PIT</span>
+                        : (pinnedId && !readOnly ? <span style={{ opacity: 0.25, fontSize: 14, fontWeight: 300 }}>+</span> : null)
                 }
               </button>
             </Fragment>
@@ -2732,6 +2765,12 @@ export default function SchedulingPage() {
       .finally(() => setTbaTeamsLoading(false));
   }, [activeTab, eventKey]);
 
+  // Matches the pinned scout is on pit duty for — greyed out on the match grid.
+  const pinnedPitBlocked = useMemo(
+    () => pitBlockedMatches(pitRotations ?? [], pinnedScoutId),
+    [pitRotations, pinnedScoutId],
+  );
+
   // Map teamNumber -> scoutIds from Convex pitScoutingTeams
   const pitAssignmentsMap = useMemo(() => {
     const m = new Map<number, string[]>();
@@ -3527,6 +3566,7 @@ export default function SchedulingPage() {
                       onCellClick={handleCellClick}
                       onCycleClick={handleCycleClick}
                       saving={savingCells}
+                      pitBlocked={pinnedPitBlocked}
                       rotationSize={rotationSize}
                       isMobile={isMobile}
                       isLandscapePhone={isLandscapePhone}
