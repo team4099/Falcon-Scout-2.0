@@ -222,15 +222,12 @@ function MobileBottomNav({ primary, more }: { primary: NavEntry[]; more: NavEntr
 // overflow-y:auto boxes actually scroll. Without this, height:100% never
 // resolved, the inner boxes grew to full content height, and their
 // overscroll-behavior:contain swallowed wheel/touch scrolls meant for <main>.
-// Manage Scouts only splits into panes from md up — on a phone its header and
-// stat cards would leave the list a sliver, so there the whole page scrolls.
 // Only these routes turn <main> into a flex column; every other page keeps
 // the original block layout untouched (a flex parent would make their own
 // height:100% roots start resolving and clip them). Literal class strings —
 // Tailwind can't see runtime-built names.
 const FILL_ROUTES: Record<string, { main: string; page: string }> = {
   "/submissions": { main: "flex flex-col", page: "flex-1 min-h-[520px] flex flex-col" },
-  "/scouts": { main: "md:flex md:flex-col", page: "min-h-full md:flex-1 md:min-h-[520px] md:flex md:flex-col" },
 };
 const DEFAULT_LAYOUT = { main: "", page: "min-h-full" };
 

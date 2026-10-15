@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { useCached } from "@/hooks/useCached";
@@ -37,6 +37,7 @@ import {
   Save,
   XCircle,
   ArrowDownAZ,
+  ChevronDown,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -492,6 +493,7 @@ export default function ManageScoutsPage() {
   const [deactivating, setDeactivating] = useState<string | null>(null);
   // null = automatic: the pool starts open only while the roster is empty.
   const [showPool, setShowPool] = useState<boolean | null>(null);
+  const poolRef = useRef<HTMLDivElement>(null);
   const [rosterBusy, setRosterBusy] = useState<string | null>(null);
   const [addingScout, setAddingScout] = useState(false);
   const [addScoutEmail, setAddScoutEmail] = useState("");
@@ -886,8 +888,11 @@ export default function ManageScoutsPage() {
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
+  // The whole page scrolls <main> (no fixed-height panes), so the guest list
+  // and roster never squeeze each other; only the desktop detail panel is
+  // sticky so it stays in view beside a long roster.
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden", gap: 20 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <div style={{ flexShrink: 0 }}>
@@ -990,10 +995,10 @@ export default function ManageScoutsPage() {
 
       {/* ── Main content ─────────────────────────────────────────────────── */}
       {currentEvent && (
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16, minHeight: 0 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
           {/* Two-panel layout — on mobile the detail panel covers the full screen */}
-          <div style={{ flex: 1, display: "flex", gap: 14, minHeight: 0, position: "relative" }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 14, position: "relative" }}>
 
             {/* Left: Scout list — hidden on mobile when a scout is selected */}
             <div
@@ -1047,11 +1052,27 @@ export default function ManageScoutsPage() {
                 >
                   {(allUsers ?? []).length}
                 </span>
+                <div style={{ flex: 1 }} />
+                {offRoster.length > 0 && (
+                  <button
+                    onClick={() => {
+                      setShowPool(true);
+                      requestAnimationFrame(() => poolRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+                    }}
+                    title="Jump to people not on this event's roster"
+                    style={{
+                      display: "flex", alignItems: "center", gap: 4, height: 22, padding: "0 8px", flexShrink: 0,
+                      borderRadius: 11, border: "1px solid oklch(1 0 0 / 12%)", background: "transparent",
+                      color: "var(--muted-foreground)", cursor: "pointer", fontSize: 10.5, fontWeight: 700, whiteSpace: "nowrap",
+                    }}
+                  >
+                    {offRoster.length} not on roster <ChevronDown size={11} />
+                  </button>
+                )}
                 <button
                   onClick={() => setShowRanking(true)}
                   title="Report rankings"
                   style={{
-                    marginLeft: "auto",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -1162,9 +1183,8 @@ export default function ManageScoutsPage() {
                 </div>
               )}
 
-              {/* contain only from md up: on phones this box isn't height-limited, and
-                  contain on a non-scrolling box swallows the page scroll. */}
-              <ScrollArea className="md:[&>[data-slot=scroll-area-viewport]]:overscroll-contain" style={{ flex: 1, minHeight: 0 }}>
+              {/* Grows to full height — the page scrolls, not this list. */}
+              <div>
                 <div style={{ padding: "10px 10px 16px" }}>
 
                   {/* Active scouts */}
@@ -1314,7 +1334,7 @@ export default function ManageScoutsPage() {
                     return (
                     <>
                       <Separator style={{ margin: "10px 4px" }} />
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 4px 4px", marginBottom: 2 }}>
+                      <div ref={poolRef} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 4px 4px", marginBottom: 2, scrollMarginTop: 72 }}>
                         <button
                           onClick={() => setShowPool(!poolOpen)}
                           aria-expanded={poolOpen}
@@ -1391,13 +1411,13 @@ export default function ManageScoutsPage() {
                   })()}
 
                 </div>
-              </ScrollArea>
+              </div>
             </div>
 
             {/* Right: Detail panel — full-screen overlay on mobile, side panel on desktop */}
             {selectedUser ? (
               <div
-                className="fixed inset-0 z-40 md:static md:z-auto md:flex md:flex-col md:flex-1 md:min-w-0 md:min-h-0 md:rounded-2xl md:overflow-hidden"
+                className="fixed inset-0 z-40 md:sticky md:top-6 md:z-auto md:flex md:flex-col md:flex-1 md:min-w-0 md:h-[calc(100dvh-3rem)] md:min-h-[480px] md:rounded-2xl md:overflow-hidden"
                 style={{
                   display: "flex",
                   flexDirection: "column",

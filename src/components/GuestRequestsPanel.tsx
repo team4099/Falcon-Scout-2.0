@@ -109,7 +109,7 @@ export default function GuestRequestsPanel() {
       )}
 
       {open && (
-        <ul className="max-h-72 divide-y divide-border overflow-y-auto">
+        <ul className="divide-y divide-border">
           {[...pending, ...decided].map((r) => (
             <li
               key={r._id}
