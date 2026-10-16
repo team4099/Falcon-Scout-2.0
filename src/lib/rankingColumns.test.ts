@@ -45,6 +45,16 @@ describe("taggedFieldColumns", () => {
     expect(cols.map((c) => c.id)).toEqual(["f:m:a"]);
     expect(cols[0].defaultVisible).toBe(false);
   });
+
+  it("makes a synced field one column fed by every form holding it", () => {
+    const cols = taggedFieldColumns([
+      { _id: "m", name: "Match", formType: "default", fields: [f("rating", { id: "a", showInRankings: true })] },
+      { _id: "n", name: "Notes", formType: "super", fields: [f("rating", { id: "a", showInRankings: true })] },
+      { _id: "s", name: "Spy", formType: "spy", fields: [f("rating", { id: "a" })] },
+    ]);
+    expect(cols).toHaveLength(1);
+    expect(cols[0]).toMatchObject({ id: "f:m:a", templateIds: ["m", "n"], group: "Match + Notes" });
+  });
 });
 
 describe("visibleColumns", () => {

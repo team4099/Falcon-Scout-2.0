@@ -4,7 +4,7 @@ import { canViewEvent, eventViewerId, isSignedIn, requireAdmin, requireEventAcce
 import { awardCoins, revokeCoins, DEFAULT_SCOUT_REWARD } from "./betting";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import { formatKey } from "./formFormat";
+import { formatKey, isSyncable, syncedCopy } from "./formFormat";
 
 /**
  * Was this scout actually assigned the work this submission represents?
@@ -494,7 +494,62 @@ export const updateTemplate = mutation({
       isActive,
       ...(description === undefined ? {} : { description: description.trim() || undefined }),
     });
+    if (updates.fields) await syncLinkedFields(ctx, id, updates.fields, keepCurrentEvent);
     return { isActive };
+  },
+});
+
+/**
+ * Push what each of `fields` asks (label, type, options, description) to every
+ * other form holding a field with the same id. Those forms are frozen for past
+ * events first, exactly as if the admin had edited them directly.
+ */
+async function syncLinkedFields(
+  ctx: MutationCtx,
+  id: Id<"formTemplates">,
+  fields: Doc<"formTemplates">["fields"],
+  keepCurrentEvent?: boolean,
+): Promise<void> {
+  const sources = new Map(fields.filter(isSyncable).map((f) => [f.id, f]));
+  if (sources.size === 0) return;
+  const except = keepCurrentEvent ? undefined : (await currentEventRow(ctx))?.eventKey;
+  for (const other of await ctx.db.query("formTemplates").collect()) {
+    if (other._id === id || !isLiveTemplate(other)) continue;
+    const synced = other.fields.map((f) => {
+      const src = sources.get(f.id);
+      return src && f.type !== "teamNumber" ? syncedCopy(f, src) : f;
+    });
+    if (JSON.stringify(synced) === JSON.stringify(other.fields)) continue;
+    if (formatKey({ ...other, fields: synced }) !== formatKey(other)) await freezeEvents(ctx, other, except);
+    await ctx.db.patch(other._id, { fields: synced });
+  }
+}
+
+/**
+ * Copy a saved field into another form as a synced field: same id, so both
+ * forms' answers add up under it, and later edits to either copy sync to the
+ * other (see syncLinkedFields). The copy lands in a section of the same name.
+ */
+export const linkField = mutation({
+  args: {
+    fromId: v.id("formTemplates"),
+    fieldId: v.string(),
+    toId: v.id("formTemplates"),
+    adminKey: v.optional(v.string()),
+  },
+  handler: async (ctx, { fromId, fieldId, toId, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
+    const from = await ctx.db.get(fromId);
+    const to = await ctx.db.get(toId);
+    if (!from || !to || fromId === toId || !isLiveTemplate(to)) throw new Error("Form not found");
+    if (to.formType === "spy") throw new Error("Spying forms have no team, so they can't share a field");
+    const field = from.fields.find((f) => f.id === fieldId);
+    if (!field) throw new Error("Save the form before syncing this field");
+    if (!isSyncable(field)) throw new Error("Team number fields can't be synced");
+    if (to.fields.some((f) => f.id === fieldId)) return;
+    const { showInRankings: _tag, ...copy } = field;
+    await freezeEvents(ctx, to, (await currentEventRow(ctx))?.eventKey);
+    await ctx.db.patch(toId, { fields: [...to.fields, copy] });
   },
 });
 

@@ -32,26 +32,35 @@ export function fieldColumnId(templateId: string, fieldId: string): string {
 }
 
 /** Tagged fields become columns, hidden until a viewer turns them on. Spying
- *  submissions carry no team number, so spy forms can't feed a team row. */
+ *  submissions carry no team number, so spy forms can't feed a team row.
+ *  A synced field (same id on several forms) is one column fed by all of
+ *  them, listed under the first form that tags it. */
 export function taggedFieldColumns(
   templates: Array<{ _id: string; name: string; formType?: string; fields: FormField[] }>
-): Array<RankingColumn & { templateId: string; field: FormField }> {
-  return templates
-    .filter((t) => t.formType !== "spy")
-    .flatMap((t) =>
-      t.fields
-        .filter((f) => f.showInRankings && f.type !== "photo" && f.type !== "teamNumber")
-        .map((f) => ({
+): Array<RankingColumn & { templateId: string; templateIds: string[]; field: FormField }> {
+  const teamForms = templates.filter((t) => t.formType !== "spy");
+  const holders = new Map<string, typeof teamForms>();
+  for (const t of teamForms) for (const f of t.fields) holders.set(f.id, [...(holders.get(f.id) ?? []), t]);
+  const seen = new Set<string>();
+  return teamForms.flatMap((t) =>
+    t.fields
+      .filter((f) => f.showInRankings && f.type !== "photo" && f.type !== "teamNumber" && !seen.has(f.id))
+      .map((f) => {
+        seen.add(f.id);
+        const forms = holders.get(f.id) ?? [t];
+        return {
           id: fieldColumnId(t._id, f.id),
           label: f.label,
           width: 96,
           defaultVisible: false,
           sortable: true,
-          group: t.name,
+          group: forms.map((x) => x.name).join(" + "),
           templateId: t._id,
+          templateIds: forms.map((x) => x._id),
           field: f,
-        }))
-    );
+        };
+      })
+  );
 }
 
 export function visibleColumns<C extends RankingColumn>(

@@ -173,3 +173,62 @@ describe("access", () => {
     expect(await guest.query(api.forms.listEventTemplates, { eventKey: OLD })).toHaveLength(1);
   });
 });
+
+describe("synced fields", () => {
+  async function withNoteForm() {
+    const s = await setup();
+    const noteId = await s.t.run((ctx) =>
+      ctx.db.insert("formTemplates", { name: "Notes", formType: "super", fields: [field("n1", "Comments")], isActive: true }));
+    const fieldsOf = (id: typeof noteId) => s.t.run(async (ctx) => (await ctx.db.get(id))!.fields);
+    return { ...s, noteId, fieldsOf };
+  }
+
+  test("copying keeps the field id and drops the rankings tag", async () => {
+    const { admin, templateId, noteId, fieldsOf } = await withNoteForm();
+    await admin.mutation(api.forms.updateTemplate, {
+      id: templateId, fields: [field("f1", "Coral scored", { showInRankings: true, required: true }), GAME_2025[1]],
+    });
+    await admin.mutation(api.forms.linkField, { fromId: templateId, fieldId: "f1", toId: noteId });
+    await admin.mutation(api.forms.linkField, { fromId: templateId, fieldId: "f1", toId: noteId }); // idempotent
+    expect(await fieldsOf(noteId)).toEqual([field("n1", "Comments"), field("f1", "Coral scored", { required: true })]);
+  });
+
+  test("editing a synced field updates every copy, but not its per-form settings", async () => {
+    const { admin, templateId, noteId, fieldsOf } = await withNoteForm();
+    await admin.mutation(api.forms.linkField, { fromId: templateId, fieldId: "f1", toId: noteId });
+    // The note form moves its copy and makes it optional…
+    await admin.mutation(api.forms.updateTemplate, {
+      id: noteId, fields: [field("n1", "Comments"), field("f1", "Coral scored", { section: "Notes", showInRankings: true })],
+    });
+    // …then the match form renames it and turns it into a rating.
+    await admin.mutation(api.forms.updateTemplate, {
+      id: templateId, fields: [field("f1", "Coral skill", { type: "rating", options: ["5"], description: "1-5" }), GAME_2025[1]],
+    });
+    expect((await fieldsOf(noteId))[1]).toEqual(
+      field("f1", "Coral skill", { type: "rating", options: ["5"], description: "1-5", section: "Notes", showInRankings: true }));
+    expect((await fieldsOf(noteId))[0]).toEqual(field("n1", "Comments"));
+  });
+
+  test("a past event keeps the synced form as it was", async () => {
+    const { admin, templateId, noteId, report, setEvent, formAt } = await withNoteForm();
+    await admin.mutation(api.forms.linkField, { fromId: templateId, fieldId: "f1", toId: noteId });
+    await report(OLD, noteId);
+    await setEvent(NEW);
+    await admin.mutation(api.forms.updateTemplate, { id: templateId, fields: [field("f1", "Fuel scored")] });
+    expect((await formAt(OLD, noteId))?.labels).toEqual(["Comments", "Coral scored"]);
+    expect((await formAt(NEW, noteId))?.labels).toEqual(["Comments", "Fuel scored"]);
+  });
+
+  test("only admins can sync, and never into a spying form or a team# field", async () => {
+    const { t, admin, scout, templateId, noteId } = await withNoteForm();
+    await expect(scout.mutation(api.forms.linkField, { fromId: templateId, fieldId: "f1", toId: noteId }))
+      .rejects.toThrow(/Admin access required/i);
+    const spyId = await t.run((ctx) => ctx.db.insert("formTemplates", { name: "Spy", formType: "spy", fields: [], isActive: true }));
+    await expect(admin.mutation(api.forms.linkField, { fromId: templateId, fieldId: "f1", toId: spyId })).rejects.toThrow(/Spying/);
+    await admin.mutation(api.forms.updateTemplate, {
+      id: templateId, fields: [{ id: "__auto_team__", type: "teamNumber", label: "Team Number", required: true }, ...GAME_2025],
+    });
+    await expect(admin.mutation(api.forms.linkField, { fromId: templateId, fieldId: "__auto_team__", toId: noteId }))
+      .rejects.toThrow(/Team number/);
+  });
+});

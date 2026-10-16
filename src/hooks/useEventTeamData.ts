@@ -305,22 +305,23 @@ export function useEventTeamData(
   const fieldCellsByTeam = useMemo(() => {
     const out: Record<number, Record<string, FieldCell>> = {};
     if (fieldColumns.length === 0) return out;
-    const byTeamTpl = new Map<string, Record<string, unknown>[]>();
+    const byTeam = new Map<number, Array<{ tpl: string; data: Record<string, unknown> }>>();
     const subs = [...(allSubmissions ?? [])]
       .filter((s) => s.teamNumber > 0)
       .sort((a, b) => a.matchNumber - b.matchNumber || (a.syncedAt ?? 0) - (b.syncedAt ?? 0));
     for (const s of subs) {
       let data: Record<string, unknown>;
       try { data = JSON.parse(s.data) as Record<string, unknown>; } catch { continue; }
-      const key = `${s.teamNumber}|${s.templateId}`;
-      const list = byTeamTpl.get(key);
-      if (list) list.push(data); else byTeamTpl.set(key, [data]);
+      const row = { tpl: s.templateId as string, data };
+      const list = byTeam.get(s.teamNumber);
+      if (list) list.push(row); else byTeam.set(s.teamNumber, [row]);
     }
-    for (const [key, rows] of byTeamTpl) {
-      const [team, tpl] = key.split("|");
+    // A synced field's column reads every form that holds it.
+    for (const [team, rows] of byTeam) {
       for (const col of fieldColumns) {
-        if (col.templateId !== tpl) continue;
-        (out[Number(team)] ??= {})[col.id] = aggregateField(col.field, rows.map((d) => d[col.field.id]));
+        const mine = rows.filter((r) => col.templateIds.includes(r.tpl));
+        if (mine.length === 0) continue;
+        (out[team] ??= {})[col.id] = aggregateField(col.field, mine.map((r) => r.data[col.field.id]));
       }
     }
     return out;

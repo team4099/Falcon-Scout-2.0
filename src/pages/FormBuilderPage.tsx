@@ -4,7 +4,7 @@ import { useQuery } from "convex/react";
 import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
-import { formatKey } from "../../convex/formFormat";
+import { formatKey, isSyncable } from "../../convex/formFormat";
 import type { FormField, FieldType, FormType } from "@/types";
 import { FORM_TYPE_LABEL, hasChoiceOptions, sortForms } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -73,6 +73,7 @@ import {
   Eye,
   ArrowUp,
   ArrowDown,
+  Link2,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -98,6 +99,17 @@ import { moveFieldToSection, moveSection, orderFieldsBySection, sectionOf } from
 
 // Droppable id prefix for a section's field list (lets fields drop into empty sections).
 const SECTION_DROP = "section::";
+
+/** Another form, as offered for syncing a field. */
+interface FormRef { id: string; name: string }
+/** A field's place among forms: who else holds it, where it could be copied. */
+interface FieldSync {
+  linked: FormRef[];
+  targets: FormRef[];
+  /** Why it can't be copied yet (unsaved, team# field, spying form). */
+  blocked?: string;
+  onLink: (toId: string) => Promise<void>;
+}
 
 // ──────────────────────────────────────────────
 // Field type metadata
@@ -170,12 +182,13 @@ function StarPreview({ max = 5 }: { max?: number }) {
 // Sortable field wrapper
 // ──────────────────────────────────────────────
 function SortableField({
-  field, onUpdate, onDelete, sections,
+  field, onUpdate, onDelete, sections, sync,
 }: {
   field: FormField;
   onUpdate: (updated: FormField) => void;
   onDelete: () => void;
   sections: string[];
+  sync: FieldSync;
 }) {
   const {
     attributes, listeners, setNodeRef, setActivatorNodeRef,
@@ -202,7 +215,7 @@ function SortableField({
           <GripVertical className="h-4 w-4" />
         </button>
         <div className="flex-1">
-          <FieldEditor field={field} onChange={onUpdate} onDelete={() => setConfirmDelete(true)} sections={sections} />
+          <FieldEditor field={field} onChange={onUpdate} onDelete={() => setConfirmDelete(true)} sections={sections} sync={sync} />
         </div>
       </div>
 
@@ -212,6 +225,7 @@ function SortableField({
             <AlertDialogTitle>Delete field?</AlertDialogTitle>
             <AlertDialogDescription>
               <strong className="text-foreground">{field.label}</strong> will be permanently removed from this form. Any data already collected under this field will remain in submissions but won't be displayed.
+              {sync.linked.length > 0 && ` It stays on ${sync.linked.map((f) => f.name).join(", ")}.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -233,14 +247,16 @@ function SortableField({
 // Field Editor Dialog
 // ──────────────────────────────────────────────
 function FieldEditor({
-  field, onChange, onDelete, sections,
+  field, onChange, onDelete, sections, sync,
 }: {
   field: FormField;
   onChange: (updated: FormField) => void;
   onDelete: () => void;
   sections: string[];
+  sync: FieldSync;
 }) {
   const [open, setOpen] = useState(false);
+  const [linking, setLinking] = useState(false);
   const [draft, setDraft] = useState<FormField>(field);
   const allMeta = FIELD_TYPES;
 
@@ -270,6 +286,14 @@ function FieldEditor({
         <span className="flex-1 text-sm font-medium truncate">{field.label}</span>
         {field.required && (
           <span className="text-xs px-1.5 py-0.5 rounded-sm bg-primary/20 text-primary font-mono">req</span>
+        )}
+        {sync.linked.length > 0 && (
+          <span
+            className="text-xs px-1.5 py-0.5 rounded-sm bg-sky-500/15 text-sky-400 font-mono inline-flex items-center gap-1"
+            title={`Synced with ${sync.linked.map((f) => f.name).join(", ")}`}
+          >
+            <Link2 className="h-3 w-3" />sync
+          </span>
         )}
         {field.showInRankings && (
           <span className="text-xs px-1.5 py-0.5 rounded-sm bg-muted text-muted-foreground font-mono" title="Available as a Dashboard rankings column">col</span>
@@ -368,6 +392,47 @@ function FieldEditor({
             </div>
           )}
 
+          {/* Synced fields: the same answer key on several forms. */}
+          <div className="space-y-1.5 rounded-lg border border-border p-3">
+            <Label className="flex items-center gap-1.5"><Link2 className="h-4 w-4" /> Synced with other forms</Label>
+            {sync.linked.length > 0 ? (
+              <>
+                <div className="flex flex-wrap gap-1.5">
+                  {sync.linked.map((f) => (
+                    <span key={f.id} className="text-xs px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-400">{f.name}</span>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Answers from every synced form count toward this field. Label, type, answers and description sync on save; section, required and Rankings column stay per form.
+                </p>
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground">Copy this field to another form so both collect data into it.</p>
+            )}
+            {sync.blocked ? (
+              <p className="text-xs text-muted-foreground italic">{sync.blocked}</p>
+            ) : sync.targets.length > 0 && (
+              <Select
+                value=""
+                disabled={linking}
+                onValueChange={(v) => {
+                  if (!v) return;
+                  setLinking(true);
+                  void sync.onLink(v).finally(() => setLinking(false));
+                }}
+              >
+                <SelectTrigger className="h-11 sm:h-9">
+                  <SelectValue>{() => (linking ? "Copying…" : "Copy to form…")}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {sync.targets.map((f) => (
+                    <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+
           {draft.type === "rating" && (
             <div className="space-y-2">
               <Label>Max Stars</Label>
@@ -435,9 +500,10 @@ function FieldEditor({
 // Section Block — groups fields under a named section header
 // ──────────────────────────────────────────────
 function SectionBlock({
-  sectionName, fields, allSections, fieldTypeMeta, canDelete,
+  sectionName, fields, allSections, fieldTypeMeta, canDelete, syncFor,
   onRename, onDelete, onUpdateField, onDeleteField, onAddField, onMoveUp, onMoveDown,
 }: {
+  syncFor: (field: FormField) => FieldSync;
   sectionName: string;
   fields: FormField[];
   allSections: string[];
@@ -553,6 +619,7 @@ function SectionBlock({
               onUpdate={(updated) => onUpdateField(field, updated)}
               onDelete={() => onDeleteField(field)}
               sections={allSections}
+              sync={syncFor(field)}
             />
           ))}
         </SortableContext>
@@ -733,6 +800,7 @@ function FormBuilderContent() {
   const activateTemplate = useAdminMutation(api.forms.activateTemplate);
   const deactivateTemplate = useAdminMutation(api.forms.deactivateTemplate);
   const reorderTemplates = useAdminMutation(api.forms.reorderTemplates);
+  const linkField = useAdminMutation(api.forms.linkField);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [name, setName] = useState("New Scouting Form");
@@ -950,6 +1018,32 @@ function FormBuilderContent() {
     } catch {
       toast.error("Failed to deactivate.");
     }
+  }
+
+  // ── Synced fields ──────────────────────────────────────────────────────────
+  function syncFor(field: FormField): FieldSync {
+    const holds = (t: { fields: FormField[] }) => t.fields.some((f) => f.id === field.id);
+    const others = sortForms(templates ?? []).filter((t) => t._id !== selectedId);
+    const saved = templates?.find((t) => t._id === selectedId);
+    const ref = (t: { _id: string; name: string }) => ({ id: t._id, name: t.name });
+    return {
+      linked: isSyncable(field) ? others.filter(holds).map(ref) : [],
+      targets: others.filter((t) => t.formType !== "spy" && !holds(t)).map(ref),
+      blocked:
+        !isSyncable(field) ? "Team number fields can't be synced."
+        : formType === "spy" ? "Spying forms have no team, so their fields can't be synced."
+        : !saved || !holds(saved) ? "Save the form to copy this field to another form."
+        : undefined,
+      onLink: async (toId) => {
+        const to = others.find((t) => t._id === toId);
+        try {
+          await linkField({ fromId: selectedId as Id<"formTemplates">, fieldId: field.id, toId: toId as Id<"formTemplates"> });
+          toast.success(`"${field.label}" copied to ${to?.name ?? "the form"} and synced.`);
+        } catch {
+          toast.error("Failed to sync field.");
+        }
+      },
+    };
   }
 
   // ── Section management ─────────────────────────────────────────────────────
@@ -1306,6 +1400,7 @@ function FormBuilderContent() {
                       allSections={sectionNames}
                       fieldTypeMeta={FIELD_TYPES}
                       canDelete={sectionNames.length > 1}
+                      syncFor={syncFor}
                       onRename={(newName) => renameSection(sec, newName)}
                       onDelete={() => deleteSection(sec)}
                       onUpdateField={updateField}

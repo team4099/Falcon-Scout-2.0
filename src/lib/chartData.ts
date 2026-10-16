@@ -25,7 +25,7 @@ export interface ChartCfg {
 
 export interface ChartMetric { id: string; label: string; group: string; }
 
-export type FieldColumn = RankingColumn & { templateId: string; field: FormField };
+export type FieldColumn = RankingColumn & { templateId: string; templateIds?: string[]; field: FormField };
 
 const NUMERIC_FIELD_TYPES = new Set(["number", "counter", "rating", "checkbox"]);
 
@@ -310,7 +310,8 @@ export function buildTimelines(opts: {
       catch { return { tpl: s.templateId, d: {} as Record<string, unknown> }; }
     });
     for (const c of numericCols) {
-      const vals = parsed.filter((x) => x.tpl === c.templateId).map((x) => x.d[c.field.id]);
+      const tpls = c.templateIds ?? [c.templateId];
+      const vals = parsed.filter((x) => tpls.includes(x.tpl)).map((x) => x.d[c.field.id]);
       const cell = aggregateField(c.field, vals);
       if (typeof cell.sort === "number") out[c.id] = cell.sort;
     }
