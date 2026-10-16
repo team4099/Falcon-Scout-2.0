@@ -478,10 +478,15 @@ export default defineSchema({
     balanceAfter: v.number(),
     note:         v.optional(v.string()),   // e.g. market title, form template name
     relatedId:    v.optional(v.string()),   // marketId / submissionId / rotationId
+    // What a scouting reward was FOR ("match:qm:12", "pit:254") — outlives the
+    // submission, so no delete or roster change can make the work pay twice.
+    // Optional: rows from before it existed fall back to the submission checks.
+    rewardKey:    v.optional(v.string()),
     createdAt:    v.number(),
   })
     .index("by_user_event", ["userId", "eventKey"])
-    .index("by_related", ["relatedId"]),
+    .index("by_related", ["relatedId"])
+    .index("by_event_reward", ["eventKey", "rewardKey"]),
 
   // ── Temporary admin grants ────────────────────────────────────────────────
   // Lets an inherent admin (see ADMIN_EMAILS in convex/adminAuth.ts) hand a

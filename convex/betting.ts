@@ -89,6 +89,7 @@ async function logTransaction(
   balanceAfter: number,
   note?: string,
   relatedId?: string,
+  rewardKey?: string,
 ): Promise<void> {
   await ctx.db.insert("coinTransactions", {
     userId,
@@ -98,6 +99,7 @@ async function logTransaction(
     balanceAfter,
     note,
     relatedId,
+    ...(rewardKey ? { rewardKey } : {}),
     createdAt: Date.now(),
   });
 }
@@ -129,6 +131,7 @@ export async function awardCoins(
   reason: "scouting_reward" | "pit_duty_reward" | "admin_award",
   note?: string,
   relatedId?: string,
+  rewardKey?: string,
 ): Promise<void> {
   if (amount <= 0) return;
   const bal = await ctx.db
@@ -156,7 +159,7 @@ export async function awardCoins(
       totalEarned: (bal.totalEarned ?? 0) + amount,
     });
   }
-  await logTransaction(ctx, userId, eventKey, reason, amount, balanceAfter, note, relatedId);
+  await logTransaction(ctx, userId, eventKey, reason, amount, balanceAfter, note, relatedId, rewardKey);
 }
 
 /**
@@ -172,6 +175,7 @@ export async function revokeCoins(
   reason: "pit_duty_revoked" | "scouting_revoked",
   note?: string,
   relatedId?: string,
+  rewardKey?: string,
 ): Promise<void> {
   if (amount <= 0) return;
   const bal = await ctx.db
@@ -184,7 +188,7 @@ export async function revokeCoins(
     balance:     balanceAfter,
     totalEarned: Math.max(0, (bal.totalEarned ?? 0) - amount),
   });
-  await logTransaction(ctx, userId, eventKey, reason, -amount, balanceAfter, note, relatedId);
+  await logTransaction(ctx, userId, eventKey, reason, -amount, balanceAfter, note, relatedId, rewardKey);
 }
 
 /**

@@ -89,6 +89,27 @@ async function alreadyScoutedMatch(
   );
 }
 
+/** Ledger key for what a scouting reward pays for. See coinTransactions.rewardKey. */
+const matchRewardKey = (matchNumber: number) => `match:qm:${matchNumber}`;
+const pitRewardKey = (teamNumber: number) => `pit:${teamNumber}`;
+
+/**
+ * Who still holds a reward for this piece of work, per the ledger. Unlike the
+ * submission checks, this survives every kind of delete (bulk ones leave no
+ * tombstone) and roster edits, so paid work can never pay a second time. A
+ * self-delete revokes under the same key, which nets the scout back to zero.
+ */
+async function paidRewardUsers(ctx: MutationCtx, eventKey: string, rewardKey: string): Promise<Set<string>> {
+  const net = new Map<string, number>();
+  for (const t of await ctx.db
+    .query("coinTransactions")
+    .withIndex("by_event_reward", (q) => q.eq("eventKey", eventKey).eq("rewardKey", rewardKey))
+    .collect()) {
+    net.set(t.userId, (net.get(t.userId) ?? 0) + t.amount);
+  }
+  return new Set([...net].filter(([, amount]) => amount > 0).map(([userId]) => userId));
+}
+
 /**
  * The reward for a form of this type right now: the ACTIVE template's, not the
  * submitted one's. templateId comes from the client, so trusting its own
@@ -144,8 +165,9 @@ async function reverseReward(ctx: MutationCtx, sub: Doc<"formSubmissions">): Pro
 
   const owed = new Map<Id<"users">, number>();
   for (const t of txns) owed.set(t.userId, (owed.get(t.userId) ?? 0) + t.amount);
+  const rewardKey = txns.find((t) => t.rewardKey)?.rewardKey;
   for (const [userId, amount] of owed) {
-    await revokeCoins(ctx, userId, sub.eventKey, amount, "scouting_revoked", "Scouting form deleted", sub._id);
+    await revokeCoins(ctx, userId, sub.eventKey, amount, "scouting_revoked", "Scouting form deleted", sub._id, rewardKey);
   }
 }
 
@@ -671,13 +693,15 @@ export const submitForm = mutation({
       // Match assignments only exist for quals and are keyed by match number
       // alone — so an "elim" (or level-less) form for the same number must not
       // count as a second assigned match.
+      const rewardKey = matchRewardKey(args.matchNumber);
       if (
         (args.compLevel ?? "qm") === "qm" &&
         !(await alreadyScoutedMatch(ctx, userId, args, submissionId)) &&
+        !(await paidRewardUsers(ctx, args.eventKey, rewardKey)).has(userId) &&
         reward > 0 &&
         (await isAssignedForReward(ctx, userId, formType, args))
       ) {
-        await awardCoins(ctx, userId, args.eventKey, reward, "scouting_reward", template?.name, submissionId);
+        await awardCoins(ctx, userId, args.eventKey, reward, "scouting_reward", template?.name, submissionId, rewardKey);
       }
     } else if (userId && formType === "pit" && reward > 0) {
       // Pit scouting is done in groups and one form covers the team, so the
@@ -692,6 +716,7 @@ export const submitForm = mutation({
         .first();
       if (team?.scoutIds.includes(userId)) {
         const roster = new Set<string>(team.scoutIds);
+        const rewardKey = pitRewardKey(args.teamNumber);
         const prior = await ctx.db
           .query("formSubmissions")
           .withIndex("by_event_team", (q) =>
@@ -706,6 +731,9 @@ export const submitForm = mutation({
           )
           .collect()
         ).some((r) => r.formType === "pit" && roster.has(r.scoutId));
+        // Paid once per team, ever — even if whoever was paid has since left
+        // the roster or the form was bulk-deleted.
+        if ((await paidRewardUsers(ctx, args.eventKey, rewardKey)).size > 0) alreadyPaid = true;
         for (const r of prior) {
           if (alreadyPaid) break;
           if (r._id === submissionId || !r.scoutId || !roster.has(r.scoutId)) continue;
@@ -716,7 +744,7 @@ export const submitForm = mutation({
         }
         if (!alreadyPaid) {
           for (const id of team.scoutIds) {
-            await awardCoins(ctx, id, args.eventKey, reward, "scouting_reward", template?.name, submissionId);
+            await awardCoins(ctx, id, args.eventKey, reward, "scouting_reward", template?.name, submissionId, rewardKey);
           }
         }
       }
@@ -913,7 +941,8 @@ export const deleteMySubmission = mutation({
 /**
  * Bulk-delete submissions for an event — every one, or just one scout's.
  * Backs Manage Scouts' "Delete all reports" actions (per-scout and event-wide).
- * Coins already paid out are not clawed back.
+ * Coins already paid out are not clawed back, and the ledger's rewardKey keeps
+ * re-submitted work from paying again.
  */
 export const deleteSubmissions = mutation({
   args: {

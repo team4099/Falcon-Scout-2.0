@@ -716,6 +716,47 @@ describe("scouting pays once per match", () => {
     }
     expect(await bal()).toBe(0);
   });
+
+  test("bulk 'Delete all reports' can't make a match or pit team pay twice", async () => {
+    const t = convexTest(schema, modules);
+    const { as, templateId, bal, assign, userId } = await scout(t);
+    await assign(1);
+    const pitTemplateId = await t.run(async (ctx) => ctx.db.insert("formTemplates", {
+      name: "Pit", formType: "pit", fields: [], isActive: true, coinReward: 50,
+    }));
+    await t.run(async (ctx) => ctx.db.insert("pitScoutingTeams", { eventKey: EVENT, teamNumber: 254, scoutIds: [userId] }));
+    const match = { templateId, eventKey: EVENT, matchNumber: 1, compLevel: "qm", teamNumber: 4099, data: "{}" } as const;
+    const pit = { templateId: pitTemplateId, eventKey: EVENT, matchNumber: 0, teamNumber: 254, data: "{}" };
+    await as.mutation(api.forms.submitForm, match);
+    await as.mutation(api.forms.submitForm, pit);
+    expect(await bal()).toBe(1100);
+
+    const admin = t.withIdentity({ subject: userId, issuer: "test", email: "czhao@team4099.com" });
+    for (const args of [{ eventKey: EVENT, scoutId: userId }, { eventKey: EVENT }]) {
+      await admin.mutation(api.forms.deleteSubmissions, args);
+      await as.mutation(api.forms.submitForm, match);
+      await as.mutation(api.forms.submitForm, pit);
+      expect(await bal()).toBe(1100);
+    }
+  });
+
+  test("a pit team pays once even if its roster is swapped afterwards", async () => {
+    const t = convexTest(schema, modules);
+    const a = await scout(t);
+    const b = await scout(t);
+    const pitTemplateId = await t.run(async (ctx) => ctx.db.insert("formTemplates", {
+      name: "Pit", formType: "pit", fields: [], isActive: true, coinReward: 50,
+    }));
+    const teamId = await t.run(async (ctx) => ctx.db.insert("pitScoutingTeams", {
+      eventKey: EVENT, teamNumber: 254, scoutIds: [a.userId],
+    }));
+    const args = { templateId: pitTemplateId, eventKey: EVENT, matchNumber: 0, teamNumber: 254, data: "{}" };
+    await a.as.mutation(api.forms.submitForm, args);
+    await t.run(async (ctx) => ctx.db.patch(teamId, { scoutIds: [b.userId] }));
+    await b.as.mutation(api.forms.submitForm, args);
+    expect(await a.bal()).toBe(1050);
+    expect(await b.bal()).toBe(0);
+  });
 });
 
 describe("admin coin awards", () => {
