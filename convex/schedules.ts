@@ -51,8 +51,9 @@ export const setMatchPlan = mutation({
 
     // 0 means "no plan" — drop the row rather than storing a count that would
     // render an empty grid indistinguishable from a real zero-match event.
-    // A row that also carries a rotation size is kept, with its count zeroed.
-    if (qualMatchCount === 0 && existing?.matchesPerRotation === undefined) {
+    // A row that also carries a rotation size or scouts-per-team setting is
+    // kept, with its count zeroed.
+    if (qualMatchCount === 0 && existing?.matchesPerRotation === undefined && existing?.scoutsPerTeam === undefined) {
       if (existing) await ctx.db.delete(existing._id);
       return;
     }
@@ -93,6 +94,67 @@ export const setRotationSize = mutation({
     }
   },
 });
+
+/** Most scouts an event can put on one robot per match. */
+const MAX_SCOUTS_PER_TEAM = 3;
+
+/** Set how many scouts watch each robot per match. Lowering it deletes the
+ *  assignments in the slots that no longer exist, so no scout keeps a duty the
+ *  grid can't show. Returns how many were removed. */
+export const setScoutsPerTeam = mutation({
+  args: {
+    eventKey: v.string(),
+    scoutsPerTeam: v.number(),
+    adminKey: v.optional(v.string()),
+  },
+  handler: async (ctx, { eventKey, scoutsPerTeam, adminKey }) => {
+    await requireAdmin(ctx, adminKey);
+    if (!Number.isInteger(scoutsPerTeam) || scoutsPerTeam < 1 || scoutsPerTeam > MAX_SCOUTS_PER_TEAM) {
+      throw new Error(`Scouts per team must be a whole number between 1 and ${MAX_SCOUTS_PER_TEAM}`);
+    }
+    const existing = await ctx.db
+      .query("eventMatchPlans")
+      .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
+      .first();
+    if (existing) {
+      await ctx.db.patch(existing._id, { scoutsPerTeam, updatedAt: Date.now() });
+    } else {
+      await ctx.db.insert("eventMatchPlans", { eventKey, qualMatchCount: 0, scoutsPerTeam, updatedAt: Date.now() });
+    }
+    const all = await ctx.db
+      .query("matchAssignments")
+      .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
+      .collect();
+    const dropped = all.filter((a) => (a.slot ?? 0) >= scoutsPerTeam);
+    await Promise.all(dropped.map((a) => ctx.db.delete(a._id)));
+    return dropped.length;
+  },
+});
+
+/** Refuse a slot the event isn't configured for (old rows/clients use 0). */
+async function assertSlotsInRange(ctx: QueryCtx, eventKey: string, slots: number[]) {
+  if (slots.every((s) => s === 0)) return;
+  const plan = await ctx.db
+    .query("eventMatchPlans")
+    .withIndex("by_event", (q) => q.eq("eventKey", eventKey))
+    .first();
+  const max = plan?.scoutsPerTeam ?? 1;
+  for (const s of slots) {
+    if (!Number.isInteger(s) || s < 0 || s >= max) {
+      throw new ConvexError(`This event is set to ${max} scout${max === 1 ? "" : "s"} per team, so slot ${s + 1} doesn't exist.`);
+    }
+  }
+}
+
+/** Find the row holding one (match, position, slot) cell. */
+async function findSlot(ctx: QueryCtx, eventKey: string, matchNumber: number, position: string, slot: number) {
+  const rows = await ctx.db
+    .query("matchAssignments")
+    .withIndex("by_event_match", (q) => q.eq("eventKey", eventKey).eq("matchNumber", matchNumber))
+    .filter((q) => q.eq(q.field("position"), position))
+    .collect();
+  return rows.find((r) => (r.slot ?? 0) === slot) ?? null;
+}
 
 /** Delete every assignment for an event above `maxMatchNumber`.
  *
@@ -186,24 +248,21 @@ export const setMatchAssignment = mutation({
     matchLabel: v.string(),
     position: positionValidator,
     scoutId: v.id("users"),
+    slot: v.optional(v.number()),
     adminKey: v.optional(v.string()),
   },
-  handler: async (ctx, { eventKey, matchNumber, matchLabel, position, scoutId, adminKey }) => {
+  handler: async (ctx, { eventKey, matchNumber, matchLabel, position, scoutId, slot = 0, adminKey }) => {
     await requireAdmin(ctx, adminKey);
+    await assertSlotsInRange(ctx, eventKey, [slot]);
     await assertNoPitConflict(ctx, eventKey, [{ matchNumber, scoutId }]);
-    const existing = await ctx.db
-      .query("matchAssignments")
-      .withIndex("by_event_match", (q) =>
-        q.eq("eventKey", eventKey).eq("matchNumber", matchNumber)
-      )
-      .filter((q) => q.eq(q.field("position"), position))
-      .first();
+    const existing = await findSlot(ctx, eventKey, matchNumber, position, slot);
 
     if (existing) {
       await ctx.db.patch(existing._id, { scoutId, matchLabel });
     } else {
       await ctx.db.insert("matchAssignments", {
         eventKey, matchNumber, matchLabel, position, scoutId,
+        ...(slot > 0 ? { slot } : {}),
       });
     }
   },
@@ -215,18 +274,12 @@ export const clearMatchAssignment = mutation({
     eventKey: v.string(),
     matchNumber: v.number(),
     position: positionValidator,
+    slot: v.optional(v.number()),
     adminKey: v.optional(v.string()),
   },
-  handler: async (ctx, { eventKey, matchNumber, position, adminKey }) => {
+  handler: async (ctx, { eventKey, matchNumber, position, slot = 0, adminKey }) => {
     await requireAdmin(ctx, adminKey);
-    const existing = await ctx.db
-      .query("matchAssignments")
-      .withIndex("by_event_match", (q) =>
-        q.eq("eventKey", eventKey).eq("matchNumber", matchNumber)
-      )
-      .filter((q) => q.eq(q.field("position"), position))
-      .first();
-
+    const existing = await findSlot(ctx, eventKey, matchNumber, position, slot);
     if (existing) await ctx.db.delete(existing._id);
   },
 });
@@ -243,26 +296,23 @@ export const batchSetMatchAssignments = mutation({
       matchLabel: v.string(),
       position: positionValidator,
       scoutId: v.id("users"),
+      slot: v.optional(v.number()),
     })),
     adminKey: v.optional(v.string()),
   },
   handler: async (ctx, { eventKey, assignments, adminKey }) => {
     await requireAdmin(ctx, adminKey);
+    await assertSlotsInRange(ctx, eventKey, assignments.map((a) => a.slot ?? 0));
     await assertNoPitConflict(ctx, eventKey, assignments);
-    for (const { matchNumber, matchLabel, position, scoutId } of assignments) {
-      const existing = await ctx.db
-        .query("matchAssignments")
-        .withIndex("by_event_match", (q) =>
-          q.eq("eventKey", eventKey).eq("matchNumber", matchNumber)
-        )
-        .filter((q) => q.eq(q.field("position"), position))
-        .first();
+    for (const { matchNumber, matchLabel, position, scoutId, slot = 0 } of assignments) {
+      const existing = await findSlot(ctx, eventKey, matchNumber, position, slot);
 
       if (existing) {
         await ctx.db.patch(existing._id, { scoutId, matchLabel });
       } else {
         await ctx.db.insert("matchAssignments", {
           eventKey, matchNumber, matchLabel, position, scoutId,
+          ...(slot > 0 ? { slot } : {}),
         });
       }
     }
@@ -279,20 +329,14 @@ export const batchClearMatchAssignments = mutation({
     slots: v.array(v.object({
       matchNumber: v.number(),
       position: positionValidator,
+      slot: v.optional(v.number()),
     })),
     adminKey: v.optional(v.string()),
   },
   handler: async (ctx, { eventKey, slots, adminKey }) => {
     await requireAdmin(ctx, adminKey);
-    for (const { matchNumber, position } of slots) {
-      const existing = await ctx.db
-        .query("matchAssignments")
-        .withIndex("by_event_match", (q) =>
-          q.eq("eventKey", eventKey).eq("matchNumber", matchNumber)
-        )
-        .filter((q) => q.eq(q.field("position"), position))
-        .first();
-
+    for (const { matchNumber, position, slot = 0 } of slots) {
+      const existing = await findSlot(ctx, eventKey, matchNumber, position, slot);
       if (existing) await ctx.db.delete(existing._id);
     }
   },

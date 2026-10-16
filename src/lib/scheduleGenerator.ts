@@ -9,6 +9,7 @@
  *    (see the separate ElimsRotationPanel UI; this generator never touches it)
  *  - Matches organised in blocks of 5 (SchedulerInput.matchesPerBlock overrides;
  *    the match counts quoted below assume 5); same 6 scouts cover a whole block
+ *    (6 × scoutsPerTeam when an event puts more than one scout on each robot)
  *  - Each scout scouts at least 2 blocks (10 matches) minimum, except drive
  *    team scouts, who never scout matches at all (see below)
  *  - Scouts who opt into pit duty get one block of 10 consecutive qual matches
@@ -53,8 +54,24 @@ export type Position = "red1" | "red2" | "red3" | "blue1" | "blue2" | "blue3";
 export const POSITIONS: Position[] = [
   "red1", "red2", "red3", "blue1", "blue2", "blue3",
 ];
-const RED_POS: Position[] = ["red1", "red2", "red3"];
-const BLUE_POS: Position[] = ["blue1", "blue2", "blue3"];
+
+/** One scout seat in a match: a position plus which scout on that robot.
+ *  Slot 0 keys as the bare position, so single-scout events look as before. */
+type SlotKey = string;
+const slotKeyOf = (p: Position, slot = 0): SlotKey => (slot === 0 ? p : `${p}#${slot}`);
+const posOf = (k: SlotKey) => k.split("#")[0] as Position;
+const slotOf = (k: SlotKey) => Number(k.split("#")[1] ?? 0);
+const isRed = (k: SlotKey) => k.startsWith("red");
+/** Every seat in a match, all slot-0 seats first so a short-staffed block
+ *  leaves the extra scouts blank before any robot goes unwatched. */
+function slotKeys(scoutsPerTeam: number): SlotKey[] {
+  const keys: SlotKey[] = [];
+  for (let s = 0; s < scoutsPerTeam; s++) for (const p of POSITIONS) keys.push(slotKeyOf(p, s));
+  return keys;
+}
+function describeSlot(k: SlotKey): string {
+  return slotOf(k) === 0 ? posOf(k) : `${posOf(k)} (scout ${slotOf(k) + 1})`;
+}
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -105,6 +122,8 @@ export interface ExistingMatchAssignment {
   matchNumber: number;
   position: Position;
   scoutId: string;
+  /** Which scout on that robot (0-based); missing = 0. */
+  slot?: number;
 }
 
 /** Qual match numbers a scout can't be assigned to because they're on a qual
@@ -134,6 +153,8 @@ export interface SchedulerInput {
    * blocks scales with it — pit rotation windows stay 2 blocks long.
    */
   matchesPerBlock?: number;
+  /** Scouts watching each robot (default 1). A block then needs 6 × this many. */
+  scoutsPerTeam?: number;
   /** Scout IDs to skip entirely — they receive no auto-generated assignments. */
   excludedScoutIds?: string[];
   /**
@@ -171,6 +192,8 @@ export interface GeneratedMatchAssignment {
   matchLabel: string;
   position: Position;
   scoutId: string;
+  /** Present only for a second/third scout on the same robot. */
+  slot?: number;
 }
 
 export interface SchedulerOutput {
@@ -207,28 +230,30 @@ function popcount(x: number): number {
 
 function assignPositions(
   allSixIds: string[],
-  openPositions: Position[],
-  fixed: Map<Position, string>,
+  openPositions: SlotKey[],
+  fixed: Map<SlotKey, string>,
   prefScore: (a: string, b: string) => number,
-): Map<Position, string> {
-  const result = new Map<Position, string>(fixed);
+): Map<SlotKey, string> {
+  const result = new Map<SlotKey, string>(fixed);
 
   const fixedIds = new Set(fixed.values());
   const freeScouts = allSixIds.filter(id => !fixedIds.has(id));
 
-  const redNeed = RED_POS.filter(p => !fixed.has(p) && openPositions.includes(p));
-  const blueNeed = BLUE_POS.filter(p => !fixed.has(p) && openPositions.includes(p));
+  const redNeed = openPositions.filter(p => !fixed.has(p) && isRed(p));
+  const blueNeed = openPositions.filter(p => !fixed.has(p) && !isRed(p));
 
   if (freeScouts.length === 0) return result;
 
-  const redFixed = RED_POS.map(p => fixed.get(p)).filter(Boolean) as string[];
-  const blueFixed = BLUE_POS.map(p => fixed.get(p)).filter(Boolean) as string[];
+  const redFixed = [...fixed].filter(([k]) => isRed(k)).map(([, id]) => id);
+  const blueFixed = [...fixed].filter(([k]) => !isRed(k)).map(([, id]) => id);
 
   const n = freeScouts.length;
   const redSlots = redNeed.length;
   const blueSlots = blueNeed.length;
 
-  if (redSlots + blueSlots !== n) {
+  // The exhaustive split below is 2^n; past 14 free scouts (3 per robot)
+  // it gets slow enough to stall the page, so fall back to seat order.
+  if (redSlots + blueSlots !== n || n > 14) {
     // Fallback: sequential assignment
     freeScouts.forEach((id, i) => { if (openPositions[i]) result.set(openPositions[i], id); });
     return result;
@@ -294,6 +319,7 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
   const B = blocks.length;
   const blockStart = (bi: number) => blocks[bi][0].matchNumber;
   const blockEnd   = (bi: number) => blocks[bi][blocks[bi].length - 1].matchNumber;
+  const SLOTS = slotKeys(Math.max(1, Math.floor(input.scoutsPerTeam ?? 1)));
 
   // 2. Preference helpers
   const prefMap = new Map<string, ScoutPref>();
@@ -460,12 +486,12 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
   }
 
   // 5. Existing assignment lookup
-  const existingSlots = new Map<string, string>(); // "mn-pos" -> scoutId
+  const existingSlots = new Map<string, string>(); // "mn-slotKey" -> scoutId
   for (const a of existingMatchAssignments)
-    existingSlots.set(`${a.matchNumber}-${a.position}`, a.scoutId);
+    existingSlots.set(`${a.matchNumber}-${slotKeyOf(a.position, a.slot ?? 0)}`, a.scoutId);
 
   function blockFullyAssigned(bi: number): boolean {
-    return blocks[bi].every(m => POSITIONS.every(p => existingSlots.has(`${m.matchNumber}-${p}`)));
+    return blocks[bi].every(m => SLOTS.every(p => existingSlots.has(`${m.matchNumber}-${p}`)));
   }
 
   // 6. Seed block counts from existing assignments (match-eligible scouts only)
@@ -475,7 +501,7 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
     if (blockFullyAssigned(bi)) continue;
     const seen = new Set<string>();
     for (const m of blocks[bi])
-      for (const p of POSITIONS) {
+      for (const p of SLOTS) {
         const id = existingSlots.get(`${m.matchNumber}-${p}`);
         if (id) seen.add(id);
       }
@@ -490,15 +516,15 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
   // OR who simply aren't doing anything else this event (no pit rotation
   // shift, no pit scouting pair — checked against what actually got
   // assigned/applied, not just preference checkboxes), should end up with
-  // ~50% more blocks than everyone else. Every block has exactly 6 slots,
-  // so total block-assignments across all match-eligible scouts always
-  // equals B * 6; targets are each scout's weighted share. Note this makes
+  // ~50% more blocks than everyone else. Every block has exactly
+  // SLOTS.length seats (6 per scout on each robot), so total block-assignments
+  // across all match-eligible scouts always equals B * SLOTS.length; targets are each scout's weighted share. Note this makes
   // "boosted" the common case — a scout tied up elsewhere (drive team, an
   // actual pit rotation shift, an actual pit scouting pair) is the one who
   // gets fewer new match blocks, freeing more of the fixed slot budget for
   // everyone else.
   const MORE_MATCHES_WEIGHT = 1.5;
-  const totalBlockSlots = B * 6;
+  const totalBlockSlots = B * SLOTS.length;
   const usedElsewhere = (id: string) => scoutsAlreadyInPit.has(id) || pitScoutingAssignedSet.has(id);
   const weightOf = (id: string) => {
     const pref = prefMap.get(id);
@@ -518,7 +544,7 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
   function existingBlockScoutIds(bi: number): Set<string> {
     const s = new Set<string>();
     for (const m of blocks[bi])
-      for (const p of POSITIONS) {
+      for (const p of SLOTS) {
         const id = existingSlots.get(`${m.matchNumber}-${p}`);
         if (id) s.add(id);
       }
@@ -544,15 +570,15 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
     }
 
     // Which positions in this block already have assignments?
-    const fixedPos = new Map<Position, string>();
+    const fixedPos = new Map<SlotKey, string>();
     for (const m of blocks[bi])
-      for (const p of POSITIONS) {
+      for (const p of SLOTS) {
         const id = existingSlots.get(`${m.matchNumber}-${p}`);
         if (id && !fixedPos.has(p)) fixedPos.set(p, id);
       }
 
     const alreadyInBlock = new Set(fixedPos.values());
-    const openPositions = POSITIONS.filter(p => !fixedPos.has(p));
+    const openPositions = SLOTS.filter(p => !fixedPos.has(p));
     if (openPositions.length === 0) continue;
 
     // Score candidates: prioritise underserved scouts, then preference affinity, then wantsMore
@@ -600,7 +626,7 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
       const pitBusyCount = matchPool.length - avail.length;
       warnings.push(
         `Block ${bi + 1} (Q${blockStart(bi)}–Q${blockEnd(bi)}): ${blanks.length} position(s) left blank ` +
-        `(${blanks.join(", ")}) — only ${avail.length} scout(s) available` +
+        `(${blanks.map(describeSlot).join(", ")}) — only ${avail.length} scout(s) available` +
         (pitBusyCount > 0
           ? `, ${pitBusyCount} on pit duty during this window. Pit rotation is prioritized over match scouting.`
           : ` out of ${matchPool.length} match-eligible scouts.`)
@@ -612,7 +638,10 @@ export function generateSchedule(input: SchedulerInput): SchedulerOutput {
       for (const [pos, scoutId] of assigned) {
         const key = `${m.matchNumber}-${pos}`;
         if (!existingSlots.has(key))
-          newAssignments.push({ matchNumber: m.matchNumber, matchLabel: m.matchLabel, position: pos, scoutId });
+          newAssignments.push({
+            matchNumber: m.matchNumber, matchLabel: m.matchLabel, position: posOf(pos), scoutId,
+            ...(slotOf(pos) > 0 ? { slot: slotOf(pos) } : {}),
+          });
       }
     }
 
@@ -898,8 +927,8 @@ export function runTests(): TestResult[] {
     let found = false;
     for (const block of blockGroups) {
       const mn = block[0].matchNumber;
-      const red = new Set(RED_POS.map(p => out.matchAssignments.find(a => a.matchNumber === mn && a.position === p)?.scoutId).filter(Boolean));
-      const blue = new Set(BLUE_POS.map(p => out.matchAssignments.find(a => a.matchNumber === mn && a.position === p)?.scoutId).filter(Boolean));
+      const red = new Set((["red1", "red2", "red3"] as Position[]).map(p => out.matchAssignments.find(a => a.matchNumber === mn && a.position === p)?.scoutId).filter(Boolean));
+      const blue = new Set((["blue1", "blue2", "blue3"] as Position[]).map(p => out.matchAssignments.find(a => a.matchNumber === mn && a.position === p)?.scoutId).filter(Boolean));
       if ((red.has("s1") && red.has("s2")) || (blue.has("s1") && blue.has("s2"))) { found = true; break; }
     }
     assert(found, "s1 and s2 never shared an alliance");
@@ -1281,6 +1310,26 @@ export function runTests(): TestResult[] {
     assert(new Set([1, 5, 9, 13, 17, 21, 25, 29].map(crew)).size > 1, "Crew never rotates between blocks");
     const windows = out.newPitRotations.map(r => `${r.startMatch}-${r.endMatch}`).join(" ");
     assert(windows === "1-8 9-16 17-24 25-32", `Unexpected pit windows: ${windows}`);
+  });
+
+  // T24 ── Two scouts per robot: every seat filled, 12 distinct scouts per block
+  test("T24 scoutsPerTeam=2: 12 distinct scouts per block, both slots filled, existing slot kept", () => {
+    const scouts = makeScouts(30); const matches = makeMatches(20);
+    const saved = [1, 2, 3, 4, 5].map(mn => ({ matchNumber: mn, position: "red1" as Position, slot: 1, scoutId: "s7" }));
+    const out = generateSchedule({
+      qualMatches: matches, scouts, preferences: makePrefs(scouts, [{}]),
+      existingPitRotations: [], existingMatchAssignments: saved, scoutsPerTeam: 2,
+    });
+    const all = [...out.matchAssignments, ...saved];
+    for (let mn = 1; mn <= 20; mn++) {
+      const seats = all.filter(a => a.matchNumber === mn);
+      assert(seats.length === 12, `Q${mn}: ${seats.length} seats filled (want 12)`);
+      assert(new Set(seats.map(a => a.scoutId)).size === 12, `Q${mn}: a scout holds two seats`);
+      for (const p of POSITIONS)
+        assert(seats.filter(a => a.position === p).length === 2, `Q${mn} ${p}: not exactly 2 scouts`);
+    }
+    assert(!out.matchAssignments.some(a => a.matchNumber <= 5 && a.position === "red1" && a.slot === 1), "Overwrote the saved slot-1 seat");
+    assert(out.stats.assignedSlots === 20 * 12 - 5, `assignedSlots ${out.stats.assignedSlots}`);
   });
 
   return results;

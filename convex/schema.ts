@@ -206,6 +206,9 @@ export default defineSchema({
     // Matches a scout group covers before rotating out (default 5). Applies
     // whether or not TBA has published, so a row can exist with a 0 count.
     matchesPerRotation: v.optional(v.number()),
+    // Scouts watching each robot (default 1). Slots past 0 live on
+    // matchAssignments.slot.
+    scoutsPerTeam:  v.optional(v.number()),
     updatedAt:      v.number(),
   }).index("by_event", ["eventKey"]),
 
@@ -219,6 +222,9 @@ export default defineSchema({
       v.literal("blue1"), v.literal("blue2"), v.literal("blue3")
     ),
     scoutId: v.id("users"),
+    // Which scout on this robot (0-based) when an event runs more than one
+    // scout per team. Missing = 0, so pre-existing rows and old clients work.
+    slot: v.optional(v.number()),
   })
     .index("by_event", ["eventKey"])
     .index("by_event_match", ["eventKey", "matchNumber"])

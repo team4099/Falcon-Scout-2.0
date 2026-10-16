@@ -51,6 +51,8 @@ interface MatchAssignment {
   matchLabel: string;
   position: Position;
   scoutId: string;
+  /** Which scout on that robot (0-based); missing = 0. */
+  slot?: number;
 }
 
 interface PitRotation {
@@ -110,6 +112,18 @@ const MUTED     = "var(--muted-foreground)";
 
 /** Upper bound for the admin-set rotation size (mirrors schedules.setRotationSize). */
 const MAX_ROTATION_SIZE = 20;
+/** Upper bound for scouts on one robot (mirrors schedules.setScoutsPerTeam). */
+const MAX_SCOUTS_PER_TEAM = 3;
+
+type AssignCell = { scoutId: string; name: string; guest?: boolean };
+/** One match's seats, keyed by slotKey(position, slot). */
+type AssignRow = Partial<Record<string, AssignCell>>;
+/** Slot 0 keys as the bare position, so single-scout events look as before. */
+const slotKey = (p: Position, slot: number) => (slot === 0 ? p : `${p}#${slot}`);
+const slotRange = (n: number) => Array.from({ length: n }, (_, i) => i);
+/** "R1", or "R1 #2" when an event runs more than one scout per robot. */
+const seatLabel = (p: Position, slot: number, perTeam: number) =>
+  perTeam > 1 ? `${POS_META[p].short} #${slot + 1}` : POS_META[p].short;
 const FG        = "var(--foreground)";
 /** Striped fill for grid cells the pinned scout can't take (on pit rotation then). */
 const PIT_BLOCKED_BG = "repeating-linear-gradient(135deg, oklch(1 0 0 / 5%) 0 4px, transparent 4px 8px)";
@@ -557,15 +571,17 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
 
 interface MatchGridProps {
   matches: TBAMatch[];
-  assignMap: Record<number, Partial<Record<Position, { scoutId: string; name: string; guest?: boolean }>>>;
+  assignMap: Record<number, AssignRow>;
   pinnedId: string | null;
-  onCellClick: (matchNum: number, matchLbl: string, pos: Position) => void;
-  onCycleClick: (cycleMatches: TBAMatch[], pos: Position) => void;
+  onCellClick: (matchNum: number, matchLbl: string, pos: Position, slot: number) => void;
+  onCycleClick: (cycleMatches: TBAMatch[], pos: Position, slot: number) => void;
   saving: Set<string>;
   /** Match numbers the pinned scout is on pit rotation for → rotation range label. */
   pitBlocked: Map<number, string>;
   /** Matches per scouting rotation — how many quals merge into one row. */
   rotationSize: number;
+  /** Scouts per robot — each position cell stacks this many seats. */
+  scoutsPerTeam: number;
   isMobile?: boolean;
   isLandscapePhone?: boolean;
   stackLayout?: boolean;
@@ -599,7 +615,7 @@ function buildGridRows(matches: TBAMatch[], rotationSize: number): GridRow[] {
   return rows;
 }
 
-function MatchGrid({ matches, assignMap, pinnedId, onCellClick, onCycleClick, saving, pitBlocked, rotationSize, isMobile, isLandscapePhone, stackLayout, readOnly }: MatchGridProps) {
+function MatchGrid({ matches, assignMap, pinnedId, onCellClick, onCycleClick, saving, pitBlocked, rotationSize, scoutsPerTeam, isMobile, isLandscapePhone, stackLayout, readOnly }: MatchGridProps) {
   const [expandedMatchKey, setExpandedMatchKey] = useState<string | null>(null);
   const canExpand = !!(stackLayout && !readOnly);
   const gridRows = useMemo(() => buildGridRows(matches, rotationSize), [matches, rotationSize]);
@@ -680,6 +696,7 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, onCycleClick, sa
               saving={saving}
               pitRange={row.matches.map(m => pitBlocked.get(m.match_number)).find(Boolean)}
               readOnly={readOnly}
+              scoutsPerTeam={scoutsPerTeam}
               COL={COL}
               cellPad={cellPad}
               cellMinH={cellMinH}
@@ -697,6 +714,7 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, onCycleClick, sa
             saving={saving}
             pitRange={pitBlocked.get(row.match.match_number)}
             readOnly={readOnly}
+            scoutsPerTeam={scoutsPerTeam}
             canExpand={canExpand}
             isExpanded={canExpand && expandedMatchKey === row.match.key}
             onToggleExpand={() => setExpandedMatchKey(k => k === row.match.key ? null : row.match.key)}
@@ -904,13 +922,14 @@ function OrphanWarning({
 interface SingleMatchRowProps {
   m: TBAMatch;
   lbl: string;
-  row: Partial<Record<Position, { scoutId: string; name: string; guest?: boolean }>>;
+  row: AssignRow;
   pinnedId: string | null;
-  onCellClick: (matchNum: number, matchLbl: string, pos: Position) => void;
+  onCellClick: (matchNum: number, matchLbl: string, pos: Position, slot: number) => void;
   saving: Set<string>;
   /** Set when the pinned scout is on a pit rotation covering this match. */
   pitRange?: string;
   readOnly?: boolean;
+  scoutsPerTeam: number;
   canExpand: boolean;
   isExpanded: boolean;
   onToggleExpand: () => void;
@@ -923,7 +942,7 @@ interface SingleMatchRowProps {
 }
 
 function SingleMatchRow({
-  m, lbl, row, pinnedId, onCellClick, saving, pitRange, readOnly,
+  m, lbl, row, pinnedId, onCellClick, saving, pitRange, readOnly, scoutsPerTeam,
   canExpand, isExpanded, onToggleExpand, onCloseExpand,
   COL, cellPad, cellMinH, cellFontSize, isLandscapePhone,
 }: SingleMatchRowProps) {
@@ -978,10 +997,19 @@ function SingleMatchRow({
                   )}
 
                   {/* Position cells */}
-                  {POSITIONS.map((p, i) => {
-                    const savingKey = `${m.match_number}-${p}`;
+                  {POSITIONS.map((p, i) => (
+                    <Fragment key={p}>
+                      {i === 3 && (
+                        <div style={{ width: "3px", alignSelf: "stretch", background: "oklch(1 0 0/5%)", margin: "2px 0" }} />
+                      )}
+                      {/* One seat per scout on this robot, stacked */}
+                      <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                  {slotRange(scoutsPerTeam).map(s => {
+                    const k = slotKey(p, s);
+                    const posLbl = seatLabel(p, s, scoutsPerTeam);
+                    const savingKey = `${m.match_number}-${k}`;
                     const isSaving = saving.has(savingKey);
-                    const assigned = row[p];
+                    const assigned = row[k];
                     const isPinned = assigned?.scoutId === pinnedId;
                     // The server would refuse the pinned scout here (pit duty).
                     const blocked = !!pitRange && !isPinned;
@@ -1007,24 +1035,17 @@ function SingleMatchRow({
                       cellBorder = `1.5px dashed ${SURF_BORD}`;
                     }
 
-                    // Keyed on the Fragment, not its children: a shorthand <>
-                    // fragment cannot carry a key, so React saw this list as
-                    // unkeyed and could reuse the wrong cell's DOM (and its
-                    // isSaving state) when rows re-ordered.
                     return (
-                      <Fragment key={p}>
-                        {i === 3 && (
-                          <div style={{ width: "3px", alignSelf: "stretch", background: "oklch(1 0 0/5%)", margin: "2px 0" }} />
-                        )}
                         <button
-                          onClick={readOnly ? undefined : () => onCellClick(m.match_number, lbl, p)}
+                          key={s}
+                          onClick={readOnly ? undefined : () => onCellClick(m.match_number, lbl, p, s)}
                           disabled={isSaving || readOnly || blocked}
                           title={
                             blocked
                               ? `Pinned scout is on pit rotation ${pitRange}${assigned ? ` · ${assigned.name}` : ""}`
                               : assigned
-                              ? `${assigned.name} (${POS_META[p].short})${readOnly ? "" : ` — click to ${isPinned ? "unassign" : "replace"}`}`
-                              : readOnly ? "Unassigned" : pinnedId ? `Assign to ${POS_META[p].label}` : "Pin a scout first"
+                              ? `${assigned.name} (${posLbl})${readOnly ? "" : ` — click to ${isPinned ? "unassign" : "replace"}`}`
+                              : readOnly ? "Unassigned" : pinnedId ? `Assign to ${posLbl}` : "Pin a scout first"
                           }
                           style={{
                             margin: isLandscapePhone ? "1px" : "2px",
@@ -1057,9 +1078,11 @@ function SingleMatchRow({
                                 </span>
                           }
                         </button>
-                      </Fragment>
                     );
                   })}
+                      </div>
+                    </Fragment>
+                  ))}
                 </div>
 
                 {/* Expanded detail — renders immediately below this row */}
@@ -1096,15 +1119,17 @@ function SingleMatchRow({
                       <div style={{ padding: "10px 12px", borderRight: `1px solid ${SURF_BORD}` }}>
                         <div style={{ fontSize: 10, fontWeight: 800, color: "oklch(0.65 0.22 25)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Red Alliance</div>
                         {redPositions.map(p => {
-                          const a = row[p];
-                          const isPinned = a?.scoutId === pinnedId;
+                          const seats = slotRange(scoutsPerTeam).map(sl => row[slotKey(p, sl)]).filter((x): x is AssignCell => !!x);
+                          const isPinned = seats.some(x => x.scoutId === pinnedId);
                           return (
                             <div key={p} style={{ display: "flex", alignItems: "flex-start", gap: 7, marginBottom: 7 }}>
                               <span style={{ fontSize: 10, fontWeight: 800, color: "oklch(0.65 0.22 25)", background: "oklch(0.65 0.22 25 / 12%)", borderRadius: 5, padding: "2px 6px", flexShrink: 0, marginTop: 1 }}>
                                 {POS_META[p].short}
                               </span>
-                              <span style={{ fontSize: 13, fontWeight: isPinned ? 800 : 500, color: isPinned ? G : a ? FG : MUTED, lineHeight: 1.3 }}>
-                                {a ? <>{a.name}{a.guest && <GuestTag />}</> : <span style={{ opacity: 0.35, fontSize: 11 }}>Unassigned</span>}
+                              <span style={{ fontSize: 13, fontWeight: isPinned ? 800 : 500, color: isPinned ? G : seats.length ? FG : MUTED, lineHeight: 1.3 }}>
+                                {seats.length
+                                  ? seats.map((x, j) => <Fragment key={j}>{j > 0 && ", "}{x.name}{x.guest && <GuestTag />}</Fragment>)
+                                  : <span style={{ opacity: 0.35, fontSize: 11 }}>Unassigned</span>}
                               </span>
                             </div>
                           );
@@ -1115,15 +1140,17 @@ function SingleMatchRow({
                       <div style={{ padding: "10px 12px" }}>
                         <div style={{ fontSize: 10, fontWeight: 800, color: "oklch(0.6 0.22 260)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Blue Alliance</div>
                         {bluePositions.map(p => {
-                          const a = row[p];
-                          const isPinned = a?.scoutId === pinnedId;
+                          const seats = slotRange(scoutsPerTeam).map(sl => row[slotKey(p, sl)]).filter((x): x is AssignCell => !!x);
+                          const isPinned = seats.some(x => x.scoutId === pinnedId);
                           return (
                             <div key={p} style={{ display: "flex", alignItems: "flex-start", gap: 7, marginBottom: 7 }}>
                               <span style={{ fontSize: 10, fontWeight: 800, color: "oklch(0.6 0.22 260)", background: "oklch(0.6 0.22 260 / 12%)", borderRadius: 5, padding: "2px 6px", flexShrink: 0, marginTop: 1 }}>
                                 {POS_META[p].short}
                               </span>
-                              <span style={{ fontSize: 13, fontWeight: isPinned ? 800 : 500, color: isPinned ? G : a ? FG : MUTED, lineHeight: 1.3 }}>
-                                {a ? <>{a.name}{a.guest && <GuestTag />}</> : <span style={{ opacity: 0.35, fontSize: 11 }}>Unassigned</span>}
+                              <span style={{ fontSize: 13, fontWeight: isPinned ? 800 : 500, color: isPinned ? G : seats.length ? FG : MUTED, lineHeight: 1.3 }}>
+                                {seats.length
+                                  ? seats.map((x, j) => <Fragment key={j}>{j > 0 && ", "}{x.name}{x.guest && <GuestTag />}</Fragment>)
+                                  : <span style={{ opacity: 0.35, fontSize: 11 }}>Unassigned</span>}
                               </span>
                             </div>
                           );
@@ -1148,13 +1175,14 @@ function SingleMatchRow({
 interface CycleRowProps {
   cycleMatches: TBAMatch[];
   cycleNumber: number;
-  assignMap: Record<number, Partial<Record<Position, { scoutId: string; name: string; guest?: boolean }>>>;
+  assignMap: Record<number, AssignRow>;
   pinnedId: string | null;
-  onCycleClick: (cycleMatches: TBAMatch[], pos: Position) => void;
+  onCycleClick: (cycleMatches: TBAMatch[], pos: Position, slot: number) => void;
   saving: Set<string>;
   /** Set when the pinned scout is on a pit rotation overlapping this cycle. */
   pitRange?: string;
   readOnly?: boolean;
+  scoutsPerTeam: number;
   COL: string;
   cellPad: string;
   cellMinH: number;
@@ -1163,7 +1191,7 @@ interface CycleRowProps {
 }
 
 function CycleRow({
-  cycleMatches, assignMap, pinnedId, onCycleClick, saving, pitRange, readOnly,
+  cycleMatches, assignMap, pinnedId, onCycleClick, saving, pitRange, readOnly, scoutsPerTeam,
   COL, cellPad, cellMinH, cellFontSize, isLandscapePhone,
 }: CycleRowProps) {
   const first = cycleMatches[0];
@@ -1189,10 +1217,19 @@ function CycleRow({
           {rangeLbl}
         </div>
 
-        {POSITIONS.map((p, i) => {
-          const savingKey = `${cycleKey}-${p}`;
+        {POSITIONS.map((p, i) => (
+          <Fragment key={p}>
+            {i === 3 && (
+              <div style={{ width: "3px", alignSelf: "stretch", background: "oklch(1 0 0/5%)", margin: "2px 0" }} />
+            )}
+            {/* One seat per scout on this robot, stacked */}
+            <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+        {slotRange(scoutsPerTeam).map(s => {
+          const k = slotKey(p, s);
+          const posLbl = seatLabel(p, s, scoutsPerTeam);
+          const savingKey = `${cycleKey}-${k}`;
           const isSaving = saving.has(savingKey);
-          const slots = cycleMatches.map(m => assignMap[m.match_number]?.[p]);
+          const slots = cycleMatches.map(m => assignMap[m.match_number]?.[k]);
           const allAssigned = slots.every(s => s != null);
           const uniformScoutId = allAssigned && slots.every(s => s!.scoutId === slots[0]!.scoutId)
             ? slots[0]!.scoutId
@@ -1220,12 +1257,9 @@ function CycleRow({
           }
 
           return (
-            <Fragment key={p}>
-              {i === 3 && (
-                <div style={{ width: "3px", alignSelf: "stretch", background: "oklch(1 0 0/5%)", margin: "2px 0" }} />
-              )}
               <button
-                onClick={readOnly ? undefined : () => onCycleClick(cycleMatches, p)}
+                key={s}
+                onClick={readOnly ? undefined : () => onCycleClick(cycleMatches, p, s)}
                 disabled={isSaving || readOnly || blocked}
                 title={
                   blocked
@@ -1233,10 +1267,10 @@ function CycleRow({
                     : readOnly
                     ? (uniformScoutId ? slots[0]!.name : isMixed ? "Mixed assignment across this cycle" : "Unassigned")
                     : uniformScoutId
-                      ? `${slots[0]!.name} (${POS_META[p].short}) for the whole cycle — click to ${isPinned ? "unassign" : "replace"}`
+                      ? `${slots[0]!.name} (${posLbl}) for the whole cycle — click to ${isPinned ? "unassign" : "replace"}`
                       : isMixed
                         ? "Mixed within this cycle — click to overwrite with the pinned scout"
-                        : pinnedId ? `Assign whole cycle to ${POS_META[p].label}` : "Pin a scout first"
+                        : pinnedId ? `Assign whole cycle to ${posLbl}` : "Pin a scout first"
                 }
                 style={{
                   margin: isLandscapePhone ? "1px" : "2px",
@@ -1272,9 +1306,11 @@ function CycleRow({
                         : (pinnedId && !readOnly ? <span style={{ opacity: 0.25, fontSize: 14, fontWeight: 300 }}>+</span> : null)
                 }
               </button>
-            </Fragment>
           );
         })}
+            </div>
+          </Fragment>
+        ))}
       </div>
     </Fragment>
   );
@@ -2220,6 +2256,53 @@ function RotationSizeControl({ size, onSave }: { size: number; onSave: (n: numbe
   );
 }
 
+/** Toolbar control for how many scouts watch each robot per match. Saved per
+ *  event; stacks that many seats in each grid cell and drives Auto-Generate. */
+function ScoutsPerTeamControl({ value, onSave }: { value: number; onSave: (n: number) => Promise<void> }) {
+  const [saving, setSaving] = useState<number | null>(null);
+  async function pick(n: number) {
+    if (n === value || saving !== null) return;
+    setSaving(n);
+    try { await onSave(n); }
+    catch (e) { window.alert(e instanceof Error ? e.message : "Couldn't save scouts per team"); }
+    finally { setSaving(null); }
+  }
+  return (
+    <div
+      role="group" aria-label="Scouts per team"
+      title="How many scouts watch each robot every match"
+      style={{
+        display: "flex", alignItems: "center", gap: 4, flexShrink: 0,
+        padding: "3px 4px 3px 12px", borderRadius: 9, fontSize: 12, fontWeight: 700,
+        background: SURF_HVR, color: MUTED, border: `1.5px solid ${SURF_BORD}`,
+      }}
+    >
+      <Users size={12} style={{ marginRight: 2 }} />
+      <span style={{ marginRight: 4 }}>Scouts / team</span>
+      {slotRange(MAX_SCOUTS_PER_TEAM).map(i => {
+        const n = i + 1;
+        const on = n === value;
+        return (
+          <button
+            key={n}
+            onClick={() => void pick(n)}
+            aria-pressed={on}
+            disabled={saving !== null}
+            style={{
+              width: 28, height: 26, borderRadius: 6, border: "none", fontSize: 12, fontWeight: 800,
+              background: on ? G : "transparent", color: on ? G_TXT : MUTED,
+              cursor: saving !== null ? "wait" : on ? "default" : "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}
+          >
+            {saving === n ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : n}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function ExcludeToggleButton({ count, onClick }: { count: number; onClick: () => void }) {
   return (
     <button
@@ -2699,9 +2782,9 @@ export default function SchedulingPage() {
     useQuery(
       api.schedules.getMatchPlan,
       eventKey ? { eventKey } : "skip"
-    ) as { qualMatchCount: number; matchesPerRotation?: number } | null | undefined,
+    ) as { qualMatchCount: number; matchesPerRotation?: number; scoutsPerTeam?: number } | null | undefined,
     `sched_match_plan_${eventKey || "none"}`
-  ) as { qualMatchCount: number; matchesPerRotation?: number } | null | undefined;
+  ) as { qualMatchCount: number; matchesPerRotation?: number; scoutsPerTeam?: number } | null | undefined;
 
   const allPreferences = useCached(
     useQuery(
@@ -2733,6 +2816,7 @@ export default function SchedulingPage() {
   const batchUpsertPitScouting   = useAdminMutation(api.pitScouting.batchUpsertPitScoutingAssignments);
   const setMatchPlan             = useAdminMutation(api.schedules.setMatchPlan);
   const setRotationSize          = useAdminMutation(api.schedules.setRotationSize);
+  const setScoutsPerTeam         = useAdminMutation(api.schedules.setScoutsPerTeam);
   const clearAssignmentsAbove    = useAdminMutation(api.schedules.clearMatchAssignmentsAbove);
 
   const pitScoutingTeams = useCached(
@@ -2874,6 +2958,7 @@ export default function SchedulingPage() {
   const tbaQualCount  = useMemo(() => matches.filter(m => m.comp_level === "qm").length, [matches]);
   const plannedCount  = matchPlan?.qualMatchCount ?? 0;
   const rotationSize  = matchPlan?.matchesPerRotation ?? DEFAULT_MATCHES_PER_BLOCK;
+  const scoutsPerTeam = matchPlan?.scoutsPerTeam ?? 1;
   const usingPlanned  = tbaQualCount === 0 && plannedCount > 0;
 
   const effectiveMatches = useMemo(
@@ -2932,11 +3017,11 @@ export default function SchedulingPage() {
   const pitHiddenCount = pitOptedOut.length + pitNoResponse.length;
 
   const assignMap = useMemo(() => {
-    const map: Record<number, Partial<Record<Position, { scoutId: string; name: string; guest?: boolean }>>> = {};
+    const map: Record<number, AssignRow> = {};
     for (const a of allAssignments ?? []) {
       if (!map[a.matchNumber]) map[a.matchNumber] = {};
       const u = userMap[a.scoutId];
-      map[a.matchNumber][a.position] = { scoutId: a.scoutId, name: u ? displayName(u) : "?", guest: u?.isGuest };
+      map[a.matchNumber][slotKey(a.position, a.slot ?? 0)] = { scoutId: a.scoutId, name: u ? displayName(u) : "?", guest: u?.isGuest };
     }
     return map;
   }, [allAssignments, userMap, isMobile]); // isMobile: displayName depends on viewport
@@ -2947,18 +3032,18 @@ export default function SchedulingPage() {
     return cnt;
   }, [allAssignments]);
 
-  async function handleCellClick(matchNum: number, matchLbl: string, pos: Position) {
+  async function handleCellClick(matchNum: number, matchLbl: string, pos: Position, slot: number) {
     if (!currentEvent || !pinnedScoutId) return;
-    const key = `${matchNum}-${pos}`;
+    const key = `${matchNum}-${slotKey(pos, slot)}`;
     setSavingCells(p => new Set(p).add(key));
     try {
-      const current = assignMap[matchNum]?.[pos];
+      const current = assignMap[matchNum]?.[slotKey(pos, slot)];
       if (current?.scoutId === pinnedScoutId) {
-        await clearMatchAssignment({ eventKey: currentEvent.eventKey, matchNumber: matchNum, position: pos });
+        await clearMatchAssignment({ eventKey: currentEvent.eventKey, matchNumber: matchNum, position: pos, slot });
       } else {
         await setMatchAssignment({
           eventKey: currentEvent.eventKey, matchNumber: matchNum, matchLabel: matchLbl,
-          position: pos, scoutId: pinnedScoutId as Id<"users">,
+          position: pos, scoutId: pinnedScoutId as Id<"users">, slot,
         });
       }
     } catch (e) {
@@ -2971,6 +3056,16 @@ export default function SchedulingPage() {
   async function handleSaveMatchPlan(count: number) {
     if (!currentEvent) return;
     await setMatchPlan({ eventKey: currentEvent.eventKey, qualMatchCount: count });
+  }
+
+  async function handleSaveScoutsPerTeam(n: number) {
+    if (!currentEvent) return;
+    // Lowering the count deletes whoever sits in the removed seats — say so first.
+    const lost = (allAssignments ?? []).filter(a => (a.slot ?? 0) >= n).length;
+    if (lost > 0 && !window.confirm(
+      `Going to ${n} scout${n === 1 ? "" : "s"} per team removes ${lost} assignment${lost === 1 ? "" : "s"} in the extra seats. Continue?`
+    )) return;
+    await setScoutsPerTeam({ eventKey: currentEvent.eventKey, scoutsPerTeam: n });
   }
 
   async function handleSaveRotationSize(matchesPerRotation: number) {
@@ -2989,9 +3084,14 @@ export default function SchedulingPage() {
     const assignments: Parameters<typeof batchSet>[0]["assignments"] = [];
     for (const m of inRange) {
       for (const pos of positions) {
+        // First seat on the robot that's empty or already theirs; slot 0 if all taken.
+        const slot = slotRange(scoutsPerTeam).find(s => {
+          const cur = assignMap[m.match_number]?.[slotKey(pos, s)];
+          return !cur || cur.scoutId === pinnedScoutId;
+        }) ?? 0;
         assignments.push({
           matchNumber: m.match_number, matchLabel: tbaMatchLabel(m),
-          position: pos, scoutId: pinnedScoutId as Id<"users">,
+          position: pos, scoutId: pinnedScoutId as Id<"users">, slot,
         });
       }
     }
@@ -3006,25 +3106,26 @@ export default function SchedulingPage() {
 
   /** Assigns (or clears) the pinned scout across every match in one
    *  cycle for a given position, in a single round trip. */
-  async function handleCycleClick(cycleMatches: TBAMatch[], pos: Position) {
+  async function handleCycleClick(cycleMatches: TBAMatch[], pos: Position, slot: number) {
     if (!currentEvent || !pinnedScoutId) return;
-    const key = `cycle-${cycleMatches[0].match_number}-${pos}`;
+    const k = slotKey(pos, slot);
+    const key = `cycle-${cycleMatches[0].match_number}-${k}`;
     setSavingCells(p => new Set(p).add(key));
     try {
       const allAssignedToPinned = cycleMatches.every(
-        m => assignMap[m.match_number]?.[pos]?.scoutId === pinnedScoutId
+        m => assignMap[m.match_number]?.[k]?.scoutId === pinnedScoutId
       );
       if (allAssignedToPinned) {
         await batchClear({
           eventKey: currentEvent.eventKey,
-          slots: cycleMatches.map(m => ({ matchNumber: m.match_number, position: pos })),
+          slots: cycleMatches.map(m => ({ matchNumber: m.match_number, position: pos, slot })),
         });
       } else {
         await batchSet({
           eventKey: currentEvent.eventKey,
           assignments: cycleMatches.map(m => ({
             matchNumber: m.match_number, matchLabel: tbaMatchLabel(m),
-            position: pos, scoutId: pinnedScoutId as Id<"users">,
+            position: pos, scoutId: pinnedScoutId as Id<"users">, slot,
           })),
         });
       }
@@ -3149,6 +3250,7 @@ export default function SchedulingPage() {
         matchNumber: a.matchNumber,
         position: a.position as GenPosition,
         scoutId: a.scoutId,
+        slot: a.slot,
       }));
 
       const existingPit = (pitRotations ?? []).map(r => ({
@@ -3176,6 +3278,7 @@ export default function SchedulingPage() {
         driveTeamScoutIds: driveTeamIds ?? [],
         pitScoutingAssignedScoutIds,
         matchesPerBlock: rotationSize,
+        scoutsPerTeam,
       });
 
       setAutoGenResult(mode === "pitOnly"
@@ -3192,7 +3295,7 @@ export default function SchedulingPage() {
     } finally {
       setAutoGenRunning(false);
     }
-  }, [currentEvent, allUsers, effectiveMatches, allPreferences, allAssignments, pitRotations, excludedScoutIds, dbExcludedSet, driveTeamIds, pitAssignmentsMap]);
+  }, [currentEvent, allUsers, effectiveMatches, allPreferences, allAssignments, pitRotations, excludedScoutIds, dbExcludedSet, driveTeamIds, pitAssignmentsMap, rotationSize, scoutsPerTeam]);
 
   const handleAutoApply = useCallback(async () => {
     if (!autoGenResult || !currentEvent) return;
@@ -3223,6 +3326,7 @@ export default function SchedulingPage() {
             matchLabel: a.matchLabel,
             position: a.position as import("../../convex/_generated/dataModel").Doc<"matchAssignments">["position"],
             scoutId: a.scoutId as Id<"users">,
+            slot: a.slot,
           })),
         });
       }
@@ -3243,7 +3347,7 @@ export default function SchedulingPage() {
   // selector's per-scout counts, and the "N/M slots filled" progress stat.
   const qualMatches = useMemo(() => effectiveMatches.filter(m => m.comp_level === "qm"), [effectiveMatches]);
 
-  const totalSlots  = qualMatches.length * 6;
+  const totalSlots  = qualMatches.length * 6 * scoutsPerTeam;
   const filledSlots = (allAssignments ?? []).length;
   const pct = totalSlots > 0 ? Math.min(100, Math.round((filledSlots / totalSlots) * 100)) : 0;
 
@@ -3418,6 +3522,10 @@ export default function SchedulingPage() {
                   />
                 )}
 
+                {activeTab === "matches" && effectiveMatches.length > 0 && (
+                  <ScoutsPerTeamControl value={scoutsPerTeam} onSave={handleSaveScoutsPerTeam} />
+                )}
+
                 {/* Also on the pit tab: auto pit windows are 2 rotations long */}
                 {activeTab !== "pitScouting" && effectiveMatches.length > 0 && (
                   <RotationSizeControl size={rotationSize} onSave={handleSaveRotationSize} />
@@ -3568,6 +3676,7 @@ export default function SchedulingPage() {
                       saving={savingCells}
                       pitBlocked={pinnedPitBlocked}
                       rotationSize={rotationSize}
+                      scoutsPerTeam={scoutsPerTeam}
                       isMobile={isMobile}
                       isLandscapePhone={isLandscapePhone}
                       stackLayout={stackLayout}

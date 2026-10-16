@@ -136,3 +136,59 @@ describe("setRotationSize", () => {
     expect(await plan(asAdmin)).toBeNull();
   });
 });
+
+describe("scouts per team", () => {
+  async function setup() {
+    const t = convexTest(schema, modules);
+    const ids = await t.run(async (ctx) => ({
+      adminId: await ctx.db.insert("users", { name: "Admin", email: ADMIN_EMAIL }),
+      scoutId: await ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" }),
+      otherId: await ctx.db.insert("users", { name: "Other", email: "other@team4099.com" }),
+    }));
+    const asAdmin = t.withIdentity({ subject: ids.adminId, issuer: "test", email: ADMIN_EMAIL });
+    const asScout = t.withIdentity({ subject: ids.scoutId, issuer: "test" });
+    return { t, asAdmin, asScout, ...ids };
+  }
+  const cell = { eventKey: EVENT, matchNumber: 1, matchLabel: "Q1", position: "red1" as const };
+
+  test("admin-only, rejects counts outside 1-3, keeps the plan row", async () => {
+    const { asAdmin, asScout } = await setup();
+    await expect(asScout.mutation(api.schedules.setScoutsPerTeam, { eventKey: EVENT, scoutsPerTeam: 2 })).rejects.toThrow(/[Aa]dmin/);
+    for (const bad of [0, 4, 1.5]) {
+      await expect(asAdmin.mutation(api.schedules.setScoutsPerTeam, { eventKey: EVENT, scoutsPerTeam: bad })).rejects.toThrow(/between 1 and 3/);
+    }
+    await asAdmin.mutation(api.schedules.setScoutsPerTeam, { eventKey: EVENT, scoutsPerTeam: 2 });
+    await asAdmin.mutation(api.schedules.setMatchPlan, { eventKey: EVENT, qualMatchCount: 0 });
+    expect(await asAdmin.query(api.schedules.getMatchPlan, { eventKey: EVENT })).toMatchObject({ scoutsPerTeam: 2 });
+  });
+
+  test("second slot is refused until enabled, then stores alongside slot 0", async () => {
+    const { asAdmin, scoutId, otherId } = await setup();
+    await expect(asAdmin.mutation(api.schedules.setMatchAssignment, { ...cell, scoutId, slot: 1 })).rejects.toThrow(/slot 2/);
+
+    await asAdmin.mutation(api.schedules.setScoutsPerTeam, { eventKey: EVENT, scoutsPerTeam: 2 });
+    await asAdmin.mutation(api.schedules.setMatchAssignment, { ...cell, scoutId });
+    await asAdmin.mutation(api.schedules.setMatchAssignment, { ...cell, scoutId: otherId, slot: 1 });
+    let rows = await asAdmin.query(api.schedules.listMatchAssignments, { eventKey: EVENT });
+    expect(rows.map((r) => [r.scoutId, r.slot ?? 0]).sort()).toEqual([[scoutId, 0], [otherId, 1]].sort());
+
+    // Clearing slot 0 leaves slot 1 alone
+    await asAdmin.mutation(api.schedules.clearMatchAssignment, { eventKey: EVENT, matchNumber: 1, position: "red1" });
+    rows = await asAdmin.query(api.schedules.listMatchAssignments, { eventKey: EVENT });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ scoutId: otherId, slot: 1 });
+  });
+
+  test("lowering the count deletes assignments in removed slots", async () => {
+    const { asAdmin, scoutId, otherId } = await setup();
+    await asAdmin.mutation(api.schedules.setScoutsPerTeam, { eventKey: EVENT, scoutsPerTeam: 2 });
+    await asAdmin.mutation(api.schedules.batchSetMatchAssignments, {
+      eventKey: EVENT,
+      assignments: [{ matchNumber: 1, matchLabel: "Q1", position: "red1", scoutId }, { matchNumber: 1, matchLabel: "Q1", position: "red1", scoutId: otherId, slot: 1 }],
+    });
+    const removed = await asAdmin.mutation(api.schedules.setScoutsPerTeam, { eventKey: EVENT, scoutsPerTeam: 1 });
+    expect(removed).toBe(1);
+    const rows = await asAdmin.query(api.schedules.listMatchAssignments, { eventKey: EVENT });
+    expect(rows.map((r) => r.scoutId)).toEqual([scoutId]);
+  });
+});
