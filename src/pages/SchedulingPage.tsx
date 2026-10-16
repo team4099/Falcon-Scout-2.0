@@ -239,6 +239,79 @@ function PartnerMark({ size = 10 }: { size?: number }) {
   );
 }
 
+/** The pinned scout's preferred partners, shown under the match grid so an
+ *  admin can pair them without hunting through the scout list. Sticks to the
+ *  bottom of the viewport (side-by-side layouts) while the grid is taller than the screen. Tapping a
+ *  partner pins them instead. */
+function PreferredPartnersPanel({ pinnedId, users, prefsByScout, matchCounts, onPin, sticky }: {
+  pinnedId: string;
+  users: User[];          // everyone, so off-roster picks still resolve to a name
+  prefsByScout: PrefMap;
+  matchCounts: Record<string, number>;
+  onPin: (id: string) => void;
+  /** Off on portrait phones: the bottom nav would cover it and it would eat the grid. */
+  sticky: boolean;
+}) {
+  const byId = new Map(users.map(u => [u._id as string, u]));
+  const pinned = byId.get(pinnedId);
+  const prefs = prefsByScout.get(pinnedId);
+  const partners = (prefs?.preferredPartners ?? [])
+    .map(id => byId.get(id))
+    .filter((u): u is User => !!u)
+    .sort((a, b) => displayName(a).localeCompare(displayName(b)));
+
+  return (
+    <div style={{
+      ...(sticky ? { position: "sticky" as const, bottom: 8, zIndex: 5, boxShadow: "0 -6px 18px oklch(0 0 0 / 25%)" } : {}),
+      marginTop: 10, padding: "10px 12px", borderRadius: 14, border: `1.5px solid ${PARTNER_BORD}`,
+      // Opaque: SURFACE is translucent and grid rows would show through while sticky.
+      background: `linear-gradient(${PARTNER_BG}, ${PARTNER_BG}), var(--card)`,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: partners.length ? 8 : 0 }}>
+        <Heart size={12} fill={PARTNER_BORD} style={{ color: PARTNER_BORD, flexShrink: 0 }} />
+        <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: PARTNER_BORD, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {pinned ? displayName(pinned) : "Scout"}'s preferred partners
+        </span>
+        {partners.length > 0 && (
+          <span style={{ marginLeft: "auto", fontSize: 10, color: MUTED, flexShrink: 0 }}>tap to select</span>
+        )}
+      </div>
+      {partners.length === 0 ? (
+        <div style={{ fontSize: 12, color: MUTED, marginTop: 4 }}>
+          {prefs ? "No preferred partners chosen." : "Hasn't filled out the preferences form."}
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {partners.map(u => {
+            const mutual = prefsByScout.get(u._id)?.preferredPartners?.includes(pinnedId) ?? false;
+            const offRoster = u.onRoster === false;
+            const cnt = matchCounts[u._id] ?? 0;
+            return (
+              <button key={u._id} onClick={() => onPin(u._id)} disabled={offRoster}
+                title={offRoster ? "Not on this event's roster" : mutual ? "They picked each other" : undefined}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                  padding: "4px 10px 4px 4px", borderRadius: 20,
+                  cursor: offRoster ? "default" : "pointer", opacity: offRoster ? 0.5 : 1,
+                  background: PARTNER_BG, border: `1px solid ${PARTNER_BORD}`, outline: "none",
+                }}
+              >
+                <Avatar user={u} size={22} />
+                <span style={{ fontSize: 12, fontWeight: 600, color: FG, whiteSpace: "nowrap" }}>{displayName(u)}</span>
+                {mutual && <span style={{ fontSize: 10, fontWeight: 700, color: PARTNER_BORD }}>mutual</span>}
+                {offRoster && <span style={{ fontSize: 10, color: MUTED }}>not on roster</span>}
+                {cnt > 0 && (
+                  <span style={{ background: G_MED, color: G, borderRadius: 20, padding: "0 6px", fontSize: 10, fontWeight: 800 }}>{cnt}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface ScoutSelectorProps {
   users: User[];
   prefsByScout?: PrefMap;
@@ -307,8 +380,11 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
       flexShrink: 0, display: "flex", flexDirection: "column",
       minHeight: 0, borderRadius: 14, border: `1px solid ${SURF_BORD}`,
       background: SURFACE, overflow: "hidden",
-      maxHeight: stackLayout && !mobileOpen ? 52 : undefined,
+      maxHeight: stackLayout ? (mobileOpen ? undefined : 52) : "calc(100dvh - 24px)",
       transition: "max-height 0.25s ease",
+      // Side-by-side layouts: the list sticks to the viewport and scrolls on
+      // its own, so any scout is reachable without scrolling the grid away.
+      ...(stackLayout ? {} : { position: "sticky" as const, top: 12, alignSelf: "flex-start" }),
     }}>
       {/* Header — tappable toggle on portrait-mobile only */}
       <div
@@ -352,7 +428,7 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
       {bodyVisible && (
         isLandscapePhone ? (
           /* Landscape phone: compact scrollable vertical list, avatar + first name only */
-          <ScrollArea style={{ flex: 1 }}>
+          <ScrollArea style={{ flex: 1, minHeight: 0 }}>
             <div style={{ padding: "4px 6px 6px", display: "flex", flexDirection: "column", gap: 2 }}>
               {users.map(u => {
                 const active = pinnedId === u._id;
@@ -424,7 +500,7 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
           </div>
         ) : (
           /* Desktop: full vertical list */
-          <ScrollArea style={{ flex: 1 }}>
+          <ScrollArea style={{ flex: 1, minHeight: 0 }}>
             <div style={{ padding: "8px 8px 4px" }}>
               {users.length === 0 && (
                 <div style={{ padding: "32px 12px", textAlign: "center", color: MUTED, fontSize: 13 }}>
@@ -3353,7 +3429,9 @@ export default function SchedulingPage() {
 
   return (
     <>
-      <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", gap: 16 }}>
+      {/* overflow:clip, not hidden — hidden makes this a scroll container,
+          which would stop the scout list from sticking to <main>'s scroll. */}
+      <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "clip", gap: 16 }}>
 
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <div style={{ flexShrink: 0 }}>
@@ -3667,6 +3745,9 @@ export default function SchedulingPage() {
                       stackLayout={stackLayout}
                       readOnly={readOnly}
                     />
+                    {/* Block wrapper, not flex: the grid keeps its natural height so
+                        the partners panel sits right under the last row. */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
                     <MatchGrid
                       matches={qualMatches}
                       assignMap={assignMap}
@@ -3682,6 +3763,17 @@ export default function SchedulingPage() {
                       stackLayout={stackLayout}
                       readOnly={readOnly}
                     />
+                    {pinnedScoutId && (
+                      <PreferredPartnersPanel
+                        pinnedId={pinnedScoutId}
+                        users={everyUser ?? []}
+                        prefsByScout={prefsByScout}
+                        matchCounts={matchCounts}
+                        onPin={setPinnedScoutId}
+                        sticky={!stackLayout}
+                      />
+                    )}
+                    </div>
                   </div>
                 </>
               )}
