@@ -20,6 +20,7 @@ import { EMPTY_TEAM_EPA } from "@/lib/epa";
 import type { TeamEpa } from "@/lib/epa";
 import { ExternalLink, Search, FileText, TrendingUp, Clock, CalendarCheck, Trophy, CalendarDays, Rows3, Table2, Columns3, EyeOff, Eye } from "lucide-react";
 import TeamDetailPanel from "@/pages/TeamDetailPanel";
+import { useSharedPicklistNotes } from "@/hooks/usePicklistNotes";
 import { useMutation } from "convex/react";
 import {
   DropdownMenu,
@@ -934,6 +935,8 @@ export default function DashboardPage() {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [search, setSearch] = useState("");
   const [selectedTeam, setSelectedTeam] = useState<number | null>(null);
+  // Same Notes tab as the Picklist's team panel, backed by the shared picklist.
+  const selectedNotes = useSharedPicklistNotes(eventKey, selectedTeam);
 
   // Active sort column, or null for the natural (team-number) order.
   const [sortKey, setSortKey] = useState<string | null>(null);
@@ -1387,6 +1390,7 @@ export default function DashboardPage() {
             epaByTeam={epaMap}
             avgScoreByTeam={avgScoreByTeam}
             submissionsByTeam={submissionsByTeam}
+            notes={selectedNotes}
             onClose={() => setSelectedTeam(null)}
           />
         );

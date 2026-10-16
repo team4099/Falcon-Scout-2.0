@@ -95,6 +95,15 @@ export function newestFirst<T extends RankedSub>(subs: T[]): T[] {
   );
 }
 
+/** Note Scout reports only ("super" is the stored form type), newest first.
+ *  A report whose template was deleted can't be classified, so it's left out. */
+export function noteScoutFirst<T extends RankedSub>(
+  subs: T[],
+  formTypeOf: (templateId: string) => string | undefined,
+): T[] {
+  return newestFirst(subs.filter((s) => formTypeOf(s.templateId) === "super"));
+}
+
 /** A team has one pit report: the most recently synced one. Deleting it
  *  falls back to the previous one automatically. */
 export function latestPit<T extends { syncedAt?: number }>(subs: T[]): T | null {

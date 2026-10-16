@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fieldsForData, isEmptyValue, isLowerBetter, isNoteField, latestPit, newestFirst, rankIn } from "./teamProfile";
+import { fieldsForData, isEmptyValue, isLowerBetter, isNoteField, latestPit, newestFirst, noteScoutFirst, rankIn } from "./teamProfile";
 
 const sub = (id: string, matchNumber: number, extra: Partial<{ compLevel: "qm" | "elim"; syncedAt: number }> = {}) => ({
   _id: id, templateId: "t", matchNumber, data: "{}", ...extra,
@@ -83,5 +83,18 @@ describe("fieldsForData", () => {
   it("returns the same array when nothing is missing", () => {
     const fields = [tele];
     expect(fieldsForData(fields, { tele: "x" }, new Map())).toBe(fields);
+  });
+});
+
+describe("noteScoutFirst", () => {
+  it("keeps only super-form reports, newest first", () => {
+    const types: Record<string, string> = { match: "default", note: "super" };
+    const subs = [
+      { ...sub("a", 3), templateId: "note" },
+      { ...sub("b", 9), templateId: "match" },
+      { ...sub("c", 7), templateId: "note" },
+      { ...sub("d", 8), templateId: "gone" },
+    ];
+    expect(noteScoutFirst(subs, (id) => types[id]).map((s) => s._id)).toEqual(["c", "a"]);
   });
 });

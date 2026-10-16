@@ -9,6 +9,7 @@ import {
   isNoteField,
   fieldsForData,
   newestFirst,
+  noteScoutFirst,
   latestPit,
   type Rank,
 } from "@/lib/teamProfile";
@@ -46,7 +47,7 @@ import {
   X,
   ExternalLink,
   TrendingUp,
-  BarChart2,
+  NotebookPen,
   ClipboardList,
   Search,
   CheckCircle2,
@@ -187,7 +188,7 @@ function SeasonTrendChart({
 }
 
 /** EPA and average score across the team's whole season. Mounted only while
- *  the Charts tab is open, so the season fetch waits until it's wanted. */
+ *  the Overview tab is open, so the season fetch waits until it's wanted. */
 function SeasonCharts({ teamNumber, eventKey, eventYear }: { teamNumber: number; eventKey: string; eventYear: number }) {
   const want = `${teamNumber}|${eventKey}|${eventYear}`;
   const [loaded, setLoaded] = useState<{ key: string; matches: SlimMatch[]; teamMatches: SlimTeamMatch[] } | null>(null);
@@ -619,6 +620,18 @@ export default function TeamDetailPanel({
     [submissions, templateById, knownFields, fields, reportMode],
   );
 
+  // Note Scout forms only, always the full report.
+  const noteScoutReports = useMemo(
+    () =>
+      noteScoutFirst(submissions, (id) => templateById.get(id)?.formType).map((sub) => {
+        const tpl = templateById.get(sub.templateId);
+        const data = parseData(sub);
+        const all = fieldsForData(tpl?.fields ?? [], data, knownFields);
+        return { sub, tpl, data, shown: reportFields(all, data, "full") };
+      }),
+    [submissions, templateById, knownFields],
+  );
+
   const rank = tbaRank ? (tbaRank as { rank?: number }).rank ?? null : null;
   const record = tbaRank ? (tbaRank as { record?: { wins: number; losses: number; ties: number } }).record ?? null : null;
   const hasStats = epa.event !== null || epa.overall !== null || avgScore !== null;
@@ -672,17 +685,17 @@ export default function TeamDetailPanel({
         <Tabs value={tab} onValueChange={setTab} className="flex-1 flex flex-col min-h-0">
           <TabsList className="mx-5 mt-3 shrink-0 w-fit">
             <TabsTrigger value="overview" className="gap-1.5">
-              <TrendingUp className="h-3.5 w-3.5" /> Overview
+              <TrendingUp className="h-3.5 w-3.5 hidden sm:block" /> Overview
             </TabsTrigger>
-            <TabsTrigger value="charts" className="gap-1.5">
-              <BarChart2 className="h-3.5 w-3.5" /> Charts
+            <TabsTrigger value="noteScout" className="gap-1.5">
+              <NotebookPen className="h-3.5 w-3.5 hidden sm:block" /> Note Scout
             </TabsTrigger>
             <TabsTrigger value="reports" className="gap-1.5">
-              <ClipboardList className="h-3.5 w-3.5" /> Reports
+              <ClipboardList className="h-3.5 w-3.5 hidden sm:block" /> Reports
             </TabsTrigger>
             {notes && (
               <TabsTrigger value="notes" className="gap-1.5">
-                <StickyNote className="h-3.5 w-3.5" /> Notes
+                <StickyNote className="h-3.5 w-3.5 hidden sm:block" /> Notes
               </TabsTrigger>
             )}
           </TabsList>
@@ -757,15 +770,38 @@ export default function TeamDetailPanel({
                     </div>
                   )}
                 </div>
+
+                <div className="space-y-3">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Charts</p>
+                  <SeasonCharts teamNumber={teamNumber} eventKey={eventKey} eventYear={eventYear} />
+                </div>
               </div>
             </ScrollArea>
           </TabsContent>
 
-          {/* ── CHARTS ── */}
-          <TabsContent value="charts" className="flex-1 min-h-0 mt-0">
+          {/* ── NOTE SCOUT ── */}
+          <TabsContent value="noteScout" className="flex-1 min-h-0 mt-0">
             <ScrollArea className="h-full">
-              <div className="px-5 py-4 space-y-4 pb-8">
-                <SeasonCharts teamNumber={teamNumber} eventKey={eventKey} eventYear={eventYear} />
+              <div className="px-5 py-4 space-y-3 pb-8">
+                {noteScoutReports.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground gap-2">
+                    <NotebookPen className="h-8 w-8 opacity-30" />
+                    <p className="text-sm">No Note Scout reports yet.</p>
+                  </div>
+                ) : (
+                  noteScoutReports.map(({ sub, tpl, data, shown }) => (
+                    <ReportCard
+                      key={sub._id}
+                      sub={sub}
+                      shown={shown}
+                      data={data}
+                      formName={tpl?.name ?? null}
+                      canDelete={isAdminMode}
+                      onDelete={() => setToDelete(sub)}
+                      onPhoto={setPhoto}
+                    />
+                  ))
+                )}
               </div>
             </ScrollArea>
           </TabsContent>

@@ -38,6 +38,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCached } from "@/hooks/useCached";
 import { useCurrentEvent } from "@/hooks/useCurrentEvent";
 import { enqueueKanbanOp } from "@/lib/offlineQueue";
+import { useSaveCardNotes } from "@/hooks/usePicklistNotes";
 import { useEventTeamData } from "@/hooks/useEventTeamData";
 import type { EventTeamData } from "@/hooks/useEventTeamData";
 import { EMPTY_TEAM_EPA } from "@/lib/epa";
@@ -913,7 +914,8 @@ function BoardView({
 
   const updateColumns    = useAdminMutation(api.kanban.updateBoardColumns);
   const moveCardMutation = useMutation(api.kanban.moveCard);
-  const updateCardMutation = useMutation(api.kanban.updateCard);
+  // Notes live on the board's card (admin-only on shared, owner-only on personal).
+  const handleSaveNotes = useSaveCardNotes();
   const seedTeamsMutation  = useAdminMutation(api.kanban.seedTeams);
 
   const [openTeam, setOpenTeam]         = useState<number | null>(null);
@@ -1287,22 +1289,6 @@ function BoardView({
     await commitMove(cardId, targetCard.columnId, position);
   }
 
-  /** Notes live on the board's card: admin-only on the shared board,
-   *  owner-only on a personal one (convex/kanban.ts requireBoardWrite). */
-  async function handleSaveNotes(cardId: string, notes: string) {
-    if (navigator.onLine) {
-      try {
-        await updateCardMutation({ cardId: cardId as Id<"kanbanCards">, notes });
-        toast.success("Notes saved");
-      } catch {
-        toast.error("Failed to save notes");
-      }
-    } else {
-      enqueueKanbanOp({ type: "updateCard", cardId, notes });
-      toast.success("Notes saved, will sync when online");
-    }
-  }
-
   function handleTogglePick(teamNumber: number) {
     setPickedTeams((prev) => {
       const next = new Set(prev);
@@ -1617,7 +1603,7 @@ function BoardView({
             value: openCard.notes ?? "",
             canEdit,
             readOnlyHint: "Only admins can edit notes on the shared picklist.",
-            onSave: (text) => handleSaveNotes(openCard._id, text),
+            onSave: (text) => void handleSaveNotes(openCard._id, text),
           }}
           onClose={() => setOpenTeam(null)}
         />
