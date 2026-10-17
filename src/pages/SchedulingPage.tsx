@@ -658,6 +658,8 @@ interface MatchGridProps {
   rotationSize: number;
   /** Scouts per robot — each position cell stacks this many seats. */
   scoutsPerTeam: number;
+  /** The pinned scout's preferred partners — their cells get the partner tint. */
+  partnerIds: Set<string>;
   isMobile?: boolean;
   isLandscapePhone?: boolean;
   stackLayout?: boolean;
@@ -691,7 +693,7 @@ function buildGridRows(matches: TBAMatch[], rotationSize: number): GridRow[] {
   return rows;
 }
 
-function MatchGrid({ matches, assignMap, pinnedId, onCellClick, onCycleClick, saving, pitBlocked, rotationSize, scoutsPerTeam, isMobile, isLandscapePhone, stackLayout, readOnly }: MatchGridProps) {
+function MatchGrid({ matches, assignMap, pinnedId, onCellClick, onCycleClick, saving, pitBlocked, rotationSize, scoutsPerTeam, partnerIds, isMobile, isLandscapePhone, stackLayout, readOnly }: MatchGridProps) {
   const [expandedMatchKey, setExpandedMatchKey] = useState<string | null>(null);
   const canExpand = !!(stackLayout && !readOnly);
   const gridRows = useMemo(() => buildGridRows(matches, rotationSize), [matches, rotationSize]);
@@ -773,6 +775,7 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, onCycleClick, sa
               pitRange={row.matches.map(m => pitBlocked.get(m.match_number)).find(Boolean)}
               readOnly={readOnly}
               scoutsPerTeam={scoutsPerTeam}
+              partnerIds={partnerIds}
               COL={COL}
               cellPad={cellPad}
               cellMinH={cellMinH}
@@ -791,6 +794,7 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, onCycleClick, sa
             pitRange={pitBlocked.get(row.match.match_number)}
             readOnly={readOnly}
             scoutsPerTeam={scoutsPerTeam}
+            partnerIds={partnerIds}
             canExpand={canExpand}
             isExpanded={canExpand && expandedMatchKey === row.match.key}
             onToggleExpand={() => setExpandedMatchKey(k => k === row.match.key ? null : row.match.key)}
@@ -818,6 +822,12 @@ function MatchGrid({ matches, assignMap, pinnedId, onCellClick, onCycleClick, sa
           <div style={{ width: 10, height: 10, borderRadius: 3, background: SURF_HVR, border: `1px solid ${SURF_BORD}` }} />
           <span style={{ fontSize: 10, color: MUTED }}>Other scout</span>
         </div>
+        {partnerIds.size > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <div style={{ width: 10, height: 10, borderRadius: 3, background: PARTNER_BG, border: `1px solid ${PARTNER_BORD}` }} />
+            <span style={{ fontSize: 10, color: MUTED }}>Preferred partner</span>
+          </div>
+        )}
         {pitBlocked.size > 0 && (
           <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
             <div style={{ width: 10, height: 10, borderRadius: 3, background: PIT_BLOCKED_BG, border: `1px solid ${SURF_BORD}` }} />
@@ -1006,6 +1016,7 @@ interface SingleMatchRowProps {
   pitRange?: string;
   readOnly?: boolean;
   scoutsPerTeam: number;
+  partnerIds: Set<string>;
   canExpand: boolean;
   isExpanded: boolean;
   onToggleExpand: () => void;
@@ -1018,7 +1029,7 @@ interface SingleMatchRowProps {
 }
 
 function SingleMatchRow({
-  m, lbl, row, pinnedId, onCellClick, saving, pitRange, readOnly, scoutsPerTeam,
+  m, lbl, row, pinnedId, onCellClick, saving, pitRange, readOnly, scoutsPerTeam, partnerIds,
   canExpand, isExpanded, onToggleExpand, onCloseExpand,
   COL, cellPad, cellMinH, cellFontSize, isLandscapePhone,
 }: SingleMatchRowProps) {
@@ -1087,6 +1098,7 @@ function SingleMatchRow({
                     const isSaving = saving.has(savingKey);
                     const assigned = row[k];
                     const isPinned = assigned?.scoutId === pinnedId;
+                    const isPartner = !!assigned && !isPinned && partnerIds.has(assigned.scoutId);
                     // The server would refuse the pinned scout here (pit duty).
                     const blocked = !!pitRange && !isPinned;
 
@@ -1102,6 +1114,10 @@ function SingleMatchRow({
                         cellBg = G_DIM;
                         cellBorder = `1.5px solid ${G_STR}`;
                         textColor = G;
+                      } else if (isPartner) {
+                        cellBg = PARTNER_BG;
+                        cellBorder = `1.5px solid ${PARTNER_BORD}`;
+                        textColor = FG;
                       } else {
                         cellBg = SURF_HVR;
                         cellBorder = `1.5px solid ${SURF_BORD}`;
@@ -1120,7 +1136,7 @@ function SingleMatchRow({
                             blocked
                               ? `Pinned scout is on pit rotation ${pitRange}${assigned ? ` · ${assigned.name}` : ""}`
                               : assigned
-                              ? `${assigned.name} (${posLbl})${readOnly ? "" : ` — click to ${isPinned ? "unassign" : "replace"}`}`
+                              ? `${assigned.name} (${posLbl})${isPartner ? " · preferred partner" : ""}${readOnly ? "" : ` — click to ${isPinned ? "unassign" : "replace"}`}`
                               : readOnly ? "Unassigned" : pinnedId ? `Assign to ${posLbl}` : "Pin a scout first"
                           }
                           style={{
@@ -1150,7 +1166,7 @@ function SingleMatchRow({
                               ? (blocked ? <span style={{ fontSize: cellFontSize - 1, letterSpacing: "0.05em" }}>PIT</span>
                                 : pinnedId && !readOnly ? <span style={{ opacity: 0.25, fontSize: 14, fontWeight: 300 }}>+</span> : null)
                               : <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%", padding: "0 2px" }}>
-                                  {assigned.name}{assigned.guest && <GuestTag />}
+                                  {isPartner && <><PartnerMark />{" "}</>}{assigned.name}{assigned.guest && <GuestTag />}
                                 </span>
                           }
                         </button>
@@ -1259,6 +1275,7 @@ interface CycleRowProps {
   pitRange?: string;
   readOnly?: boolean;
   scoutsPerTeam: number;
+  partnerIds: Set<string>;
   COL: string;
   cellPad: string;
   cellMinH: number;
@@ -1267,7 +1284,7 @@ interface CycleRowProps {
 }
 
 function CycleRow({
-  cycleMatches, assignMap, pinnedId, onCycleClick, saving, pitRange, readOnly, scoutsPerTeam,
+  cycleMatches, assignMap, pinnedId, onCycleClick, saving, pitRange, readOnly, scoutsPerTeam, partnerIds,
   COL, cellPad, cellMinH, cellFontSize, isLandscapePhone,
 }: CycleRowProps) {
   const first = cycleMatches[0];
@@ -1311,6 +1328,7 @@ function CycleRow({
             ? slots[0]!.scoutId
             : null;
           const isPinned = uniformScoutId != null && uniformScoutId === pinnedId;
+          const isPartner = uniformScoutId != null && !isPinned && partnerIds.has(uniformScoutId);
           // Partly filled, or filled by different scouts (e.g. after the
           // rotation size changed under existing assignments).
           const isMixed = uniformScoutId == null && slots.some(s => s != null);
@@ -1325,6 +1343,7 @@ function CycleRow({
             cellBg = PIT_BLOCKED_BG; cellBorder = `1.5px solid ${SURF_BORD}`;
           } else if (uniformScoutId) {
             if (isPinned) { cellBg = G_DIM; cellBorder = `1.5px solid ${G_STR}`; textColor = G; }
+            else if (isPartner) { cellBg = PARTNER_BG; cellBorder = `1.5px solid ${PARTNER_BORD}`; textColor = FG; }
             else { cellBg = SURF_HVR; cellBorder = `1.5px solid ${SURF_BORD}`; textColor = FG; }
           } else if (isMixed) {
             cellBorder = `1.5px dashed ${SURF_BORD}`;
@@ -1343,7 +1362,7 @@ function CycleRow({
                     : readOnly
                     ? (uniformScoutId ? slots[0]!.name : isMixed ? "Mixed assignment across this cycle" : "Unassigned")
                     : uniformScoutId
-                      ? `${slots[0]!.name} (${posLbl}) for the whole cycle — click to ${isPinned ? "unassign" : "replace"}`
+                      ? `${slots[0]!.name} (${posLbl}) for the whole cycle${isPartner ? " · preferred partner" : ""} — click to ${isPinned ? "unassign" : "replace"}`
                       : isMixed
                         ? "Mixed within this cycle — click to overwrite with the pinned scout"
                         : pinnedId ? `Assign whole cycle to ${posLbl}` : "Pin a scout first"
@@ -1373,7 +1392,7 @@ function CycleRow({
                   ? <Loader2 size={10} style={{ animation: "spin 1s linear infinite" }} />
                   : uniformScoutId
                     ? <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%", padding: "0 2px" }}>
-                        {slots[0]!.name}{slots[0]!.guest && <GuestTag />}
+                        {isPartner && <><PartnerMark />{" "}</>}{slots[0]!.name}{slots[0]!.guest && <GuestTag />}
                       </span>
                     : isMixed
                       ? <span style={{ fontSize: cellFontSize - 1, opacity: 0.6 }}>···</span>
@@ -3071,6 +3090,7 @@ export default function SchedulingPage() {
     }
     return m;
   }, [allPreferences]);
+  const pinnedPartners = useMemo(() => partnerSet(prefsByScout, pinnedScoutId), [prefsByScout, pinnedScoutId]);
 
   // Scouts split by what they actually said about pit rotations. "Said no" and
   // "never answered the form" are the same absence in the data (neither shows
@@ -3758,6 +3778,7 @@ export default function SchedulingPage() {
                       pitBlocked={pinnedPitBlocked}
                       rotationSize={rotationSize}
                       scoutsPerTeam={scoutsPerTeam}
+                      partnerIds={pinnedPartners}
                       isMobile={isMobile}
                       isLandscapePhone={isLandscapePhone}
                       stackLayout={stackLayout}
