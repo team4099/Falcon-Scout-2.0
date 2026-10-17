@@ -15,6 +15,7 @@ export interface Submission {
   eventKey: string;
   matchNumber?: number;
   teamNumber?: number;
+  compLevel?: "qm" | "elim";
   scoutId?: string;
   /** Absent on list summaries (forms.listSubmissionSummaries); the modal fetches it. */
   data?: string;

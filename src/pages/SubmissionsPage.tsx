@@ -15,7 +15,9 @@ import {
 } from "@/components/SubmissionDetailModal";
 import { filterFeed } from "@/lib/submissionFeed";
 import { scoutLabel } from "@/lib/scoutName";
-import { Inbox, Search } from "lucide-react";
+import { fetchTBAEventMatches, type TBAMatch } from "@/lib/api";
+import { buildAttendance, teamAtPosition, type AttendanceAssignment } from "@/lib/scoutAttendance";
+import { Inbox, Search, CheckCircle2, XCircle } from "lucide-react";
 
 interface User {
   _id: string;
@@ -78,6 +80,38 @@ export default function SubmissionsPage() {
     return (id: string) => byId.get(id) ?? "Unknown form";
   }, [templates]);
 
+  // ── Attendance: assigned qual scouts vs. forms actually filed ───────────────
+  const [view, setView] = useState<"feed" | "attendance">("feed");
+  const [onlyMissed, setOnlyMissed] = useState(false);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const assignments = useQuery(
+    api.schedules.listMatchAssignments,
+    eventKey && view === "attendance" ? { eventKey } : "skip",
+  ) as AttendanceAssignment[] | undefined;
+  const [tbaQuals, setTbaQuals] = useState<TBAMatch[] | null | undefined>(undefined);
+  useEffect(() => {
+    if (!eventKey || view !== "attendance") return;
+    let live = true;
+    fetchTBAEventMatches(eventKey)
+      .then((m) => live && setTbaQuals(Array.isArray(m) ? m.filter((x) => x.comp_level === "qm") : null))
+      .catch(() => live && setTbaQuals(null));
+    return () => { live = false; };
+  }, [eventKey, view]);
+  const attendance = useMemo(() => {
+    if (!assignments || !submissions || !templates || !tbaQuals) return undefined;
+    const quals = new Map(tbaQuals.map((m) => [m.match_number, m]));
+    const played = new Set(
+      tbaQuals.filter((m) => m.alliances.red.score >= 0 && m.alliances.blue.score >= 0).map((m) => m.match_number),
+    );
+    return buildAttendance({
+      assignments,
+      submissions,
+      matchTemplateIds: new Set(templates.filter((t) => (t.formType ?? "default") === "default").map((t) => t._id)),
+      playedQuals: played,
+      teamFor: (n, pos) => teamAtPosition(quals.get(n)?.alliances, pos),
+    }).sort((a, b) => b.missed - a.missed || scoutName(a.scoutId).localeCompare(scoutName(b.scoutId)));
+  }, [assignments, submissions, templates, tbaQuals, scoutName]);
+
   const feed = useMemo(
     () => filterFeed(submissions ?? [], { templateId, query, scoutName, formName }),
     [submissions, templateId, query, scoutName, formName],
@@ -127,7 +161,76 @@ export default function SubmissionsPage() {
         </div>
       </div>
 
+      <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+        <button style={chip(view === "feed")} onClick={() => setView("feed")}>Feed</button>
+        <button style={chip(view === "attendance")} onClick={() => setView("attendance")}>Attendance</button>
+      </div>
+
+      {view === "attendance" && (
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain" }}>
+          {attendance === undefined ? (
+            <div style={{ padding: 32, textAlign: "center", color: "var(--muted-foreground)", fontSize: 13 }}>
+              {tbaQuals === null
+                ? "Couldn't load match results from TBA, so missed matches can't be worked out."
+                : "Loading…"}
+            </div>
+          ) : attendance.length === 0 ? (
+            <div style={{ padding: 32, textAlign: "center", color: "var(--muted-foreground)", fontSize: 13 }}>
+              No assigned qual matches have been played yet.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingBottom: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 12, color: "var(--muted-foreground)" }}>
+                <span>
+                  {attendance.reduce((n, r) => n + r.missed, 0)} missed of{" "}
+                  {attendance.reduce((n, r) => n + r.submitted + r.missed, 0)} played assignments
+                </span>
+                <button style={chip(onlyMissed)} onClick={() => setOnlyMissed((v) => !v)}>Missed only</button>
+              </div>
+              {attendance.filter((r) => !onlyMissed || r.missed > 0).map((r) => {
+                const isOpen = expanded === r.scoutId;
+                return (
+                  <div key={r.scoutId} style={{ border: "1px solid oklch(1 0 0 / 8%)", borderRadius: 12, background: "oklch(1 0 0 / 2%)" }}>
+                    <button
+                      onClick={() => setExpanded(isOpen ? null : r.scoutId)}
+                      style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", padding: "10px 12px", cursor: "pointer" }}
+                    >
+                      <span style={{ flex: 1, minWidth: 0, fontWeight: 700, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {scoutName(r.scoutId)}
+                      </span>
+                      <span style={{ fontSize: 12.5, fontWeight: 700, color: "oklch(0.75 0.17 150)" }}>{r.submitted} done</span>
+                      <span style={{ fontSize: 12.5, fontWeight: 700, color: r.missed ? "oklch(0.7 0.2 25)" : "var(--muted-foreground)" }}>
+                        {r.missed} missed
+                      </span>
+                    </button>
+                    {isOpen && (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "0 12px 12px" }}>
+                        {r.matches.map((m) => (
+                          <span
+                            key={m.matchNumber}
+                            style={{
+                              display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 8,
+                              fontSize: 12, fontWeight: 600,
+                              color: m.submitted ? "oklch(0.75 0.17 150)" : "oklch(0.7 0.2 25)",
+                              background: m.submitted ? "oklch(0.75 0.17 150 / 12%)" : "oklch(0.7 0.2 25 / 14%)",
+                            }}
+                          >
+                            {m.submitted ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
+                            {m.label}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Filters */}
+      {view === "feed" && (<>
       <div style={{ display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
         <label
           style={{
@@ -220,6 +323,7 @@ export default function SubmissionsPage() {
           </div>
         )}
       </div>
+      </>)}
 
       {open && (
         <SubmissionDetailModal
