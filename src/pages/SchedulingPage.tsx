@@ -428,7 +428,7 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
       {bodyVisible && (
         isLandscapePhone ? (
           /* Landscape phone: compact scrollable vertical list, avatar + first name only */
-          <ScrollArea style={{ flex: 1, minHeight: 0 }}>
+          <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain" }}>
             <div style={{ padding: "4px 6px 6px", display: "flex", flexDirection: "column", gap: 2 }}>
               {users.map(u => {
                 const active = pinnedId === u._id;
@@ -462,7 +462,7 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
                 );
               })}
             </div>
-          </ScrollArea>
+          </div>
         ) : stackLayout ? (
           /* Portrait phone: horizontal scrolling carousel */
           <div style={{ overflowX: "auto", overflowY: "hidden", display: "flex", gap: 6, padding: "8px 10px", flexShrink: 0 }}>
@@ -500,7 +500,7 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
           </div>
         ) : (
           /* Desktop: full vertical list */
-          <ScrollArea style={{ flex: 1, minHeight: 0 }}>
+          <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain" }}>
             <div style={{ padding: "8px 8px 4px" }}>
               {users.length === 0 && (
                 <div style={{ padding: "32px 12px", textAlign: "center", color: MUTED, fontSize: 13 }}>
@@ -541,7 +541,7 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
                 );
               })}
             </div>
-          </ScrollArea>
+          </div>
         )
       )}
 
