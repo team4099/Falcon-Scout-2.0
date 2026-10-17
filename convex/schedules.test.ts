@@ -49,6 +49,23 @@ describe("adminSetPreferences", () => {
   });
 });
 
+describe("listAllPreferences", () => {
+  test("only admins can read who picked whom; scouts get nothing", async () => {
+    const t = convexTest(schema, modules);
+    const { adminId, scoutId } = await t.run(async (ctx) => {
+      const adminId = await ctx.db.insert("users", { name: "Admin", email: ADMIN_EMAIL });
+      const scoutId = await ctx.db.insert("users", { name: "Scout", email: "scout@team4099.com" });
+      await ctx.db.insert("scoutPreferences", { scoutId, eventKey: EVENT, ...PREFS, preferredPartners: [adminId], updatedAt: 1 });
+      return { adminId, scoutId };
+    });
+    const asAdmin = t.withIdentity({ subject: adminId, issuer: "test", email: ADMIN_EMAIL });
+    const asScout = t.withIdentity({ subject: scoutId, issuer: "test" });
+
+    expect(await asAdmin.query(api.schedules.listAllPreferences, { eventKey: EVENT })).toHaveLength(1);
+    expect(await asScout.query(api.schedules.listAllPreferences, { eventKey: EVENT })).toEqual([]);
+  });
+});
+
 describe("match assignment vs pit rotation", () => {
   async function setup() {
     const t = convexTest(schema, modules);

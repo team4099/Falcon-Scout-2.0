@@ -421,7 +421,7 @@ function ScoutSelector({ users, prefsByScout, pinnedId, onPin, matchCounts, matc
             {readOnly ? "Select a scout to highlight their matches." : "Select a scout, then click grid cells to assign."}
           </p>
         )}
-        {!stackLayout && !isLandscapePhone && (
+        {prefsByScout && !stackLayout && !isLandscapePhone && (
           <p style={{ fontSize: 10, color: MUTED, margin: "5px 0 0", display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><Zap size={10} style={{ color: G }} />wants more matches</span>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><Heart size={10} fill={PARTNER_BORD} style={{ color: PARTNER_BORD }} />their picks</span>
@@ -3095,7 +3095,10 @@ export default function SchedulingPage() {
     }
     return m;
   }, [allPreferences]);
-  const pinnedPartners = useMemo(() => partnerSet(prefsByScout, pinnedScoutId), [prefsByScout, pinnedScoutId]);
+  // Preferences are admin-only (the server also withholds them): non-admins get
+  // no partner tint, badges, or panel.
+  const prefsForView = isAdminMode ? prefsByScout : undefined;
+  const pinnedPartners = useMemo(() => partnerSet(prefsForView, pinnedScoutId), [prefsForView, pinnedScoutId]);
 
   // Scouts split by what they actually said about pit rotations. "Said no" and
   // "never answered the form" are the same absence in the data (neither shows
@@ -3760,7 +3763,7 @@ export default function SchedulingPage() {
                   <div style={{ flex: 1, display: "flex", flexDirection: stackLayout ? "column" : "row", gap: isLandscapePhone ? 6 : 12, minHeight: 0 }}>
                     <ScoutSelector
                       users={sortedAllUsers}
-                      prefsByScout={prefsByScout}
+                      prefsByScout={prefsForView}
                       pinnedId={pinnedScoutId}
                       onPin={setPinnedScoutId}
                       matchCounts={matchCounts}
@@ -3789,11 +3792,11 @@ export default function SchedulingPage() {
                       stackLayout={stackLayout}
                       readOnly={readOnly}
                     />
-                    {pinnedScoutId && (
+                    {pinnedScoutId && prefsForView && (
                       <PreferredPartnersPanel
                         pinnedId={pinnedScoutId}
                         users={everyUser ?? []}
-                        prefsByScout={prefsByScout}
+                        prefsByScout={prefsForView}
                         matchCounts={matchCounts}
                         onPin={setPinnedScoutId}
                         sticky={!stackLayout}
@@ -3944,7 +3947,7 @@ export default function SchedulingPage() {
                 tbaError={tbaTeamsError}
                 assignments={pitAssignmentsMap}
                 allUsers={sortedAllUsers}
-                prefsByScout={prefsByScout}
+                prefsByScout={prefsForView}
                 onToggleScout={handleTogglePitScout}
                 isMobile={isMobile}
                 readOnly={readOnly}

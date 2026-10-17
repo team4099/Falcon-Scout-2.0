@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query, type QueryCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
-import { canViewEvent, eventViewerId, getApprovedUserId, requireAdmin } from "./adminAuth";
+import { canViewEvent, eventViewerId, getApprovedUserId, isCurrentUserAdminEligible, requireAdmin } from "./adminAuth";
 import { awardCoins, revokeCoins, PIT_DUTY_REWARD } from "./betting";
 
 const positionValidator = v.union(
@@ -588,10 +588,12 @@ export const upsertMyPreferences = mutation({
   },
 });
 
-/** All scout preferences for an event — for admin use in ManageScouts */
+/** All scout preferences for an event — admin-only (ManageScouts, Scheduling).
+ *  Non-admins get [] rather than an error so cached/offline renders degrade. */
 export const listAllPreferences = query({
   args: { eventKey: v.string() },
   handler: async (ctx, { eventKey }) => {
+    if (!(await isCurrentUserAdminEligible(ctx))) return [];
     if (!(await canViewEvent(ctx, eventKey))) return [];
     return await ctx.db
       .query("scoutPreferences")
