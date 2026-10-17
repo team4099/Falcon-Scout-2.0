@@ -52,15 +52,15 @@ describe("shouldLock / matchWinner / tbaMatchLabel", () => {
     expect(shouldLock(match("qm", 1, 3, -1, -1, 1000), Date.now())).toBe(true);
     expect(shouldLock(match("qm", 1, 4, -1, -1, Math.floor(Date.now() / 1000) + 3600), Date.now())).toBe(false);
   });
-  test("locks 5 minutes before the start, using the predicted time over the scheduled one", () => {
+  test("locks at the start time, using the predicted time over the scheduled one", () => {
     const now = Date.now();
     const at = (min: number) => Math.floor(now / 1000) + min * 60;
     const m = (time: number | null, predicted: number | null) => ({ ...match("qm", 1, 5, -1, -1), time, predicted_time: predicted });
-    expect(shouldLock(m(at(6), null), now)).toBe(false);
-    expect(shouldLock(m(at(4), null), now)).toBe(true);
+    expect(shouldLock(m(at(4), null), now)).toBe(false);
+    expect(shouldLock(m(at(-1), null), now)).toBe(true);
     // Scheduled soon but running 20 minutes late: still open.
     expect(shouldLock(m(at(2), at(20)), now)).toBe(false);
-    expect(shouldLock(m(at(30), at(3)), now)).toBe(true);
+    expect(shouldLock(m(at(30), at(-1)), now)).toBe(true);
   });
 
   test("labels match what the client writes into market titles", () => {

@@ -2,7 +2,7 @@
 //
 // Betting used to stay open forever and every match had to be resolved by hand
 // in FalconBet's admin UI, so bets sat unpaid long after the match finished.
-// This closes betting 5 minutes before a match starts and pays out the moment
+// This closes betting the moment a match is scheduled to start and pays out the moment
 // TBA posts a winner, from TBA data fetched *server-side* (never client-
 // supplied, so nobody can lock or resolve a market by lying about a match). It
 // runs on a 1-minute cron and whenever a signed-in client opens the Betting
@@ -15,9 +15,6 @@ import { internal } from "./_generated/api";
 import type { ActionCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { multiplierFor } from "./betting";
-
-/** Betting closes this long before a match's start time. */
-export const LOCK_LEAD_MS = 5 * 60 * 1000;
 
 const TBA_BASE = "https://www.thebluealliance.com/api/v3";
 const LEVEL_PREFIX: Record<string, string> = { qm: "Q", ef: "EF", qf: "QF", sf: "SF", f: "F" };
@@ -57,9 +54,9 @@ export function tbaMatchLabel(m: TbaMatch): string {
 }
 
 /**
- * Should betting be closed? Yes once the match is within LOCK_LEAD_MS of its
- * start (predicted time, which follows schedule slips, else the scheduled
- * time), and always once it has started or been scored (-1 scores = none).
+ * Should betting be closed? Yes once the match's start time has arrived
+ * (predicted time, which follows schedule slips, else the
+ * scheduled time), and always once it has started or been scored (-1 scores = none).
  */
 export function shouldLock(m: TbaMatch, nowMs: number): boolean {
   const red = m.alliances?.red?.score ?? -1;
@@ -67,7 +64,7 @@ export function shouldLock(m: TbaMatch, nowMs: number): boolean {
   if (red >= 0 && blue >= 0) return true;
   if (typeof m.actual_time === "number" && m.actual_time * 1000 <= nowMs) return true;
   const start = m.predicted_time ?? m.time;
-  return typeof start === "number" && start * 1000 - LOCK_LEAD_MS <= nowMs;
+  return typeof start === "number" && start * 1000 <= nowMs;
 }
 
 export const openMarkets = internalQuery({
