@@ -533,6 +533,16 @@ export default defineSchema({
   })
     .index("by_user", ["userId"]),
 
+  // Admin-set label shown in place of a scout's name (scheduling, lists,
+  // FalconBet) so scouts who share a first name can be told apart. A separate
+  // table rather than a `users` field: authTables owns that row. No row = no
+  // nickname. Additive, so cached clients just keep showing the real name.
+  scoutNicknames: defineTable({
+    userId:   v.id("users"),
+    nickname: v.string(),
+  })
+    .index("by_user", ["userId"]),
+
   // Who is attending each event (see convex/roster.ts). Scheduling and the
   // Manage Scouts "Event Roster" draw only from this; everyone else with
   // access sits in "Not on roster". users.listUsers stamps `onRoster`.

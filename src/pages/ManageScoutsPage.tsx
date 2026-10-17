@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { useCached } from "@/hooks/useCached";
+import { scoutLabel } from "@/lib/scoutName";
 import { api } from "../../convex/_generated/api";
 import { useUIStore } from "@/store/uiStore";
 import { Button } from "@/components/ui/button";
@@ -45,6 +46,8 @@ import {
 interface User {
   _id: string;
   name?: string;
+  /** Admin-set label shown in place of `name` (see users.setScoutNickname). */
+  nickname?: string;
   email?: string;
   image?: string;
   /** Set by users.listUsers for approved guests: the FRC team they're from. */
@@ -88,7 +91,13 @@ interface PitRotation {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/** What a scout is listed as: their nickname if they have one, else their name. */
 function displayName(user: User): string {
+  return scoutLabel(user, "Unknown Scout");
+}
+
+/** The real name, for the rename field (the nickname is edited separately). */
+function realName(user: User): string {
   return user.name ?? user.email ?? "Unknown Scout";
 }
 
@@ -490,6 +499,9 @@ export default function ManageScoutsPage() {
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const [savingName, setSavingName] = useState(false);
+  const [editingNickname, setEditingNickname] = useState(false);
+  const [nicknameDraft, setNicknameDraft] = useState("");
+  const [savingNickname, setSavingNickname] = useState(false);
   const [deactivating, setDeactivating] = useState<string | null>(null);
   // null = automatic: the pool starts open only while the roster is empty.
   const [showPool, setShowPool] = useState<boolean | null>(null);
@@ -558,6 +570,7 @@ export default function ManageScoutsPage() {
   const setDriveTeamMember  = useAdminMutation(api.admin.setDriveTeamMember);
   const setAdminLabel       = useAdminMutation(api.admin.setAdminLabel);
   const setUserName         = useAdminMutation(api.users.setUserName);
+  const setScoutNickname    = useAdminMutation(api.users.setScoutNickname);
   const addToRosterByEmail  = useAdminMutation(api.roster.addToRosterByEmail);
   const addToRoster         = useAdminMutation(api.roster.addToRoster);
   const removeFromRoster    = useAdminMutation(api.roster.removeFromRoster);
@@ -639,6 +652,7 @@ export default function ManageScoutsPage() {
     setEditingPrefs(false);
     setPrefsDraft(null);
     setEditingName(false);
+    setEditingNickname(false);
     setEditingLabelFor(null);
   }, [selectedUserId]);
 
@@ -773,6 +787,21 @@ export default function ManageScoutsPage() {
       toast.error(err instanceof Error ? err.message : "Couldn't update name.");
     } finally {
       setSavingName(false);
+    }
+  }
+
+  async function handleSaveNickname(userId: string) {
+    setSavingNickname(true);
+    try {
+      // Empty draft clears the nickname; the server trims and enforces the length cap.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await setScoutNickname({ userId: userId as any, nickname: nicknameDraft });
+      setEditingNickname(false);
+      toast.success(nicknameDraft.trim() ? "Nickname saved." : "Nickname cleared.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't save nickname.");
+    } finally {
+      setSavingNickname(false);
     }
   }
 
@@ -1478,7 +1507,7 @@ export default function ManageScoutsPage() {
                       </div>
                     ) : (
                       <button
-                        onClick={() => { setEditingName(true); setNameDraft(displayName(selectedUser)); }}
+                        onClick={() => { setEditingName(true); setNameDraft(realName(selectedUser)); }}
                         style={{
                           display: "flex", alignItems: "center", gap: 6, maxWidth: "100%",
                           border: "none", background: "transparent", cursor: "pointer", padding: 0,
@@ -1496,7 +1525,7 @@ export default function ManageScoutsPage() {
                             textOverflow: "ellipsis",
                           }}
                         >
-                          {displayName(selectedUser)}
+                          {realName(selectedUser)}
                         </div>
                         <Pencil size={11} style={{ opacity: 0.5, flexShrink: 0 }} />
                       </button>
@@ -1513,6 +1542,46 @@ export default function ManageScoutsPage() {
                       >
                         {selectedUser.email}
                       </div>
+                    )}
+                    {/* Nickname: replaces the name in scheduling and lists, so
+                        scouts who share a first name can be told apart. */}
+                    {editingNickname ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, minWidth: 0 }}>
+                        <input
+                          autoFocus
+                          value={nicknameDraft}
+                          maxLength={24}
+                          placeholder="Nickname (blank to clear)"
+                          onChange={(e) => setNicknameDraft(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") handleSaveNickname(selectedUser._id); if (e.key === "Escape") setEditingNickname(false); }}
+                          style={{
+                            flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, padding: "3px 7px", borderRadius: 6,
+                            border: "1px solid oklch(0.85 0.18 95 / 40%)",
+                            background: "oklch(1 0 0 / 5%)", color: "var(--foreground)",
+                          }}
+                        />
+                        <button onClick={() => handleSaveNickname(selectedUser._id)} disabled={savingNickname} style={{ border: "none", background: "transparent", cursor: "pointer", color: "oklch(0.75 0.18 95)", display: "flex", flexShrink: 0 }} title="Save nickname">
+                          <Save size={14} />
+                        </button>
+                        <button onClick={() => setEditingNickname(false)} disabled={savingNickname} style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted-foreground)", display: "flex", flexShrink: 0 }} title="Cancel">
+                          <XCircle size={14} />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => { setEditingNickname(true); setNicknameDraft(selectedUser.nickname ?? ""); }}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 5, marginTop: 2, maxWidth: "100%",
+                          border: "none", background: "transparent", cursor: "pointer", padding: 0,
+                          font: "inherit", fontSize: 11, color: "var(--muted-foreground)", textAlign: "left",
+                        }}
+                        title="Edit nickname"
+                      >
+                        <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {selectedUser.nickname ? <>Nickname: <strong style={{ color: "var(--foreground)" }}>{selectedUser.nickname}</strong></> : "+ Add nickname"}
+                        </span>
+                        <Pencil size={10} style={{ opacity: 0.5, flexShrink: 0 }} />
+                      </button>
                     )}
                   </div>
 

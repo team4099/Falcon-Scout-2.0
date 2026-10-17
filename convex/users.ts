@@ -39,7 +39,7 @@ export const listUsers = query({
   args: {},
   handler: async (ctx) => {
     await requireUser(ctx);
-    const [allUsers, deactivated, guests, roster] = await Promise.all([
+    const [allUsers, deactivated, guests, roster, nicknames] = await Promise.all([
       ctx.db.query("users").collect(),
       ctx.db.query("deactivatedUsers").collect(),
       ctx.db
@@ -47,21 +47,26 @@ export const listUsers = query({
         .withIndex("by_status", (q) => q.eq("status", "approved"))
         .collect(),
       currentRosterIds(ctx),
+      ctx.db.query("scoutNicknames").collect(),
     ]);
     const guestTeam = new Map(guests.map((g) => [g.email, g.teamNumber]));
     const approved = new Set(guestTeam.keys());
     const deactivatedSet = new Set(deactivated.map((d) => d.userId));
+    const nicknameOf = new Map(nicknames.map((n) => [n.userId, n.nickname]));
     // Pending/denied guests have a user row (they signed in) but no access,
     // so they must not show up as schedulable scouts. Approved guests carry
-    // their FRC team (guestTeamNumber) so the UI can tag them.
+    // their FRC team (guestTeamNumber) so the UI can tag them. `nickname` is
+    // only present when an admin set one (see setScoutNickname).
     return allUsers
       .filter((u) => hasAccess(u, approved) && !deactivatedSet.has(u._id))
       .map((u) => {
         const email = u.email?.trim().toLowerCase();
         const onRoster = roster.has(u._id);
-        if (!email || !guestTeam.has(email)) return { ...u, onRoster };
+        const nickname = nicknameOf.get(u._id);
+        const base = { ...u, onRoster, ...(nickname !== undefined && { nickname }) };
+        if (!email || !guestTeam.has(email)) return base;
         const team = guestTeam.get(email);
-        return team === undefined ? { ...u, onRoster, isGuest: true } : { ...u, onRoster, isGuest: true, guestTeamNumber: team };
+        return team === undefined ? { ...base, isGuest: true } : { ...base, isGuest: true, guestTeamNumber: team };
       });
   },
 });
@@ -74,6 +79,31 @@ export const setUserName = mutation({
     const trimmed = name.trim();
     if (!trimmed) throw new Error("Name can't be empty.");
     await ctx.db.patch(userId, { name: trimmed });
+  },
+});
+
+/** Longest nickname accepted; it has to fit a scheduling grid cell on a phone. */
+const NICKNAME_MAX_LENGTH = 24;
+
+/**
+ * Give a scout a short label that replaces their name everywhere the app
+ * shows them (see listUsers). Empty clears it. Admin-only, like renaming.
+ */
+export const setScoutNickname = mutation({
+  args: { userId: v.id("users"), nickname: v.string() },
+  handler: async (ctx, { userId, nickname }) => {
+    await requireAdmin(ctx);
+    if (!(await ctx.db.get(userId))) throw new Error("That scout doesn't exist.");
+    const trimmed = nickname.trim();
+    if (trimmed.length > NICKNAME_MAX_LENGTH) {
+      throw new Error(`Nickname must be ${NICKNAME_MAX_LENGTH} characters or fewer.`);
+    }
+    const existing = await ctx.db
+      .query("scoutNicknames")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    for (const row of existing) await ctx.db.delete(row._id);
+    if (trimmed) await ctx.db.insert("scoutNicknames", { userId, nickname: trimmed });
   },
 });
 

@@ -37,6 +37,8 @@ import {
 interface User {
   _id: string;
   name?: string;
+  /** Admin-set label that replaces the name here (users.setScoutNickname). */
+  nickname?: string;
   email?: string;
   image?: string;
   /** Set by users.listUsers: on the current event's roster (convex/roster.ts). */
@@ -138,6 +140,9 @@ function warnAssignRefused(e: unknown) {
 
 /** First name only below 1024px (same breakpoint as `isMobile`), full name on desktop. */
 function displayName(u: User) {
+  // A nickname is already the short form, and it exists to tell apart scouts
+  // whose first names match, so it is never trimmed further.
+  if (u.nickname) return u.nickname;
   const full = u.name?.trim();
   if (!full) return u.email ?? "?";
   return window.innerWidth < 1024 ? full.split(/\s+/)[0] : full;

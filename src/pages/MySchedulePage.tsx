@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 import { useQuery } from "convex/react";
 import { useMutation } from "convex/react";
 import { useCached } from "@/hooks/useCached";
+import { scoutLabel } from "@/lib/scoutName";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -116,14 +117,14 @@ function PreCompetitionCard({
   assignments, allUsers, done = false,
 }: {
   assignments: PitScoutingAssignment[];
-  allUsers: { _id: string; name?: string; email?: string; image?: string }[];
+  allUsers: { _id: string; name?: string; nickname?: string; email?: string; image?: string }[];
   /** Rendered in the Completed tab — these teams have already been pit scouted. */
   done?: boolean;
 }) {
   const navigate = useNavigate();
   const userMap = Object.fromEntries(allUsers.map(u => [u._id, u]));
-  const getName = (u: { name?: string; email?: string } | undefined) =>
-    u?.name ?? u?.email ?? "?";
+  const getName = (u: { nickname?: string; name?: string; email?: string } | undefined) =>
+    u ? scoutLabel(u, "?") : "?";
 
   // All unique teammate IDs across all assigned teams
   const teammateIds = [...new Set(assignments.flatMap(a => a.scoutIds))];
@@ -474,10 +475,10 @@ function QualPitCard({ rotation, done, onToggle }: { rotation: PitRotation; done
 
 // ── Preferences Panel ────────────────────────────────────────────────────────
 
-interface UserRecord { _id: string; name?: string; email?: string; image?: string; onRoster?: boolean; }
+interface UserRecord { _id: string; name?: string; nickname?: string; email?: string; image?: string; onRoster?: boolean; }
 interface ScoutPrefs { preferredPartners: string[]; wantsMoreMatches: boolean; wantsPitRotation: boolean; wantsPitScouting?: boolean; }
 
-function displayName(u: UserRecord) { return u.name ?? u.email ?? "Scout"; }
+function displayName(u: UserRecord) { return scoutLabel(u); }
 function avatarLetter(u: UserRecord) { return displayName(u).charAt(0).toUpperCase(); }
 
 function MiniAvatar({ user, size = 24 }: { user: UserRecord; size?: number }) {

@@ -78,6 +78,8 @@ function describeSlot(k: SlotKey): string {
 export interface ScoutInfo {
   _id: string;
   name?: string;
+  /** Shown in warnings in place of `name` when set. */
+  nickname?: string;
   email?: string;
 }
 
@@ -217,7 +219,7 @@ function chunk<T>(arr: T[], size: number): T[][] {
 }
 
 function displayName(s: ScoutInfo): string {
-  return s.name ?? s.email ?? s._id.slice(0, 8);
+  return s.nickname || s.name || s.email || s._id.slice(0, 8);
 }
 
 function popcount(x: number): number {

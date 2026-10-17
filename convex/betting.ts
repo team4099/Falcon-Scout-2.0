@@ -840,13 +840,18 @@ export const getLeaderboard = query({
       .collect()
     ).filter((b) => b.eventKey === eventKey);
 
-    // Enrich with user display name
+    // Enrich with user display name (admin nickname first, then real name)
     const enriched = await Promise.all(
       balances.map(async (b) => {
         const user = await ctx.db.get(b.userId);
+        const nickname = await ctx.db
+          .query("scoutNicknames")
+          .withIndex("by_user", (q) => q.eq("userId", b.userId))
+          .unique();
         return {
           ...b,
-          displayName: (user as unknown as { name?: string; email?: string } | null)?.name
+          displayName: nickname?.nickname
+            ?? (user as unknown as { name?: string; email?: string } | null)?.name
             ?? (user as unknown as { name?: string; email?: string } | null)?.email
             ?? "Unknown Scout",
         };

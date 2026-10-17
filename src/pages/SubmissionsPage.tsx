@@ -14,11 +14,13 @@ import {
   type FormTemplate,
 } from "@/components/SubmissionDetailModal";
 import { filterFeed } from "@/lib/submissionFeed";
+import { scoutLabel } from "@/lib/scoutName";
 import { Inbox, Search } from "lucide-react";
 
 interface User {
   _id: string;
   name?: string;
+  nickname?: string;
   email?: string;
 }
 
@@ -68,7 +70,7 @@ export default function SubmissionsPage() {
     const byId = new Map((users ?? []).map((u) => [u._id, u]));
     return (id?: string) => {
       const u = id ? byId.get(id) : undefined;
-      return u?.name ?? u?.email ?? "Unknown scout";
+      return u ? scoutLabel(u, "Unknown scout") : "Unknown scout";
     };
   }, [users]);
   const formName = useMemo(() => {

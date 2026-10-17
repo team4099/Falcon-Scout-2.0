@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { stripEmojis } from "@/lib/utils";
+import { scoutLabel } from "@/lib/scoutName";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { useAdminMutation } from "@/hooks/useAdminMutation";
 import { useCached } from "@/hooks/useCached";
@@ -1445,7 +1446,7 @@ function AwardCoinsDialog({ eventKey }: { eventKey: string }) {
                   {[...(users ?? [])]
                     .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""))
                     .map((u) => (
-                      <SelectItem key={u._id} value={u._id}>{u.name ?? u.email ?? "Unnamed"}</SelectItem>
+                      <SelectItem key={u._id} value={u._id}>{scoutLabel(u, "Unnamed")}</SelectItem>
                     ))}
                 </SelectContent>
               </Select>
