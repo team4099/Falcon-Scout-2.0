@@ -2610,15 +2610,18 @@ function PitScoutingTab({
 
         {/* Scout chips */}
         <div style={{
-          flex: "1 1 200px", borderRadius: 12, border: `1px solid ${SURF_BORD}`,
+          // minWidth 0: without it the card grows to its content's width and
+          // the clipped page ancestor hides the chips past the screen edge.
+          flex: "1 1 200px", minWidth: 0, borderRadius: 12, border: `1px solid ${SURF_BORD}`,
           background: SURFACE, padding: "10px 12px",
         }}>
           <div style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: MUTED, marginBottom: 8 }}>
             {readOnly ? "Pin a scout to highlight their teams" : "Pin a scout then click teams"}
             {pinnedScoutId && partners.size > 0 && <span style={{ color: PARTNER_BORD, marginLeft: 8, textTransform: "none", letterSpacing: 0 }}>♥ = their preferred partners</span>}
           </div>
+          {/* Phone: chips wrap into a short vertical scroller so every name is reachable. */}
           <div style={isMobile
-            ? { display: "flex", flexWrap: "nowrap", gap: 5, overflowX: "auto", overflowY: "hidden", paddingBottom: 4 }
+            ? { display: "flex", flexWrap: "wrap", gap: 5, maxHeight: 132, overflowY: "auto", overscrollBehavior: "contain" }
             : { display: "flex", flexWrap: "wrap", gap: 5 }}>
             {allUsers.map(u => {
               const pinned = u._id === pinnedScoutId;
