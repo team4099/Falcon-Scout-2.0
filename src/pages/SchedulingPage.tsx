@@ -1679,7 +1679,7 @@ function RotationCard({ rotation, users, onEdit, onDelete, readOnly }: {
         )}
       </div>
 
-      <div style={{ display: "flex", flexWrap: "nowrap", gap: 4, overflowX: "auto", paddingBottom: 2, WebkitOverflowScrolling: "touch" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
         {/* Stored order, not alphabetical — the admin arranged this deliberately. */}
         {rotation.scoutIds.map(id => {
           const u = userMap[id];
